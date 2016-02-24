@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +31,7 @@ import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsProvider;
 import android.text.TextUtils;
+import android.provider.MediaStore;
 
 import com.android.documentsui.DocumentsApplication;
 import com.android.documentsui.RootCursorWrapper;
@@ -62,6 +68,10 @@ public class DocumentInfo implements Durable, Parcelable {
     public String summary;
     public long size;
     public int icon;
+    /// M: Add to support drm
+    public boolean isDrm = false;
+    public int drmMethod = 0;
+    public String data = null;
 
     /** Derived fields that aren't persisted */
     public Uri derivedUri;
@@ -170,6 +180,10 @@ public class DocumentInfo implements Durable, Parcelable {
         this.size = getCursorLong(cursor, Document.COLUMN_SIZE);
         this.icon = getCursorInt(cursor, Document.COLUMN_ICON);
         this.deriveFields();
+        /// M: Add to support drm, get drm info from cursor
+        this.isDrm = getCursorInt(cursor, MediaStore.MediaColumns.IS_DRM) > 0;
+        this.drmMethod = getCursorInt(cursor, MediaStore.MediaColumns.DRM_METHOD);
+        this.data = getCursorString(cursor, MediaStore.MediaColumns.DATA);
     }
 
     public static DocumentInfo fromUri(ContentResolver resolver, Uri uri)

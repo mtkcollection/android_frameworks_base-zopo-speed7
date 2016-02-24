@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,8 +18,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License
  */
-
 package com.android.keyguard;
+
+import android.os.Bundle;
 
 /**
  * The callback used by the keyguard view to tell the {@link KeyguardViewMediator}
@@ -77,4 +83,74 @@ public interface ViewMediatorCallback {
      *         (legacy API)
      */
     boolean isInputRestricted();
+
+    /**
+     * Return is keyguard showing or not.
+     * @return showing or not
+     */
+    boolean isShowing() ;
+
+    /**
+     * Ask to show keyguard.
+     * @param options bring some info
+     */
+    void showLocked(Bundle options);
+
+    /**
+     * Ask to reset lock view.
+     */
+    void resetStateLocked();
+
+    /**
+     * Ask to dismiss keyguard.
+     */
+    void dismiss();
+
+    /**
+     * Ask to dismiss keyguard with authentication info.
+     * @param authenticated verified or not.
+     */
+    void dismiss(boolean authenticated);
+
+    /**
+     * Ask to adjust status bar.
+     */
+    void adjustStatusBarLocked() ;
+
+    /**
+     * Added for VOW. Return is keyguard is enabled externally.
+     * @return externally enabled or not.
+     */
+    boolean isKeyguardExternallyEnabled();
+
+    /**
+     * Ask to hide keyguard.
+     */
+    void hideLocked();
+
+    /**
+     * Return keyguard is secure or not.
+     * @return keyguard is secure or not.
+     */
+    boolean isSecure();
+
+    /**
+     * Ask to supress keyguard lock/unlock sound.
+     */
+    void setSuppressPlaySoundFlag();
+
+    /**
+     * M: Force to update navi-bar status.
+     */
+    void updateNavbarStatus() ;
+    /**
+     * M: keyguard done on going or not.
+     * @return keyguard done on going or not
+     */
+     boolean isKeyguardDoneOnGoing() ;
+
+    /**
+      * M: Update antitheft lock status.
+      */
+     void updateAntiTheftLocked() ;
 }

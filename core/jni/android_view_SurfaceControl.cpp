@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +69,12 @@ static struct {
     jfieldID appVsyncOffsetNanos;
     jfieldID presentationDeadlineNanos;
 } gPhysicalDisplayInfoClassInfo;
+
+#ifdef MTK_AOSP_ENHANCEMENT
+static struct {
+    jfieldID subtype;
+} gPhysicalDisplayInfoClassInfoEx;
+#endif
 
 static struct {
     jfieldID bottom;
@@ -256,6 +267,32 @@ static void nativeSetFlags(JNIEnv* env, jclass clazz, jlong nativeObject, jint f
         doThrowIAE(env);
     }
 }
+
+#ifdef MTK_AOSP_ENHANCEMENT
+static void nativeSetFlagsEx(JNIEnv* env, jclass clazz, jlong nativeObject, jint flags, jint mask) {
+/*
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
+    status_t err = ctrl->setFlagsEx(flags, mask);
+    if (err < 0 && err != NO_INIT) {
+        doThrowIAE(env);
+    }
+*/
+}
+
+static jboolean nativeGetDisplayInfoEx(JNIEnv* env, jclass clazz,
+        jobject tokenObj, jobject infoObj) {
+    sp<IBinder> token(ibinderForJavaObject(env, tokenObj));
+    if (token == NULL) return JNI_FALSE;
+
+    DisplayInfoEx info;
+    if (SurfaceComposerClient::getDisplayInfoEx(token, &info)) {
+        return JNI_FALSE;
+    }
+
+    env->SetIntField(infoObj, gPhysicalDisplayInfoClassInfoEx.subtype, (int)info.subtype);
+    return JNI_TRUE;
+}
+#endif
 
 static void nativeSetTransparentRegionHint(JNIEnv* env, jclass clazz, jlong nativeObject, jobject regionObj) {
     SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
@@ -643,6 +680,12 @@ static JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeGetAnimationFrameStats },
     {"nativeSetDisplayPowerMode", "(Landroid/os/IBinder;I)V",
             (void*)nativeSetDisplayPowerMode },
+#ifdef MTK_AOSP_ENHANCEMENT
+    {"nativeSetFlagsEx", "(JII)V",
+            (void*)nativeSetFlagsEx },
+    {"nativeGetDisplayInfoEx", "(Landroid/os/IBinder;Landroid/view/SurfaceControl$PhysicalDisplayInfoEx;)Z",
+            (void*)nativeGetDisplayInfoEx },
+#endif
 };
 
 int register_android_view_SurfaceControl(JNIEnv* env)
@@ -665,6 +708,10 @@ int register_android_view_SurfaceControl(JNIEnv* env)
             "appVsyncOffsetNanos", "J");
     gPhysicalDisplayInfoClassInfo.presentationDeadlineNanos = env->GetFieldID(clazz,
             "presentationDeadlineNanos", "J");
+#ifdef MTK_AOSP_ENHANCEMENT
+    clazz = env->FindClass("android/view/SurfaceControl$PhysicalDisplayInfoEx");
+    gPhysicalDisplayInfoClassInfoEx.subtype = env->GetFieldID(clazz, "subtype", "I");
+#endif
 
     jclass rectClazz = env->FindClass("android/graphics/Rect");
     gRectClassInfo.bottom = env->GetFieldID(rectClazz, "bottom", "I");

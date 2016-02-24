@@ -172,11 +172,19 @@ public class ImsCallProfile implements Parcelable {
      *  cna : Calling name
      *  ussd : For network-initiated USSD, MT only
      *  remote_uri : Connected user identity (it can be used for the conference)
+     *  pau : Additional user identity information
      */
     public static final String EXTRA_OI = "oi";
     public static final String EXTRA_CNA = "cna";
     public static final String EXTRA_USSD = "ussd";
     public static final String EXTRA_REMOTE_URI = "remote_uri";
+    public static final String EXTRA_PAU = "pau";
+
+    /// M: @{
+    public static final String EXTRA_MPTY = "mpty";
+    public static final String EXTRA_CONF_PARTICIPANT_INDEX = "conf_participant_index";
+    public static final String EXTRA_CONF_PARTICIPANT_STATE = "conf_participant_state";
+    /// @}
 
     public int mServiceType;
     public int mCallType;

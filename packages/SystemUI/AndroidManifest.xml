@@ -103,6 +103,7 @@
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" />
     <uses-permission android:name="android.permission.ACCESS_KEYGUARD_SECURE_STORAGE" />
     <uses-permission android:name="android.permission.TRUST_LISTENER" />
+    <uses-permission android:name="android.permission.BROADCAST_STICKY" />
 
     <!-- Recents -->
     <uses-permission android:name="android.permission.BIND_APPWIDGET" />
@@ -114,6 +115,17 @@
 
     <!-- Screen Capturing -->
     <uses-permission android:name="android.permission.MANAGE_MEDIA_PROJECTION" />
+
+    <!-- MTI Added -->
+    <!-- Privacy Protection Lock(Anti-Theft) feature -->
+    <uses-permission android:name="com.mediatek.ppl.permission.ACCESS_PPL_MANAGER" />
+
+    <!-- M: Add for multi-window add permission for install package -->
+    <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.DELETE_PACKAGES" />
+
+    <!-- M: Add for data sim switch -->
+    <uses-permission android:name="android.permission.WRITE_APN_SETTINGS"/>
 
     <application
         android:name=".SystemUIApplication"
@@ -376,5 +388,24 @@
             android:exported="true"
             android:singleUser="true"
             android:permission="android.permission.BIND_DREAM_SERVICE" />
+   <!-- Add for Multi-window -->
+        <provider
+            android:name="com.android.systemui.floatpanel.FloatWindowProvider"
+            android:authorities="com.android.systemui.floatwindow"
+            android:exported="true"
+            android:readPermission="com.android.launcher.permission.READ_SETTINGS"
+            android:writePermission="com.android.launcher.permission.WRITE_SETTINGS" />
+          <receiver android:name=".floatpanel.FloatModel" >
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" /> 
+                <action android:name="action_multiwindow_disable_pkg_updated" />               
+                <data android:scheme = "package"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

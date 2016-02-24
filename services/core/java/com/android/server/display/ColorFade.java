@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +20,8 @@
  */
 
 package com.android.server.display;
+
+import static com.android.server.display.DisplayManagerService.DEBUG_POWER;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -61,8 +68,8 @@ import com.android.internal.R;
  */
 final class ColorFade {
     private static final String TAG = "ColorFade";
-
-    private static final boolean DEBUG = false;
+    @SuppressWarnings("checkstyle:staticvariablename")
+    private static boolean DEBUG = false;
 
     // The layer for the electron beam surface.
     // This is currently hardcoded to be one layer above the boot animation.
@@ -697,6 +704,8 @@ final class ColorFade {
         pw.println("  mDisplayHeight=" + mDisplayHeight);
         pw.println("  mSurfaceVisible=" + mSurfaceVisible);
         pw.println("  mSurfaceAlpha=" + mSurfaceAlpha);
+
+        DEBUG = DEBUG_POWER;
     }
 
     /**

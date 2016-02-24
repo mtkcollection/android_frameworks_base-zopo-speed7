@@ -1,0 +1,32 @@
+﻿<!--
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- For Power Reboot -->
+  <string name="global_action_reboot">रीबूट करें</string>
+  <string name="reboot_confirm_question">क्या आप रिबूट करना चाहेंगे?</string>
+  <string name="reboot_confirm">आपका फोन रिबूट होगा.</string>
+  <string name="global_action_shotscreen">स्क्रीनशॉट</string>
+  <string name="global_actions_toggle_dataconnection_mode">डेटा नेटवर्क मोड</string>
+  <string name="global_actions_dataconnection_mode_on_status">डेटा कनेक्शन ऑन है</string>
+  <string name="global_actions_dataconnection_mode_off_status">डेटा कनेक्शन बंद है</string>
+  <string name="global_actions_toggle_wifi_mode">Wi-Fi मोड</string>
+  <string name="global_actions_wifi_mode_on_status">Wi-Fi ऑन है</string>
+  <string name="global_actions_wifi_mode_off_status">Wi-Fi ऑफ है</string>
+  <string name="global_actions_toggle_longclick_notice">प्रॉम्‍प्ट: \n बलपूर्वक शटडाउन: पॉवर बटन को फोन की स्क्रीन ऑफ होने तक 6 सेकंड लंबा दबाएं.</string>
+</resources>

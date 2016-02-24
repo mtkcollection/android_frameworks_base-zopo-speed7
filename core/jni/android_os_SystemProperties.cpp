@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* //device/libs/android_runtime/android_os_SystemProperties.cpp
 **
 ** Copyright 2006, The Android Open Source Project
@@ -187,6 +192,7 @@ static void SystemProperties_set(JNIEnv *env, jobject clazz,
     }
 
     if (err < 0) {
+		ALOGE("setproperty key=%s value=%s err=%d\n", key, val, err);
         jniThrowException(env, "java/lang/RuntimeException",
                           "failed to set system property");
     }

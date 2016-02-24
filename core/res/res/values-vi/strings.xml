@@ -1341,7 +1341,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"Đăng nhập vào mạng Wi-Fi"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"Đăng nhập vào mạng"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <skip />
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"Không thể kết nối với Wi-Fi"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" có kết nối Internet không tốt."</string>
@@ -1601,6 +1601,8 @@
     <string name="storage_internal" msgid="4891916833657929263">"Bộ nhớ trong"</string>
     <string name="storage_sd_card" msgid="3282948861378286745">"Thẻ SD"</string>
     <string name="storage_usb" msgid="3017954059538517278">"Bộ lưu trữ USB"</string>
+    <string name="storage_phone">Bộ nhớ điện thoại</string>
+    <string name="storage_external_usb">Thiết bị lưu trữ USB ngoài</string>
     <string name="extract_edit_menu_button" msgid="8940478730496610137">"Chỉnh sửa"</string>
     <string name="data_usage_warning_title" msgid="1955638862122232342">"Cảnh báo sử dụng dữ liệu"</string>
     <string name="data_usage_warning_body" msgid="2814673551471969954">"Chạm để xem sử dụng và cài đặt."</string>
@@ -1852,6 +1854,8 @@
     <item quantity="one" msgid="597194865053253679">"Trong một giờ (cho đến <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
     <item quantity="other" msgid="2827214920627669898">"Trong %1$d giờ (cho đến <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
   </plurals>
+    <string name="storage_ic_usb1">Thiết bị lưu trữ ngoại vi IC-USB 1</string>
+    <string name="storage_ic_usb2">Thiết bị lưu trữ ngoại vi IC-USB 2</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"Trong một phút"</item>
     <item quantity="other" msgid="6924190729213550991">"Trong %d phút"</item>

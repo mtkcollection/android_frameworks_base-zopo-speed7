@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,18 +66,24 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
+/// M: ALPS01519880 Background services delay the ordered broadcast@ {
+import android.util.ArraySet;
+/// @}
 import android.util.EventLog;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.TimeUtils;
 
+import com.mediatek.anrmanager.ANRManager;
+
 public final class ActiveServices {
-    static final boolean DEBUG_SERVICE = ActivityManagerService.DEBUG_SERVICE;
-    static final boolean DEBUG_SERVICE_EXECUTING = ActivityManagerService.DEBUG_SERVICE_EXECUTING;
-    static final boolean DEBUG_DELAYED_SERVICE = ActivityManagerService.DEBUG_SERVICE;
-    static final boolean DEBUG_DELAYED_STARTS = DEBUG_DELAYED_SERVICE;
-    static final boolean DEBUG_MU = ActivityManagerService.DEBUG_MU;
-    static final boolean LOG_SERVICE_START_STOP = false;
+    static boolean DEBUG_SERVICE = ActivityManagerService.DEBUG_SERVICE;
+    static boolean DEBUG_SERVICE_EXECUTING = ActivityManagerService.DEBUG_SERVICE_EXECUTING;
+    static boolean DEBUG_DELAYED_SERVICE = ActivityManagerService.DEBUG_SERVICE;
+    static boolean DEBUG_DELAYED_STARTS = DEBUG_DELAYED_SERVICE;
+    static boolean DEBUG_MU = ActivityManagerService.DEBUG_MU;
+    static boolean LOG_SERVICE_START_STOP = false;
+
     static final String TAG = ActivityManagerService.TAG;
     static final String TAG_MU = ActivityManagerService.TAG_MU;
 
@@ -148,6 +159,13 @@ public final class ActiveServices {
     static final int LAST_ANR_LIFETIME_DURATION_MSECS = 2 * 60 * 60 * 1000; // Two hours
 
     String mLastAnrDump;
+
+    /// M: ALPS01519880 Background services delay the ordered broadcast@ {
+    /**
+     * Cache the app services when app process is dying
+     */
+    final ArraySet<ServiceRecord> mCachedServices = new ArraySet<ServiceRecord>();
+    /// @}
 
     final Runnable mLastAnrDumpClearer = new Runnable() {
         @Override public void run() {
@@ -312,7 +330,17 @@ public final class ActiveServices {
             }
             callerFg = callerApp.setSchedGroup != Process.THREAD_GROUP_BG_NONINTERACTIVE;
         } else {
-            callerFg = true;
+            /// M: Background Service Priority Adjustment @{
+            if ((service.getFlags() & Intent.FLAG_WITH_BACKGROUND_PRIORITY) != 0)
+            { // Apply background thread priority
+                callerFg = false;
+                Slog.i(TAG, "[Background Service Priority Adjustment] Set callerFg as false for service.getFlags():" + service.getFlags());
+            }
+            else
+            { // Default path
+                callerFg = true;
+            }
+            /// @}
         }
 
 
@@ -487,6 +515,12 @@ public final class ActiveServices {
             if (r.record != null) {
                 final long origId = Binder.clearCallingIdentity();
                 try {
+                    /// M: AMS log enhancement @{
+                    if (!ActivityManagerService.IS_USER_BUILD) {
+                        Slog.d(TAG, "SVC-Stopping service: " + r.record
+                            + ", app=" + callerApp);
+                    }
+                    /// @}
                     stopServiceLocked(r.record);
                 } finally {
                     Binder.restoreCallingIdentity(origId);
@@ -810,6 +844,11 @@ public final class ActiveServices {
             }
 
             if (s.app != null) {
+                /// M: LCA, wallpaper slim @{
+                if (mAm.mWallpaperClassName != null && s.name.equals(mAm.mWallpaperClassName)) {
+                    mAm.mWallpaperProcess = s.app;
+                }
+                /// @}
                 if ((flags&Context.BIND_TREAT_LIKE_ACTIVITY) != 0) {
                     s.app.treatLikeActivity = true;
                 }
@@ -823,6 +862,14 @@ public final class ActiveServices {
                     + ": received=" + b.intent.received
                     + " apps=" + b.intent.apps.size()
                     + " doRebind=" + b.intent.doRebind);
+
+            /// M: AMS log enhancement @{
+            if (!ActivityManagerService.IS_USER_BUILD) {
+                Slog.d(TAG, "SVC-Binding service: " + s
+                    + ", app=" + s.app
+                    + ", activity=" + activity);
+            }
+            /// @}
 
             if (s.app != null && b.intent.received) {
                 // Service is already running, so we can immediately
@@ -913,6 +960,12 @@ public final class ActiveServices {
         try {
             while (clist.size() > 0) {
                 ConnectionRecord r = clist.get(0);
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD) {
+                    Slog.d(TAG, "SVC-Unbinding service: " + r.binding.service
+                        + ", app=" + r.binding.service.app);
+                }
+                /// @}
                 removeConnectionLocked(r, null, null);
                 if (clist.size() > 0 && clist.get(0) == r) {
                     // In case it didn't get removed above, do it now.
@@ -1169,8 +1222,10 @@ public final class ActiveServices {
         ServiceMap smap = getServiceMap(r.userId);
         if (smap.mServicesByName.get(r.name) != r) {
             ServiceRecord cur = smap.mServicesByName.get(r.name);
-            Slog.wtf(TAG, "Attempting to schedule restart of " + r
+            /// M: prevent trigger AEE, it is not bug. @{
+            Slog.e(TAG, "Attempting to schedule restart of " + r
                     + " when found in map: " + cur);
+            /// @}
             return false;
         }
 
@@ -1421,6 +1476,14 @@ public final class ActiveServices {
             }
         }
 
+        /// M: Background Service Priority Adjustment @{
+        if (execInFg == false) {
+            // Adjust the schedule group as background thread group
+            Process.setProcessGroup(app.pid, Process.THREAD_GROUP_BG_NONINTERACTIVE);
+            Slog.i(TAG, "[Background Service Priority Adjustment] Process.setProcessGroup to Process.THREAD_GROUP_BG_NONINTERACTIVE, app.pid: " + app.pid );
+        }
+        /// @}
+
         if (!mPendingServices.contains(r)) {
             mPendingServices.add(r);
         }
@@ -1456,6 +1519,12 @@ public final class ActiveServices {
                     + ", ProcessRecord.uid = " + app.uid);
         r.app = app;
         r.restartTime = r.lastActivity = SystemClock.uptimeMillis();
+
+        /// M: LCA, wallpaper slim @{
+        if (mAm.mWallpaperClassName != null && r.name.equals(mAm.mWallpaperClassName)) {
+            mAm.mWallpaperProcess = app;
+        }
+        /// @}
 
         app.services.add(r);
         bumpServiceExecutingLocked(r, execInFg, "create");
@@ -1562,6 +1631,12 @@ public final class ActiveServices {
                     flags |= Service.START_FLAG_REDELIVERY;
                 }
                 r.app.thread.scheduleServiceArgs(r, si.taskRemoved, si.id, flags, si.intent);
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD) {
+                    Slog.d(TAG, "SVC-Sent arguments: "
+                        + r + ", app=" + r.app + ", args=" + si.intent + ", flags=" + flags);
+                }
+                /// @}
             } catch (RemoteException e) {
                 // Remote process gone...  we'll let the normal cleanup take
                 // care of this.
@@ -1871,16 +1946,22 @@ public final class ActiveServices {
                 if (!inDestroying) {
                     // Not sure what else to do with this...  if it is not actually in the
                     // destroying list, we don't need to make sure to remove it from it.
-                    Slog.wtfStack(TAG, "Service done with onDestroy, but not inDestroying: "
+                    Slog.e(TAG, "Service done with onDestroy, but not inDestroying: "
                             + r);
                 } else if (r.executeNesting != 1) {
-                    Slog.wtfStack(TAG, "Service done with onDestroy, but executeNesting="
+                    Slog.e(TAG, "Service done with onDestroy, but executeNesting="
                             + r.executeNesting + ": " + r);
                     r.executeNesting = 1;
                 }
             }
             final long origId = Binder.clearCallingIdentity();
             serviceDoneExecutingLocked(r, inDestroying, inDestroying);
+            /// M: ALPS01519880 Background services delay the ordered broadcast@ {
+            if (type == 1) {
+                if (DEBUG_SERVICE) Slog.i(TAG, "SVC-serviceDoneExecutingLocked remove r=" + r);
+                getServiceMap(r.userId).ensureNotStartingBackground(r);
+            }
+            ///@ }
             Binder.restoreCallingIdentity(origId);
         } else {
             Slog.w(TAG, "Done executing unknown service from pid "
@@ -1916,6 +1997,14 @@ public final class ActiveServices {
                     if (DEBUG_SERVICE || DEBUG_SERVICE_EXECUTING) Slog.v(TAG,
                             "No more executingServices of " + r.shortName);
                     mAm.mHandler.removeMessages(ActivityManagerService.SERVICE_TIMEOUT_MSG, r.app);
+
+                    /// M: ANR Debug Mechanism @{
+                    if (ANRManager.ENABLE_ALL_ANR_MECHANISM == ANRManager.enableANRDebuggingMechanism()) {
+                        mAm.mAnrHandler.removeMessages(
+                                ANRManager.START_MONITOR_SERVICE_TIMEOUT_MSG, r.app);
+                    }
+                    /// M: ANR Debug Mechanism @}
+
                 } else if (r.executeFg) {
                     // Need to re-evaluate whether the app still needs to be in the foreground.
                     for (int i=r.app.executingServices.size()-1; i>=0; i--) {
@@ -2126,6 +2215,14 @@ public final class ActiveServices {
             }
         }
 
+        /// M: ALPS01519880 Background services delay the ordered broadcast@ {
+        if (app.services.size() > 0) {
+            if (DEBUG_SERVICE) Slog.i(TAG, "SVC-mCachedServices add num=" + app.services.size());
+            mCachedServices.clear();
+            mCachedServices.addAll(app.services);
+        }
+        ///@ }
+
         // First clear app state from services.
         for (int i=app.services.size()-1; i>=0; i--) {
             ServiceRecord sr = app.services.valueAt(i);
@@ -2134,6 +2231,10 @@ public final class ActiveServices {
             }
             if (sr.app != app && sr.app != null && !sr.app.persistent) {
                 sr.app.services.remove(sr);
+                /// M: ALPS01430264, general AP will not be restart and cancel notification @{
+                /// we have to cancel notification here.
+                sr.cancelNotification();
+                /// @}
             }
             sr.app = null;
             sr.isolatedProc = null;
@@ -2212,8 +2313,10 @@ public final class ActiveServices {
             final ServiceRecord curRec = smap.mServicesByName.get(sr.name);
             if (curRec != sr) {
                 if (curRec != null) {
-                    Slog.wtf(TAG, "Service " + sr + " in process " + app
+                    /// M: prevent trigger AEE, it is not bug. @{
+                    Slog.e(TAG, "Service " + sr + " in process " + app
                             + " not same as in map: " + curRec);
+                    /// @}
                 }
                 continue;
             }
@@ -2229,6 +2332,11 @@ public final class ActiveServices {
                 bringDownServiceLocked(sr);
             } else if (!allowRestart) {
                 bringDownServiceLocked(sr);
+            /// M: LCA, wallpaper slim @{
+            } else if (app == mAm.mWallpaperProcess && (!mAm.mIsWallpaperFg)) {
+                bringDownServiceLocked(sr);
+                mAm.mWallpaperProcess = null;
+            /// @}
             } else {
                 boolean canceled = scheduleServiceRestartLocked(sr, true);
 
@@ -2454,6 +2562,18 @@ public final class ActiveServices {
         msg.obj = proc;
         mAm.mHandler.sendMessageAtTime(msg,
                 proc.execServicesFg ? (now+SERVICE_TIMEOUT) : (now+ SERVICE_BACKGROUND_TIMEOUT));
+
+        /// M: ANR Debug Mechanism @{
+        if (ANRManager.ENABLE_ALL_ANR_MECHANISM == ANRManager.enableANRDebuggingMechanism()) {
+            Message msg2 = mAm.mAnrHandler.obtainMessage(
+                ANRManager.START_MONITOR_SERVICE_TIMEOUT_MSG, proc);
+            mAm.mAnrHandler.sendMessageAtTime(msg2, now + SERVICE_TIMEOUT * 2 / 3);
+        }
+        if (ANRManager.DISABLE_ALL_ANR_MECHANISM != ANRManager.enableANRDebuggingMechanism()) {
+            Message msg3 = mAm.mAnrHandler.obtainMessage(ANRManager.UPDATE_CPU_USAGE);
+            mAm.mAnrHandler.sendMessageAtTime(msg3, now + SERVICE_TIMEOUT * 2 / 3);
+        }
+        /// M: ANR Debug Mechanism @}
     }
 
     /**
@@ -2814,5 +2934,21 @@ public final class ActiveServices {
             }
         }
     }
+
+    /// M: ALPS01519880 Background services delay the ordered broadcast@ {
+    void clearBgServiceForBroadcastLocked() {
+
+        if (mCachedServices.size() > 0) {
+            for (int i = 0 ; i < mCachedServices.size() ; i++) {
+                ServiceRecord sr = mCachedServices.valueAt(i);
+                getServiceMap(sr.userId).ensureNotStartingBackground(sr);
+                if (DEBUG_SERVICE) Slog.i(TAG, "SVC-clearBgServiceForBroadcast: " + sr);
+            }
+            mCachedServices.clear();
+        }
+
+    }
+    ///@ }
+
 
 }

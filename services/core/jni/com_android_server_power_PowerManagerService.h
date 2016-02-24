@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +30,8 @@
 namespace android {
 
 extern void android_server_PowerManagerService_userActivity(nsecs_t eventTime, int32_t eventType);
+extern bool android_server_PowerManagerService_isSmartBookScreenOn();
+extern void android_server_PowerManagerService_setSmartBookScreen(int32_t cmd, int32_t timeout);
 
 } // namespace android
 

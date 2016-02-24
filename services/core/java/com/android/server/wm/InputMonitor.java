@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +24,18 @@ package com.android.server.wm;
 import com.android.server.input.InputManagerService;
 import com.android.server.input.InputApplicationHandle;
 import com.android.server.input.InputWindowHandle;
+import static com.android.server.wm.WindowManagerService.SmartBookParams.HDMI_PLUG_IN;
+import static com.android.server.wm.WindowManagerService.SmartBookParams.HDMI_PLUG_OUT;
+import static com.android.server.wm.WindowManagerService.SmartBookParams.SMARTBOOK_HAS_PLUGGED_IN;
+import static com.android.server.wm.WindowManagerService.SmartBookParams.SMARTBOOK_HAS_PLUGGED_OUT;
 
 import android.app.ActivityManagerNative;
+import android.content.Context;
 import android.graphics.Rect;
 import android.os.RemoteException;
+import android.os.ServiceManager;
+import android.os.SystemProperties;
+import android.provider.Settings;
 import android.util.Log;
 import android.util.Slog;
 import android.view.Display;
@@ -32,15 +45,34 @@ import android.view.WindowManager;
 
 import java.util.Arrays;
 
+/// M: Enable/disable ANR mechanism from adb command @{
+import com.mediatek.anrappframeworks.ANRAppFrameworks;
+import com.mediatek.anrappmanager.ANRManagerNative;
+import com.mediatek.anrmanager.ANRManager;
+/// Enable/disable ANR mechanism from adb command @}
+
+/// M: Mobile Manager Service @{
+import static com.android.server.wm.WindowManagerService.DEFAULT_INPUT_DISPATCHING_TIMEOUT_NANOS;
+import android.os.UserHandle;
+import com.mediatek.common.mom.MobileManagerUtils;
+/// @}
+import com.mediatek.hdmi.HdmiDef;
+import com.mediatek.hdmi.IMtkHdmiManager;
+
+/// M:  BMW. @{
+import android.graphics.Region;
+import com.mediatek.multiwindow.MultiWindowProxy;
+/// @}
+
 final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
     private final WindowManagerService mService;
-    
+
     // Current window with input focus for keys and other non-touch events.  May be null.
     private WindowState mInputFocus;
-    
+
     // When true, prevents input dispatch from proceeding until set to false again.
     private boolean mInputDispatchFrozen;
-    
+
     // When true, input dispatch proceeds normally.  Otherwise all events are dropped.
     // Initially false, so that input does not get dispatched until boot is finished at
     // which point the ActivityManager will enable dispatching.
@@ -60,12 +92,24 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
 
     Rect mTmpRect = new Rect();
 
+    /// M: Mobile Manager Service
+    private static final long MILLI_TO_NANO = 1000 * 1000;
+
+    private IMtkHdmiManager mHDMI = null;
+
     public InputMonitor(WindowManagerService service) {
         mService = service;
+        /// M:SmartBook @{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            if (mHDMI == null)
+                mHDMI = IMtkHdmiManager.Stub.asInterface(ServiceManager
+                        .getService(Context.HDMI_SERVICE));
+        }
+        /// @}
     }
-    
+
     /* Notifies the window manager about a broken input channel.
-     * 
+     *
      * Called by the InputManager.
      */
     @Override
@@ -82,10 +126,44 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             }
         }
     }
-    
+
+    /// M: Enhance keydispatching predump @{
+    public void notifyPredump(InputApplicationHandle inputApplicationHandle, InputWindowHandle inputWindowHandle, int pid, int message)
+    {
+        try
+        {
+            WindowState windowState = null;
+            AppWindowToken appWindowToken = null;
+            if (inputWindowHandle != null)
+            {
+                windowState = (WindowState) inputWindowHandle.windowState;
+                if (windowState != null)
+                {
+                    appWindowToken = windowState.mAppToken;
+                }
+            }
+            // Add windowState!= null condition for notifyANR new case
+            if (appWindowToken != null || inputApplicationHandle != null || windowState != null)
+            {
+                ANRManagerNative.getDefault(new ANRAppFrameworks()).notifyLightWeightANR(
+                        pid, "KeyDispatchingTimeout predump", message);
+            }
+            else
+            {
+                Slog.i(WindowManagerService.TAG, "Touch event for WNR, it isn't necessary to predump");
+            }
+        }
+        catch (RemoteException e)
+        {
+            Slog.w(WindowManagerService.TAG, "Error notifyPredump ", e);
+        }
+    }
+    /// M: Enhance keydispatching predump @}
+
+
     /* Notifies the window manager about an application that is not responding.
      * Returns a new timeout to continue waiting in nanoseconds, or 0 to abort dispatch.
-     * 
+     *
      * Called by the InputManager.
      */
     @Override
@@ -94,11 +172,44 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
         AppWindowToken appWindowToken = null;
         WindowState windowState = null;
         boolean aboveSystem = false;
+        boolean bIsWNR = false;     /// M: 2012-07-06 ALPS00314133 WNR Debugging Mechanism
+
+        /// M: ANR error handling for MoMS @{
+        /// We choose default input timeout as input because instrument case is ignored.
+        if (MobileManagerUtils.isSupported()) {
+            int userId = (windowState != null) ?
+                    UserHandle.getUserId(windowState.mOwnerUid) :
+                    UserHandle.USER_NULL;
+            long extendTime = MobileManagerUtils.getUserConfirmTime(userId,
+                    DEFAULT_INPUT_DISPATCHING_TIMEOUT_NANOS / MILLI_TO_NANO);
+            if (extendTime > 0) {
+                Slog.w(WindowManagerService.TAG, "Skip INPUT_DISPATCH_TIMEOUT ANR" +
+                        " due to user confirm blocking");
+                return extendTime * MILLI_TO_NANO;
+            }
+        }
+        /// @}
+
         synchronized (mService.mWindowMap) {
             if (inputWindowHandle != null) {
                 windowState = (WindowState) inputWindowHandle.windowState;
                 if (windowState != null) {
                     appWindowToken = windowState.mAppToken;
+                    /// M: 2012-07-06 ALPS00314133 WNR Debugging Mechanism @{
+                    if (ANRManager.DISABLE_ALL_ANR_MECHANISM != ANRManager.enableANRDebuggingMechanism()) {
+                        if (appWindowToken == null) {
+                            bIsWNR = true;
+                        }
+
+                        /// M: Dump input dispatching status in ViewRoot.@{
+                        try {
+                            windowState.mClient.dumpInputDispatchingStatus();
+                        } catch (RemoteException e) {
+                            Slog.w(WindowManagerService.TAG, "Error dump input dispatching status.", e);
+                        }
+                        /// @}
+                    }
+                    /// M: 2012-07-06 ALPS00314133 WNR Debugging Mechanism @}
                 }
             }
             if (appWindowToken == null && inputApplicationHandle != null) {
@@ -127,7 +238,7 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             mService.saveANRStateLocked(appWindowToken, windowState, reason);
         }
 
-        if (appWindowToken != null && appWindowToken.appToken != null) {
+        if (appWindowToken != null && appWindowToken.appToken != null && bIsWNR == false) {
             try {
                 // Notify the activity manager about the timeout and let it decide whether
                 // to abort dispatching or keep waiting.
@@ -148,10 +259,14 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
                 if (timeout >= 0) {
                     // The activity manager declined to abort dispatching.
                     // Wait a bit longer and timeout again later.
-                    return timeout;
+                    /// M: Convert unit to nano second
+                    return timeout * MILLI_TO_NANO;
                 }
             } catch (RemoteException ex) {
             }
+        }
+        else {
+            Slog.i(WindowManagerService.TAG, "both windowState & appWindowToken are null");
         }
         return 0; // abort dispatching
     }
@@ -179,6 +294,13 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
             child.getStackBounds(mTmpRect);
             inputWindowHandle.touchableRegion.set(mTmpRect);
+            /// M: BMW. Adjust the touchRegion from stack offsets @{
+            if (MultiWindowProxy.isFeatureSupport()){
+                int offsets[] = new int[2];
+                child.getStackOffsets(offsets); 
+                inputWindowHandle.touchableRegion.translate(offsets[0], offsets[1]);
+            }
+            /// @}
         } else {
             // Not modal or full screen modal
             child.getTouchableRegion(inputWindowHandle.touchableRegion);
@@ -211,7 +333,26 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             inputWindowHandle.scaleFactor = 1;
         }
 
-
+        /// M: BMW. Transfer the floating info to InputDispatcher @{
+        if (MultiWindowProxy.isFeatureSupport() 
+                && MultiWindowProxy.getInstance() != null
+                && MultiWindowProxy.getInstance().isFloatingStack(child.getStack().mStackId)) {
+            inputWindowHandle.isFloating = true;
+            /// M: BMW. [ALPS01470880]. Only Application window should be modified.
+            /// Others (like dialog) should not be modified.
+            if (child.getAttrs().type ==
+                    WindowManager.LayoutParams.TYPE_BASE_APPLICATION) {
+                Region touchRegion = inputWindowHandle.touchableRegion;
+                int touchMargin = 30;
+                Rect tmp = touchRegion.getBounds();
+                touchRegion.set(tmp.left - touchMargin, tmp.top - touchMargin,
+                                tmp.right + touchMargin, tmp.bottom + touchMargin);
+            }
+        } else {
+            inputWindowHandle.isFloating = false;
+        }
+        /// @}
+        
         addInputWindowHandleLw(inputWindowHandle);
     }
 
@@ -328,14 +469,57 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
     /* Notifies that the input device configuration has changed. */
     @Override
     public void notifyConfigurationChanged() {
-        mService.sendNewConfiguration();
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                mService.sendNewConfiguration();
 
-        synchronized (mInputDevicesReadyMonitor) {
-            if (!mInputDevicesReady) {
-                mInputDevicesReady = true;
-                mInputDevicesReadyMonitor.notifyAll();
+                synchronized (mInputDevicesReadyMonitor) {
+                    if (!mInputDevicesReady) {
+                        mInputDevicesReady = true;
+                        mInputDevicesReadyMonitor.notifyAll();
+                    }
+                }
             }
+        };
+        /// M:SmartBook @{
+        if (!(SystemProperties.get("ro.mtk_smartbook_support").equals("1"))) {
+            task.run();
+            return;
         }
+
+        int type = 0;
+        try {
+            if (mHDMI != null) {
+                type = mHDMI.getDisplayType();
+            } else {
+                mHDMI = IMtkHdmiManager.Stub.asInterface(ServiceManager
+                        .getService(Context.HDMI_SERVICE));
+            }
+        } catch (RemoteException e) {
+            Slog.e(WindowManagerService.TAG, "mHDMI.getDisplayType error", e);
+        }
+        if (!mService.IS_USER_BUILD) {
+            Slog.d(WindowManagerService.TAG, "notifyConfigurationChanged, type=" + type);
+        }
+        if (type == HdmiDef.DISPLAY_TYPE_SMB) {
+            int hdmiPlugState = Settings.System.getIntForUser(mService.mContext.getContentResolver(),
+                    Settings.System.HDMI_CABLE_PLUGGED, 0, UserHandle.USER_CURRENT);
+            int smbPlugState = mService.mSbParams.getPlugState();
+            Slog.d(WindowManagerService.TAG, "notifyConfigurationChanged, hdmi plug:" + hdmiPlugState + ", smb plug:" + smbPlugState);
+            if ((hdmiPlugState == HDMI_PLUG_IN
+                    && smbPlugState == SMARTBOOK_HAS_PLUGGED_IN)
+                || (hdmiPlugState == HDMI_PLUG_OUT
+                    && smbPlugState == SMARTBOOK_HAS_PLUGGED_OUT)) {
+                task.run();
+                return;
+            }
+            Slog.d(WindowManagerService.TAG, "notifyConfigurationChanged, add pending task");
+            mService.mSbParams.addPendingTask(task);
+        } else {
+            task.run();
+        }
+        /// @}
     }
 
     /* Waits until the built-in input devices have been configured. */
@@ -438,7 +622,16 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             final InputApplicationHandle handle = newApp.mInputApplicationHandle;
             handle.name = newApp.toString();
             handle.dispatchingTimeoutNanos = newApp.inputDispatchingTimeoutNanos;
-
+            /// M: 20120712 ALPS00317478 KeyDispatchingTimeout predump Mechanism @{
+            try
+            {
+                handle.pid = newApp.appToken.getFocusAppPid();
+            }
+            catch (RemoteException ex)
+            {
+                Slog.e(WindowManagerService.TAG, "GetFocusAppPid fail");
+            }
+            /// @}
             mService.mInputManager.setFocusedApplication(handle);
         }
     }
@@ -448,57 +641,62 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
             if (WindowManagerService.DEBUG_INPUT) {
                 Slog.v(WindowManagerService.TAG, "Pausing WindowToken " + window);
             }
-            
+
             window.paused = true;
             updateInputWindowsLw(true /*force*/);
         }
     }
-    
+
     public void resumeDispatchingLw(WindowToken window) {
         if (window.paused) {
             if (WindowManagerService.DEBUG_INPUT) {
                 Slog.v(WindowManagerService.TAG, "Resuming WindowToken " + window);
             }
-            
+
             window.paused = false;
             updateInputWindowsLw(true /*force*/);
         }
     }
-    
+
     public void freezeInputDispatchingLw() {
         if (! mInputDispatchFrozen) {
             if (WindowManagerService.DEBUG_INPUT) {
                 Slog.v(WindowManagerService.TAG, "Freezing input dispatching");
             }
-            
+
             mInputDispatchFrozen = true;
             updateInputDispatchModeLw();
         }
     }
-    
+
     public void thawInputDispatchingLw() {
         if (mInputDispatchFrozen) {
             if (WindowManagerService.DEBUG_INPUT) {
                 Slog.v(WindowManagerService.TAG, "Thawing input dispatching");
             }
-            
+
             mInputDispatchFrozen = false;
             updateInputDispatchModeLw();
         }
     }
-    
+
     public void setEventDispatchingLw(boolean enabled) {
         if (mInputDispatchEnabled != enabled) {
             if (WindowManagerService.DEBUG_INPUT) {
                 Slog.v(WindowManagerService.TAG, "Setting event dispatching to " + enabled);
             }
-            
+
             mInputDispatchEnabled = enabled;
             updateInputDispatchModeLw();
         }
     }
-    
+
     private void updateInputDispatchModeLw() {
         mService.mInputManager.setInputDispatchMode(mInputDispatchEnabled, mInputDispatchFrozen);
+    }
+
+    /// M[SmartBook] Pass SmartBook plug status
+    public void setSmartBookPlugIn(boolean plugin) {
+        mService.mInputManager.setSmartBookPlugIn(plugin);
     }
 }

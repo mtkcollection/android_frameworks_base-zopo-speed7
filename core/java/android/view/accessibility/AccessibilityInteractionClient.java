@@ -76,7 +76,7 @@ public final class AccessibilityInteractionClient
 
     private static final String LOG_TAG = "AccessibilityInteractionClient";
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
 
     private static final boolean CHECK_INTEGRITY = true;
 
@@ -286,6 +286,9 @@ public final class AccessibilityInteractionClient
                 final boolean success = connection.findAccessibilityNodeInfoByAccessibilityId(
                         accessibilityWindowId, accessibilityNodeId, interactionId, this,
                         prefetchFlags, Thread.currentThread().getId());
+                if (DEBUG) {
+                    Log.i(LOG_TAG, "success = " + success);
+                }
                 // If the scale is zero the call has failed.
                 if (success) {
                     List<AccessibilityNodeInfo> infos = getFindAccessibilityNodeInfosResultAndClear(
@@ -293,6 +296,10 @@ public final class AccessibilityInteractionClient
                     finalizeAndCacheAccessibilityNodeInfos(infos, connectionId);
                     if (infos != null && !infos.isEmpty()) {
                         return infos.get(0);
+                    }
+                    if (DEBUG) {
+                        Log.i(LOG_TAG, "infos = " + infos
+                                + ", infos.isEmpty() = " + infos.isEmpty());
                     }
                 }
             } else {

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +32,7 @@
 namespace android {
 namespace uirenderer {
 
-#define RECT_STRING "%5.2f %5.2f %5.2f %5.2f"
+#define RECT_STRING "(%.0f, %.0f, %.0f, %.0f)"
 #define RECT_ARGS(r) \
     (r).left, (r).top, (r).right, (r).bottom
 #define SK_RECT_ARGS(r) \

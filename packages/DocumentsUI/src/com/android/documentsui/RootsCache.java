@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +52,7 @@ import com.google.common.collect.Multimap;
 
 import libcore.io.IoUtils;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -95,6 +101,37 @@ public class RootsCache {
             updateAuthorityAsync(uri.getAuthority());
         }
     }
+    /// M: update action bar when roots are reloaded @{
+    private final ArrayList<RootUpdatedListener> mCallbacks = new ArrayList<RootUpdatedListener>();
+
+    /**
+     * Add RootUpdatedListener.
+     *
+     * @param listener The RootUpdatedListener.
+     */
+    public void addCallback(RootUpdatedListener listener) {
+        mCallbacks.add(listener);
+    }
+
+    /**
+     * Remove RootUpdatedListener
+     *
+     * @param listener The RootUpdatedListener.
+     */
+    public void removeCallBack(RootUpdatedListener listener) {
+        mCallbacks.remove(listener);
+    }
+
+    /**
+     * Listener for roots updating.
+     */
+    public interface RootUpdatedListener {
+        /**
+         * Call back.
+         */
+        public void callback();
+    }
+    /// @}
 
     /**
      * Gather roots from all known storage providers.
@@ -204,6 +241,11 @@ public class RootsCache {
                 mRoots = mTaskRoots;
                 mStoppedAuthorities = mTaskStoppedAuthorities;
             }
+            /// M: update action bar when roots are reloaded @{
+            for (RootUpdatedListener listener : mCallbacks) {
+                listener.callback();
+            }
+            // / @}
             mFirstLoad.countDown();
             resolver.notifyChange(sNotificationUri, null, false);
             return null;
@@ -241,8 +283,6 @@ public class RootsCache {
      * Bring up requested provider and query for all active roots.
      */
     private Collection<RootInfo> loadRootsForAuthority(ContentResolver resolver, String authority) {
-        if (LOGD) Log.d(TAG, "Loading roots for " + authority);
-
         synchronized (mObservedAuthorities) {
             if (mObservedAuthorities.add(authority)) {
                 // Watch for any future updates
@@ -269,6 +309,7 @@ public class RootsCache {
             IoUtils.closeQuietly(cursor);
             ContentProviderClient.releaseQuietly(client);
         }
+        Log.d(TAG, "Loading roots for " + authority + " with " + roots);
         return roots;
     }
 
@@ -281,8 +322,10 @@ public class RootsCache {
         synchronized (mLock) {
             RootInfo root = getRootLocked(authority, rootId);
             if (root == null) {
-                mRoots.putAll(
-                        authority, loadRootsForAuthority(mContext.getContentResolver(), authority));
+                /// M: When use given authority and root id can't get root info from root cache, load new ones
+                /// from provider and replace old one in cache(old putAll mechanism may make there exist same
+                /// root in root cache and UI will show same wrong root to user).
+                mRoots.replaceValues(authority, loadRootsForAuthority(mContext.getContentResolver(), authority));
                 root = getRootLocked(authority, rootId);
             }
             return root;

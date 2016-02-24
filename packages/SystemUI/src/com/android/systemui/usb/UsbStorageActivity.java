@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.storage.IMountService;
+import android.os.storage.StorageVolume;
 import android.os.storage.StorageEventListener;
 import android.os.storage.StorageManager;
 import android.util.Log;
@@ -45,6 +51,8 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.util.Slog;
+import android.os.SystemProperties;
 
 import com.android.internal.R;
 
@@ -68,8 +76,13 @@ public class UsbStorageActivity extends Activity
     private StorageManager mStorageManager = null;
     private static final int DLG_CONFIRM_KILL_STORAGE_USERS = 1;
     private static final int DLG_ERROR_SHARING = 2;
-    static final boolean localLOGV = false;
+    static final boolean localLOGV = true;
     private boolean mDestroyed;
+    private boolean mHasCheck = false;
+    static private boolean mSettingUMS = false;
+    private int mAllowedShareNum = 0;
+    private int mSharedCount = 0;
+    private boolean bMtkSharedSdcardSupport = SystemProperties.get("ro.mtk_shared_sdcard").equals("1");
 
     // UI thread
     private Handler mUIHandler;
@@ -84,14 +97,102 @@ public class UsbStorageActivity extends Activity
             if (intent.getAction().equals(UsbManager.ACTION_USB_STATE)) {
                 handleUsbStateChanged(intent);
             }
+            if (intent.getAction().equals("com.mediatek.ppl.NOTIFY_LOCK")) {
+                finish();
+            }
         }
     };
+
+    /*
+    * Check how many storages can be shared on the device.
+    * It seems that the device supported SHARED SD need to check.
+    */
+    private boolean isSharable() {
+
+        /* if (bMtkSharedSdcardSupport) {
+			return true;
+        } */
+
+        StorageVolume[] volumes = mStorageManager.getVolumeList();
+        int allowedShareNum = 0;
+        if (volumes != null) {
+            Slog.d(TAG, "isSharable - length:" + volumes.length);
+            for (int i=0; i<volumes.length; i++) {
+                if (volumes[i].allowMassStorage() && !volumes[i].isEmulated()) {
+                    String pth = volumes[i].getPath();
+                    String st = mStorageManager.getVolumeState(pth);
+                    if (st != null) {
+                        Slog.d(TAG, "isSharable - allowMassStorage:" + volumes[i].allowMassStorage() + ", isEmulated:" + volumes[i].isEmulated());
+                        /* Only count the number of the storage can be shared */
+                        if ( !st.equals(Environment.MEDIA_UNMOUNTABLE) && !st.equals(Environment.MEDIA_NOFS) &&
+                            !st.equals(Environment.MEDIA_REMOVED) && !st.equals(Environment.MEDIA_BAD_REMOVAL) ) {
+                            allowedShareNum++;
+                        }
+                    }
+                }
+            }
+        }
+        Slog.d(TAG, "isSharable - allowedShareNum:" + allowedShareNum);
+        if (allowedShareNum == 0)
+            return false;
+        else
+            return true;
+    }
 
     private StorageEventListener mStorageListener = new StorageEventListener() {
         @Override
         public void onStorageStateChanged(String path, String oldState, String newState) {
             final boolean on = newState.equals(Environment.MEDIA_SHARED);
-            switchDisplay(on);
+            Slog.d(TAG, "onStorageStateChanged - on: " + on + ", mSettingUMS: " + mSettingUMS + ", path: " + path + ", oldState: " + oldState + ", newState: " + newState);
+
+            if (mSettingUMS) {
+                StorageVolume[] volumes = mStorageManager.getVolumeList();
+                Slog.d(TAG, "onStorageStateChanged - [UMS Enabled] volumes.length: " + volumes.length + ", path: " + path + ", volumes state: " + newState + ", mAllowedShareNum: " + mAllowedShareNum + ", mSharedCount: " + mSharedCount);
+                if (bMtkSharedSdcardSupport) {
+                    if (on) {
+                        mSharedCount++;
+                        Slog.d(TAG, "onStorageStateChanged - [SSD] mSharedCount: " + mSharedCount);
+
+                        if (mAllowedShareNum == mSharedCount) {
+                            Slog.d(TAG, "onStorageStateChanged - [All Shared] mSharedCount: " + mSharedCount);
+                            switchDisplay(on);
+                        }
+                    } else {
+                        if (!isSharable()) {
+                            finish();
+                        }
+                    }
+                } else {
+                    if (!isSharable()) {
+                        finish();
+                    } else {
+                        boolean haveShared = false;
+                        for (int i = 0; i < volumes.length; i++) {
+                            if (Environment.MEDIA_SHARED.equals(mStorageManager.getVolumeState(volumes[i].getPath()))) {
+                                haveShared = true;
+                                break;
+                            }
+                        }
+                        Slog.d(TAG, "onStorageStateChanged - haveShared: " + haveShared);
+                        switchDisplay(haveShared);
+                    }
+                }
+            } else {
+                Slog.d(TAG, "onStorageStateChanged - [UMS Disable] mSettingUMS: " + mSettingUMS + ", on: " + on);
+                switchDisplay(on);
+
+                /*
+                * When no storage can be shared, just finish the usb storage activity.
+                * It happened the device with shared SD.
+                * 1. Insert SD card.
+                * 2. Launch Usb storage activiy.
+                * 3. Remove SD card.
+                * 4. Usb storage activity should be gone auto.
+                */
+                if (!isSharable()) {
+                    finish();
+                }
+            }
         }
     };
 
@@ -103,6 +204,30 @@ public class UsbStorageActivity extends Activity
             mStorageManager = (StorageManager) getSystemService(Context.STORAGE_SERVICE);
             if (mStorageManager == null) {
                 Log.w(TAG, "Failed to get StorageManager");
+            }
+        }
+
+        mStorageManager.registerListener(mStorageListener);
+
+        mSettingUMS = mSettingUMS | mStorageManager.isUsbMassStorageEnabled();
+        Log.w(TAG, "mSettingUMS=" + mSettingUMS);
+
+        if (bMtkSharedSdcardSupport) {
+            StorageVolume[] volumes = mStorageManager.getVolumeList();
+            if (volumes != null) {
+                for (int i=0; i<volumes.length; i++) {
+                    if (volumes[i].allowMassStorage() && !volumes[i].isEmulated()) {
+                        String path = volumes[i].getPath();
+                        String st = mStorageManager.getVolumeState(path);
+                        if (st != null) {
+                            /* Only count the number of the storage can be shared */
+                            if ( !st.equals(Environment.MEDIA_UNMOUNTABLE) && !st.equals(Environment.MEDIA_NOFS) &&
+                                !st.equals(Environment.MEDIA_REMOVED) && !st.equals(Environment.MEDIA_BAD_REMOVAL) ) {
+                                mAllowedShareNum++;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -133,6 +258,11 @@ public class UsbStorageActivity extends Activity
     @Override
     protected void onDestroy() {
         super.onDestroy();
+
+        if (mStorageManager != null && mStorageListener != null) {
+            mStorageManager.unregisterListener(mStorageListener);
+        }
+        mAsyncStorageHandler.getLooper().quit();
         mDestroyed = true;
     }
 
@@ -147,6 +277,7 @@ public class UsbStorageActivity extends Activity
 
     private void switchDisplayAsync(boolean usbStorageInUse) {
         if (usbStorageInUse) {
+            Slog.d(TAG, "switchDisplayAsync - [Mount] usbStorageInUse:  " + usbStorageInUse);
             mProgressBar.setVisibility(View.GONE);
             mUnmountButton.setVisibility(View.VISIBLE);
             mMountButton.setVisibility(View.GONE);
@@ -154,6 +285,7 @@ public class UsbStorageActivity extends Activity
             mBanner.setText(com.android.internal.R.string.usb_storage_stop_title);
             mMessage.setText(com.android.internal.R.string.usb_storage_stop_message);
         } else {
+            Slog.d(TAG, "switchDisplayAsync - [Unmount] usbStorageInUse:  " + usbStorageInUse);
             mProgressBar.setVisibility(View.GONE);
             mUnmountButton.setVisibility(View.GONE);
             mMountButton.setVisibility(View.VISIBLE);
@@ -167,8 +299,12 @@ public class UsbStorageActivity extends Activity
     protected void onResume() {
         super.onResume();
 
-        mStorageManager.registerListener(mStorageListener);
-        registerReceiver(mUsbStateReceiver, new IntentFilter(UsbManager.ACTION_USB_STATE));
+        mHasCheck = false;
+        //mStorageManager.registerListener(mStorageListener);
+		IntentFilter filter = new IntentFilter();
+		filter.addAction(UsbManager.ACTION_USB_STATE);
+		filter.addAction("com.mediatek.ppl.NOTIFY_LOCK");
+        registerReceiver(mUsbStateReceiver, filter);
         try {
             mAsyncStorageHandler.post(new Runnable() {
                 @Override
@@ -186,15 +322,26 @@ public class UsbStorageActivity extends Activity
         super.onPause();
 
         unregisterReceiver(mUsbStateReceiver);
-        if (mStorageManager == null && mStorageListener != null) {
-            mStorageManager.unregisterListener(mStorageListener);
-        }
+        //if (mStorageManager != null && mStorageListener != null) {
+        //    mStorageManager.unregisterListener(mStorageListener);
+        //}
     }
 
     private void handleUsbStateChanged(Intent intent) {
         boolean connected = intent.getExtras().getBoolean(UsbManager.USB_CONNECTED);
-        if (!connected) {
+        boolean isUMSmode = intent.getExtras().getBoolean(UsbManager.USB_FUNCTION_MASS_STORAGE);
+
+        Slog.d(TAG, "handleUsbStateChanged - connected:  " + connected + ", isUMSmode: " + isUMSmode);
+        if (!connected || !isUMSmode) {
+            /** If the USB cable was unplugged when UMS was enabled, set the UMS enable flag to false */
+            if (mSettingUMS) {
+                mSettingUMS = false;
+                Slog.d(TAG, "handleUsbStateChanged - [Unplug when UMS enabled] connected:  " + connected);
+            }
             // It was disconnected from the plug, so finish
+            if (bMtkSharedSdcardSupport) {
+				mSharedCount = 0;
+			}
             finish();
         }
     }
@@ -209,15 +356,21 @@ public class UsbStorageActivity extends Activity
 
     @Override
     public Dialog onCreateDialog(int id, Bundle args) {
+    	Log.i(TAG, "onCreateDialoge");
         switch (id) {
+
         case DLG_CONFIRM_KILL_STORAGE_USERS:
             return new AlertDialog.Builder(this)
                     .setTitle(R.string.dlg_confirm_kill_storage_users_title)
                     .setPositiveButton(R.string.dlg_ok, new DialogInterface.OnClickListener() {
                         public void onClick(DialogInterface dialog, int which) {
+                        	mHasCheck = false;
                             switchUsbMassStorage(true);
                         }})
-                    .setNegativeButton(R.string.cancel, null)
+                    .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {
+                    	public void onClick(DialogInterface dialog, int which) {
+                    		mHasCheck = false;
+                    	}})
                     .setMessage(R.string.dlg_confirm_kill_storage_users_text)
                     .setOnCancelListener(this)
                     .create();
@@ -261,9 +414,14 @@ public class UsbStorageActivity extends Activity
         mAsyncStorageHandler.post(new Runnable() {
             @Override
             public void run() {
+                if (bMtkSharedSdcardSupport) {
+					mSharedCount = 0;
+				}
                 if (on) {
+                    mSettingUMS = true;
                     mStorageManager.enableUsbMassStorage();
                 } else {
+                    mSettingUMS = false;
                     mStorageManager.disableUsbMassStorage();
                 }
             }
@@ -285,16 +443,35 @@ public class UsbStorageActivity extends Activity
             // Display error dialog
             scheduleShowDialog(DLG_ERROR_SHARING);
         }
-        String extStoragePath = Environment.getExternalStorageDirectory().toString();
         boolean showDialog = false;
         try {
-            int[] stUsers = ims.getStorageUsers(extStoragePath);
+            StorageVolume[] volumes = mStorageManager.getVolumeList();
+            int[] stUsers = null;
+            if (volumes != null) {
+                for (int i=0; i<volumes.length; i++) {
+                    if (volumes[i].allowMassStorage() && !volumes[i].isEmulated()) {
+                        String path = volumes[i].getPath();
+                        stUsers = ims.getStorageUsers(path);
+                        if (stUsers != null) {
+                            Slog.d(TAG, "checkStorageUsersAsync - path=" + path + ",length=" + stUsers.length);
+                            if(stUsers.length > 0) break;
+                        } else {
+                            Slog.d(TAG, "checkStorageUsersAsync - [NO Storage Users]");
+                        }
+                    }
+                }
+            }
             if (stUsers != null && stUsers.length > 0) {
                 showDialog = true;
             } else {
                 // List of applications on sdcard.
                 ActivityManager am = (ActivityManager)getSystemService(Context.ACTIVITY_SERVICE);
                 List<ApplicationInfo> infoList = am.getRunningExternalApplications();
+                if (infoList != null) {
+                    Slog.d(TAG, "checkStorageUsersAsync - infoList.size(): " + infoList.size());
+                } else {
+                    Slog.d(TAG, "checkStorageUsersAsync - [NO EXT RUNNING APPS]");
+                }
                 if (infoList != null && infoList.size() > 0) {
                     showDialog = true;
                 }
@@ -304,20 +481,36 @@ public class UsbStorageActivity extends Activity
             scheduleShowDialog(DLG_ERROR_SHARING);
         }
         if (showDialog) {
+            Slog.d(TAG, "checkStorageUsersAsync - [SHOW DIALOG] showDialog: " + showDialog);
             // Display dialog to user
             scheduleShowDialog(DLG_CONFIRM_KILL_STORAGE_USERS);
         } else {
+            Slog.d(TAG, "checkStorageUsersAsync - [NO DIALOG] showDialog: " + showDialog);
             if (localLOGV) Log.i(TAG, "Enabling UMS");
             switchUsbMassStorage(true);
         }
     }
 
     public void onClick(View v) {
+    	Log.i(TAG, "onClickaa"+ mHasCheck);
         if (v == mMountButton) {
            // Check for list of storage users and display dialog if needed.
-            checkStorageUsers();
+
+            if(false == mHasCheck) {
+                Log.i(TAG, "onClick"+ mHasCheck);
+                mHasCheck = true;
+                if (bMtkSharedSdcardSupport) {
+                    /*No storage can be shared. Change UI directedly.*/
+                    if (mAllowedShareNum == 0)
+                        switchDisplay(true);
+                    else
+                        checkStorageUsers();
+                } else
+                    checkStorageUsers();
+            }
         } else if (v == mUnmountButton) {
             if (localLOGV) Log.i(TAG, "Disabling UMS");
+            mHasCheck = false;
             switchUsbMassStorage(false);
         }
     }

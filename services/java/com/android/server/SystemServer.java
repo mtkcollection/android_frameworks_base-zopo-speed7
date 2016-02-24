@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,6 +110,50 @@ import java.io.File;
 import java.util.Timer;
 import java.util.TimerTask;
 
+/// M: Add For BOOTPROF LOG @{
+import java.io.IOException;
+import java.io.FileOutputStream;
+import java.io.FileNotFoundException;
+/// @}
+
+/// M: MSG Logger Manager @{
+import com.mediatek.msglogger.MessageMonitorService;
+/// MSG Logger Manager @}
+
+/// M: Add AudioProfile service
+import com.mediatek.audioprofile.AudioProfileService;
+
+/// M: Add SensorHubService @{
+import com.mediatek.sensorhub.ISensorHubManager;
+import com.mediatek.sensorhub.SensorHubService;
+/// @}
+/// M: Add SearchEngine service
+import com.mediatek.search.SearchEngineManagerService;
+/// @}
+/// M: add for PerfService feature @{
+import com.mediatek.perfservice.IPerfService;
+import com.mediatek.perfservice.IPerfServiceManager;
+import com.mediatek.perfservice.PerfServiceImpl;
+import com.mediatek.perfservice.PerfServiceManager;
+/// @}
+/// M: add for Mobile Manager Service @{
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.mom.MobileManagerService;
+/// @}
+
+/// M: RecoveryManagerService @{
+import com.mediatek.recovery.RecoveryManagerService;
+/// @}
+
+/// M: add for hdmi feature @{
+import com.mediatek.hdmi.MtkHdmiManagerService;
+/// @}
+/* Vanzo:yinjun on: Fri, 20 Mar 2015 21:03:26 +0800
+ * add remoteir
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
+
 public final class SystemServer {
     private static final String TAG = "SystemServer";
 
@@ -141,6 +190,13 @@ public final class SystemServer {
             "com.android.server.job.JobSchedulerService";
     private static final String PERSISTENT_DATA_BLOCK_PROP = "ro.frp.pst";
 
+    ///M: Add for EPDG service
+    private static final String EPDG_SERVICE_CLASS =
+            "com.mediatek.epdg.EpdgService";
+    ///M: Add for Rns service
+    private static final String RNS_SERVICE_CLASS =
+            "com.mediatek.rns.RnsService";
+
     private final int mFactoryTestMode;
     private Timer mProfilerSnapshotTimer;
 
@@ -157,6 +213,21 @@ public final class SystemServer {
 
     private boolean mOnlyCore;
     private boolean mFirstBoot;
+
+    /// M: add for Recovery Manager Service
+    private RecoveryManagerService mRecoveryManagerService;
+
+    /// M: For BOOTPROF LOG
+    static boolean mMTPROF_disable;
+
+    /// M: MSG Logger Manager
+    private static final boolean IS_USER_BUILD = "user".equals(Build.TYPE) || "userdebug".equals(Build.TYPE);
+
+/* Vanzo:libing on: Fri, 01 Nov 2013 14:22:26 +0800
+ * add hall switch
+ */
+    private static final String HALL_STATE_PATH = "/sys/class/switch/hall/state";
+// End of Vanzo:libing
 
     /**
      * Called to initialize native system services.
@@ -188,6 +259,11 @@ public final class SystemServer {
         // Here we go!
         Slog.i(TAG, "Entered the Android system server!");
         EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_SYSTEM_RUN, SystemClock.uptimeMillis());
+
+        /// M: BOOTPROF @{
+        mMTPROF_disable = "1".equals(SystemProperties.get("ro.mtprof.disable"));
+        addBootEvent(new String("Android:SysServerInit_START"));
+        /// @}
 
         // In case the runtime switched since last boot (such as when
         // the old runtime was removed in an OTA), set the system
@@ -238,6 +314,14 @@ public final class SystemServer {
         System.loadLibrary("android_servers");
         nativeInit();
 
+        ///M:Add for low storage feature,to delete the reserver file.@{
+        try {
+            Runtime.getRuntime().exec("rm -r /data/piggybank");
+        } catch (IOException e) {
+            Slog.e(TAG, "system server init delete piggybank fail" + e);
+        }
+        ///@}
+
         // Check whether we failed to shut down last time we tried.
         // This call may not return.
         performPendingShutdown();
@@ -257,13 +341,20 @@ public final class SystemServer {
         } catch (Throwable ex) {
             Slog.e("System", "******************************************");
             Slog.e("System", "************ Failure starting system services", ex);
-            throw ex;
+            /// M: RecoveryManagerService  @{
+            if (mRecoveryManagerService != null && ex instanceof RuntimeException) {
+                mRecoveryManagerService.handleException((RuntimeException)ex, true);
+            }
+            /// @}
         }
 
         // For debug builds, log event loop stalls to dropbox for analysis.
         if (StrictMode.conditionallyEnableDebugLogging()) {
             Slog.i(TAG, "Enabled StrictMode for system server main thread.");
         }
+
+        /// M: BOOTPROF
+        addBootEvent(new String("Android:SysServerInit_END"));
 
         // Loop forever.
         Looper.loop();
@@ -274,6 +365,23 @@ public final class SystemServer {
         Slog.w(TAG, "***********************************************");
         Slog.wtf(TAG, "BOOT FAILURE " + msg, e);
     }
+
+    /// M: Add BOOTPROF LOG @{
+    public static void addBootEvent(String bootevent) {
+        try {
+            if (!mMTPROF_disable) {
+                FileOutputStream fbp = new FileOutputStream("/proc/bootprof");
+                fbp.write(bootevent.getBytes());
+                fbp.flush();
+                fbp.close();
+            }
+        } catch (FileNotFoundException e) {
+            Slog.e("BOOTPROF", "Failure open /proc/bootprof, not found!", e);
+        } catch (java.io.IOException e) {
+            Slog.e("BOOTPROF", "Failure open /proc/bootprof entry", e);
+        }
+    }
+    /// @}
 
     private void performPendingShutdown() {
         final String shutdownAction = SystemProperties.get(
@@ -311,6 +419,21 @@ public final class SystemServer {
         // permissions.  We need this to complete before we initialize other services.
         Installer installer = mSystemServiceManager.startService(Installer.class);
 
+        /// M: MSG Logger Manager @{
+        if (!IS_USER_BUILD) {
+            try {
+                MessageMonitorService msgMonitorService = null;
+                msgMonitorService = new MessageMonitorService();
+                Slog.e(TAG, "Create message monitor service successfully .");
+
+                // Add this service to service manager
+                ServiceManager.addService(Context.MESSAGE_MONITOR_SERVICE, msgMonitorService.asBinder());
+            } catch (Throwable e) {
+                Slog.e(TAG, "Starting message monitor service exception ", e);
+            }
+        }
+        /// MSG Logger Manager @}
+
         // Activity manager runs the show.
         mActivityManagerService = mSystemServiceManager.startService(
                 ActivityManagerService.Lifecycle.class).getService();
@@ -344,10 +467,26 @@ public final class SystemServer {
             mOnlyCore = true;
         }
 
+        /// M: RecoveryManagerService  @{
+        boolean disabled = "0".equals(SystemProperties.get("ro.mtk_antibricking_level"));
+        if (!disabled) {
+            try {
+                Slog.i(TAG, "Recovery Manager");
+                mRecoveryManagerService = new RecoveryManagerService(mSystemContext);
+                if (mRecoveryManagerService != null) {
+                    ServiceManager.addService(Context.RECOVERY_SERVICE, mRecoveryManagerService.asBinder());
+                    mRecoveryManagerService.startBootMonitor();
+                }
+            } catch (Throwable e) {
+                reportWtf("Failure starting Recovery Manager", e);
+            }
+        }
+        /// @}
+
         // Start the package manager.
         Slog.i(TAG, "Package Manager");
         mPackageManagerService = PackageManagerService.main(mSystemContext, installer,
-                mFactoryTestMode != FactoryTest.FACTORY_TEST_OFF, mOnlyCore);
+        mFactoryTestMode != FactoryTest.FACTORY_TEST_OFF, mOnlyCore);
         mFirstBoot = mPackageManagerService.isFirstBoot();
         mPackageManager = mSystemContext.getPackageManager();
 
@@ -410,6 +549,21 @@ public final class SystemServer {
         ConsumerIrService consumerIr = null;
         AudioService audioService = null;
         MmsServiceBroker mmsService = null;
+/* Vanzo:yinjun on: Fri, 20 Mar 2015 21:00:17 +0800
+ * add remoteir
+ */
+        RemoteIrService remoteIr = null;
+// End of Vanzo: yinjun
+
+        /// M: add for Mobile Manager Service
+        MobileManagerService mom = null;
+/* Vanzo:libing on: Fri, 01 Nov 2013 14:22:46 +0800
+ * add hall switch
+ */
+        HallSwitchObserver hallSwitch = null;
+// End of Vanzo:libing
+        /// M: add for hdmi feature
+        MtkHdmiManagerService hdmiManager = null;
 
         boolean disableStorage = SystemProperties.getBoolean("config.disable_storage", false);
         boolean disableMedia = SystemProperties.getBoolean("config.disable_media", false);
@@ -423,6 +577,7 @@ public final class SystemServer {
         boolean isEmulator = SystemProperties.get("ro.kernel.qemu").equals("1");
 
         try {
+
             Slog.i(TAG, "Reading configuration...");
             SystemConfig.getInstance();
 
@@ -454,6 +609,18 @@ public final class SystemServer {
             contentService = ContentService.main(context,
                     mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL);
 
+            /// M: Mobile Manager Service must after PMS and before first permission checking @{
+            if (MobileManagerUtils.isSupported()) {
+                try {
+                    Slog.i(TAG, "MobileManagerService");
+                    mom = new MobileManagerService(context);
+                    ServiceManager.addService(Context.MOBILE_SERVICE, mom.asBinder());
+                } catch (Throwable e) {
+                    reportWtf("Failure creating MobileManagerService", e);
+                }
+            }
+            ///@}
+
             Slog.i(TAG, "System Content Providers");
             mActivityManagerService.installSystemProviders();
 
@@ -465,6 +632,19 @@ public final class SystemServer {
             consumerIr = new ConsumerIrService(context);
             ServiceManager.addService(Context.CONSUMER_IR_SERVICE, consumerIr);
 
+/* Vanzo:yinjun on: Fri, 20 Mar 2015 21:01:37 +0800
+ * add remoteir
+ */
+            if (FeatureOption.VANZO_FEATURE_REMOTEIR_SUPPORT) {
+                try {
+                    Slog.i(TAG, "Remote IR Service");
+                    remoteIr = new RemoteIrService(context);
+                    ServiceManager.addService(Context.REMOTE_IR_SERVICE, remoteIr);
+                } catch (Throwable e) {
+                    reportWtf("starting Remote IR Service", e);
+                }
+            }
+// End of Vanzo: yinjun
             mSystemServiceManager.startService(AlarmManagerService.class);
             alarm = IAlarmManager.Stub.asInterface(
                     ServiceManager.getService(Context.ALARM_SERVICE));
@@ -511,6 +691,12 @@ public final class SystemServer {
         } catch (RuntimeException e) {
             Slog.e("System", "******************************************");
             Slog.e("System", "************ Failure starting core service", e);
+            /** M: Recovery Manager still try to recover the exception,
+                      even if the exception currently not cuase boot failure  @{ */
+            if (mRecoveryManagerService != null) {
+                mRecoveryManagerService.handleException(e, false);
+            }
+            /** @} */
         }
 
         StatusBarManagerService statusBar = null;
@@ -521,6 +707,8 @@ public final class SystemServer {
         CountryDetectorService countryDetector = null;
         TextServicesManagerService tsms = null;
         LockSettingsService lockSettings = null;
+        PerfMgrStateNotifier perfMgrNotifier = null;
+        IPerfServiceManager perfServiceMgr = null;
         AssetAtlasService atlas = null;
         MediaRouterService mediaRouter = null;
 
@@ -700,6 +888,28 @@ public final class SystemServer {
                 } catch (Throwable e) {
                     reportWtf("starting Service Discovery Service", e);
                 }
+
+                ///M: Start EPDG service @{
+                if ("1".equals(SystemProperties.get("ro.mtk_epdg_support"))) {
+                    try {
+                        Slog.i(TAG, "EPDG Service");
+                        mSystemServiceManager.startService(EPDG_SERVICE_CLASS);
+                    } catch (Throwable e) {
+                        Slog.e(TAG, "Can't start EPDG service:" + e);
+                    }
+                }
+                /// @}
+                /// M: Start Rns service @{
+                if ("1".equals(SystemProperties.get("ro.mtk_epdg_support"))) {
+                    try {
+                        Slog.i(TAG, "RNS Service");
+                        mSystemServiceManager.startService(RNS_SERVICE_CLASS);
+                    } catch (Throwable e) {
+                        Slog.e(TAG, "Failure starting RNS Service", e);
+                    }
+                }
+                Slog.i(TAG, "RNS Service_END");
+                /// @}
             }
 
             if (!disableNonCoreServices) {
@@ -768,6 +978,16 @@ public final class SystemServer {
                 } catch (Throwable e) {
                     reportWtf("starting Search Service", e);
                 }
+
+                /// M: add search engine service @{
+                try {
+                    Slog.i(TAG, "Search Engine Service");
+                    ServiceManager.addService(Context.SEARCH_ENGINE_SERVICE,
+                                new SearchEngineManagerService(context));
+                } catch (Throwable e) {
+                    reportWtf("starting Search Engine Service", e);
+                }
+                /// @}
             }
 
             try {
@@ -799,8 +1019,45 @@ public final class SystemServer {
                 }
             }
 
+            /// M: Add AudioProfile service @{
+            // Disable audio profile service in bsp package
+            if (!disableMedia && false == SystemProperties.get("ro.mtk_bsp_package").equals("1")
+                    && true == SystemProperties.get("ro.mtk_audio_profiles").equals("1")) {
+                try {
+                    Slog.d(TAG, "AudioProfile Service");
+                    ServiceManager.addService(Context.AUDIO_PROFILE_SERVICE, new AudioProfileService(context));
+                } catch (Throwable e) {
+                    Slog.e(TAG, "starting AudioProfile Service", e);
+                }
+            }
+            ///@}
+
+            /// M: Add SensorHubService @{
+            if ("1".equals(SystemProperties.get("ro.mtk_sensorhub_support"))) {
+                try {
+                    Slog.d(TAG, "SensorHubService");
+                    ServiceManager.addService(ISensorHubManager.SENSORHUB_SERVICE, new SensorHubService(context));
+                } catch (Throwable e) {
+                    Slog.e(TAG, "starting SensorHub Service", e);
+                }
+            }
+            ///@}
+
             if (!disableNonCoreServices) {
                 mSystemServiceManager.startService(DockObserver.class);
+/* Vanzo:libing on: Fri, 01 Nov 2013 14:23:01 +0800
+ * add hall switch
+ */
+            File file = new File(HALL_STATE_PATH);
+            if (file.exists() ) {
+                try {
+                    Slog.i(TAG, "HallSwitch Observer");
+                    hallSwitch = new HallSwitchObserver(context);
+                    } catch (Throwable e) {
+                    Slog.e(TAG, "Failure starting HallSwitchObserver", e);
+                }
+            }
+// End of Vanzo:libing
             }
 
             if (!disableMedia) {
@@ -904,7 +1161,7 @@ public final class SystemServer {
                 mSystemServiceManager.startService(DreamManagerService.class);
             }
 
-            if (!disableNonCoreServices) {
+            if (!disableNonCoreServices && !SystemProperties.getBoolean("ro.hwui.disable_asset_atlas", false)) {
                 try {
                     Slog.i(TAG, "Assets Atlas Service");
                     atlas = new AssetAtlasService(context);
@@ -953,6 +1210,47 @@ public final class SystemServer {
             }
 
             mSystemServiceManager.startService(LauncherAppsService.class);
+
+            /// M: add for PerfService feature @{
+            if (SystemProperties.get("ro.mtk_perfservice_support").equals("1")) {
+                try {
+                    Slog.i(TAG, "PerfMgr state notifier");
+                    perfMgrNotifier = new PerfMgrStateNotifier();
+                    mActivityManagerService.registerActivityStateNotifier(perfMgrNotifier);
+                } catch (Throwable e) {
+                    Slog.e(TAG, "FAIL starting PerfMgrStateNotifier", e);
+                }
+
+                // Create PerfService manager thread and add service
+                try {
+                    perfServiceMgr = new PerfServiceManager(context);
+
+                    IPerfService perfService = null;
+                    perfService = new PerfServiceImpl(context, perfServiceMgr);
+
+                    Slog.d("perfservice", "perfService=" + perfService);
+                    if (perfService != null) {
+                        ServiceManager.addService(Context.MTK_PERF_SERVICE, perfService.asBinder());
+                    }
+
+                } catch (Throwable e) {
+                    Slog.e(TAG, "perfservice Failure starting PerfService", e);
+                }
+            }
+            /// @}
+
+            /// M: add for HDMI feature @{
+            if (!disableNonCoreServices && SystemProperties.get("ro.mtk_hdmi_support").equals("1")) {
+                try {
+                    Slog.i(TAG, "HDMI Manager Service");
+                    hdmiManager = new MtkHdmiManagerService(context);
+                    ServiceManager.addService(Context.HDMI_SERVICE,
+                            hdmiManager.asBinder());
+                } catch (Throwable e) {
+                    Slog.e(TAG, "Failure starting MtkHdmiManager", e);
+                }
+            }
+            /// @}
         }
 
         if (!disableNonCoreServices) {
@@ -1056,6 +1354,13 @@ public final class SystemServer {
         final AudioService audioServiceF = audioService;
         final MmsServiceBroker mmsServiceF = mmsService;
 
+        /// M: add for Mobile Manager Service
+        final MobileManagerService momF = mom;
+        /// M: add for Recovery ManagerService
+        final RecoveryManagerService recoveryF = mRecoveryManagerService;
+        /// M: add for hdmi feature
+        final IPerfServiceManager perfServiceF = perfServiceMgr;
+
         // We now tell the activity manager it is okay to run third party
         // code.  It will call back into us once it has gotten to the state
         // where third party code can really run (but before it has actually
@@ -1065,6 +1370,14 @@ public final class SystemServer {
             @Override
             public void run() {
                 Slog.i(TAG, "Making services ready");
+
+                // M: Mobile Manager Service
+                try {
+                    if (momF != null) momF.systemReady();
+                } catch (Throwable e) {
+                    reportWtf("making MobileManagerService ready", e);
+                }
+
                 mSystemServiceManager.startBootPhase(
                         SystemService.PHASE_ACTIVITY_MANAGER_READY);
 
@@ -1139,6 +1452,16 @@ public final class SystemServer {
                 } catch (Throwable e) {
                     reportWtf("Notifying Location Service running", e);
                 }
+                /// M: SystemServer-TestCases @{
+                if ((false == ("user".equals(Build.TYPE) || "userdebug".equals(Build.TYPE)))
+                    && SystemProperties.get("persist.sys.anr_sys_key").equals("1")) {
+                    new Handler().post(new Runnable() {
+                        public void run() {
+                            testSystemServerANR(context);
+                        }
+                    });
+                }
+                /// @}
                 try {
                     if (countryDetectorF != null) countryDetectorF.systemRunning();
                 } catch (Throwable e) {
@@ -1189,9 +1512,55 @@ public final class SystemServer {
                 } catch (Throwable e) {
                     reportWtf("Notifying MmsService running", e);
                 }
+
+                /// M: add for PerfService feature @{
+                if (SystemProperties.get("ro.mtk_perfservice_support").equals("1")) {
+                    // Notify PerfService manager of system ready
+                    try {
+                        if (perfServiceF != null) perfServiceF.systemReady();
+                    } catch (Throwable e) {
+                        reportWtf("making PerfServiceManager ready", e);
+                    }
+                }
+                /// @}
+
+                /// M: Recovery Manager Service @{
+                try {
+                    if (recoveryF != null) recoveryF.systemReady();
+                } catch (Throwable e) {
+                    reportWtf("making RecoveryManagerService ready", e);
+                }
+                /// @}
             }
         });
+
+        /// M: RecoveryManagerService @{
+        try {
+            if (mRecoveryManagerService != null) {
+                mRecoveryManagerService.stopBootMonitor();
+            }
+        } catch (Throwable e) {
+            reportWtf("Failure Stop Boot Monitor", e);
+        }
+        /// @}
     }
+
+    /// M: SystemServer-TestCases @{
+    static final ComponentName testSystemServerANR(Context context) {
+        ComponentName ret = null;
+        Log.i("ANR_DEBUG", "=== Start BadService2 ===");
+        final Intent intent = new Intent("com.android.badservicesysserver");
+        intent.setPackage("com.android.badservicesysserver");
+        ret = context.startService(intent);
+
+        if (ret != null)
+            Log.i("ANR_DEBUG", "=== result to start BadService2 === Name: " + ret.toString());
+        else
+            Log.i("ANR_DEBUG", "=== result to start BadService2 === Name: Null ");
+
+        return ret;
+    }
+    /// @}
 
     static final void startSystemUi(Context context) {
         Intent intent = new Intent();

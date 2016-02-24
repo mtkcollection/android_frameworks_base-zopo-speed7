@@ -5,7 +5,11 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_SRC_FILES := $(call all-subdir-java-files)
 
-LOCAL_JAVA_LIBRARIES := telephony-common ims-common
+LOCAL_JAVA_LIBRARIES := telephony-common \
+                        ims-common \
+                        mediatek-framework
+
+LOCAL_JAVA_STATIC_LIBRARIES := com.mediatek.providers.settings.ext
 
 LOCAL_PACKAGE_NAME := SettingsProvider
 LOCAL_CERTIFICATE := platform

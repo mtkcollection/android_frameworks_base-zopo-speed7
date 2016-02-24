@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +20,6 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include <SkBitmap.h>
 #include <SkCanvas.h>
@@ -130,7 +134,7 @@ static void drawPath(const SkPath *path, const SkPaint* paint, SkBitmap& bitmap,
 
     SkCanvas canvas(bitmap);
     canvas.translate(-left + offset, -top + offset);
-    canvas.drawPath(*path, pathPaint);
+    TIME_LOG("canvas.drawPath", canvas.drawPath(*path, pathPaint));
 }
 
 static PathTexture* createTexture(float left, float top, float offset,
@@ -154,10 +158,10 @@ PathCache::PathCache():
         mSize(0), mMaxSize(MB(DEFAULT_PATH_CACHE_SIZE)) {
     char property[PROPERTY_VALUE_MAX];
     if (property_get(PROPERTY_PATH_CACHE_SIZE, property, NULL) > 0) {
-        INIT_LOGD("  Setting %s cache size to %sMB", name, property);
+        INIT_LOGD("  Setting path cache size to %sMB", property);
         setMaxSize(MB(atof(property)));
     } else {
-        INIT_LOGD("  Using default %s cache size of %.2fMB", name, DEFAULT_PATH_CACHE_SIZE);
+        INIT_LOGD("  Using default path cache size of %.2fMB", DEFAULT_PATH_CACHE_SIZE);
     }
 
     mCache.setOnEntryRemovedListener(this);
@@ -232,6 +236,7 @@ void PathCache::removeTexture(PathTexture* texture) {
 
         if (texture->id) {
             Caches::getInstance().deleteTexture(texture->id);
+            TT_REMOVE(texture->id, "[PathCache.cpp] removeTexture -");
         }
         delete texture;
     }
@@ -248,14 +253,21 @@ void PathCache::purgeCache(uint32_t width, uint32_t height) {
 }
 
 void PathCache::trim() {
+    PATH_LOGD("PathCache::trim %d (%d)", mSize, mMaxSize);
     while (mSize > mMaxSize) {
         mCache.removeOldest();
     }
+
+    /// M: do not cache path if dirty in one DrawFrame
+    for (size_t i = 0; i < mNonCachePath.size(); i++) {
+        mCache.remove(mNonCachePath.itemAt(i));
+    }
+    mNonCachePath.clear();
 }
 
 PathTexture* PathCache::addTexture(const PathDescription& entry, const SkPath *path,
         const SkPaint* paint) {
-    ATRACE_NAME("Generate Path Texture");
+    ATRACE_NAME_L2("Generate Path Texture");
 
     float left, top, offset;
     uint32_t width, height;
@@ -296,12 +308,17 @@ void PathCache::generateTexture(const PathDescription& entry, SkBitmap* bitmap,
         if (!addToCache) {
             mSize += size;
         }
-        texture->cleanup = true;
+        /// M: do not need to clean up the texture if already in cache
+        ///    will be cleaned when trim
+        else {
+            texture->cleanup = true;
+        }
     }
 }
 
 void PathCache::clear() {
-    mCache.clear();
+    ALOGD("PathCache::clear count = %d", mCache.size());
+    TIME_LOG("PathCache::clear", mCache.clear());
 }
 
 void PathCache::generateTexture(SkBitmap& bitmap, Texture* texture) {
@@ -321,6 +338,7 @@ void PathCache::generateTexture(SkBitmap& bitmap, Texture* texture) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, texture->width, texture->height, 0,
             GL_ALPHA, GL_UNSIGNED_BYTE, bitmap.getPixels());
 
+    TT_ADD(texture->id, texture->width, texture->height, GL_ALPHA, GL_UNSIGNED_BYTE, String8("path"), "[PathCache.cpp] generateTexture +");
     texture->setFilter(GL_LINEAR);
     texture->setWrap(GL_CLAMP_TO_EDGE);
 }
@@ -335,7 +353,7 @@ PathCache::PathProcessor::PathProcessor(Caches& caches):
 
 void PathCache::PathProcessor::onProcess(const sp<Task<SkBitmap*> >& task) {
     PathTask* t = static_cast<PathTask*>(task.get());
-    ATRACE_NAME("pathPrecache");
+    ATRACE_NAME_L1("pathPrecache");
 
     float left, top, offset;
     uint32_t width, height;
@@ -423,9 +441,18 @@ PathTexture* PathCache::get(const SkPath* path, const SkPaint* paint) {
     entry.shape.path.mPath = path;
 
     PathTexture* texture = mCache.get(entry);
+    PATH_LOGD("PathCache::get path = %X, cached texture = %X, entry = %u", path, texture, entry.hash());
 
     if (!texture) {
         texture = addTexture(entry, path, paint);
+        
+        /// M: do not cache path if dirty in one DrawFrame
+        ///    all path should be cached in precache
+        ///    if not, this path may be updated after precache
+        ///    do not cache such path, otherwise it is accumulated till died
+        if (Caches::getInstance().tasks.canRunTasks()) {
+            mNonCachePath.push(entry);
+        }
     } else {
         // A bitmap is attached to the texture, this means we need to
         // upload it as a GL texture
@@ -489,6 +516,7 @@ void PathCache::precache(const SkPath* path, const SkPaint* paint) {
         // asks for a path texture. This is also when the cache limit will
         // be enforced.
         mCache.put(entry, texture);
+        PATH_LOGD("PathCache::precache path = %X, cached texture = %X, entry = %u", path, texture, entry.hash());
 
         if (mProcessor == NULL) {
             mProcessor = new PathProcessor(Caches::getInstance());

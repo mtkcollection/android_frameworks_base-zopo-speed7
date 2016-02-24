@@ -1,0 +1,32 @@
+﻿<!--
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- For Power Reboot -->
+  <string name="global_action_reboot">రీబూట్ చేయండి</string>
+  <string name="reboot_confirm_question">మీరు రీబూట్ చేయాలనుకుంటున్నారా?</string>
+  <string name="reboot_confirm">మీ ఫోన్ రీబూట్ అవుతుంది.</string>
+  <string name="global_action_shotscreen">స్క్రీన్ షాట్</string>
+  <string name="global_actions_toggle_dataconnection_mode">డేటా నెట్వర్క్ మోడ్</string>
+  <string name="global_actions_dataconnection_mode_on_status">డేటా కనెక్షన్ ఆన్ లో ఉంది</string>
+  <string name="global_actions_dataconnection_mode_off_status">డేటా కనెక్షన్ ఆఫ్ లోఉంది</string>
+  <string name="global_actions_toggle_wifi_mode">వైఫై మోడ్</string>
+  <string name="global_actions_wifi_mode_on_status">వైఫై ఆన్</string>
+  <string name="global_actions_wifi_mode_off_status">వైఫై ఆఫ్</string>
+  <string name="global_actions_toggle_longclick_notice">ప్రాంప్ట్: \n బలవంతంగా మూసివేసింది:లాంగ్ ప్రెస్ ఫోన్ స్క్రీన్ పై 6 సెకన్ల వరకు పవర్ బటన్ చేయండి.</string>
+</resources>

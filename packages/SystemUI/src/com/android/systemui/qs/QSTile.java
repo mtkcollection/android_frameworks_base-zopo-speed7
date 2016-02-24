@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +44,10 @@ import com.android.systemui.statusbar.policy.NetworkController;
 import com.android.systemui.statusbar.policy.RotationLockController;
 import com.android.systemui.statusbar.policy.HotspotController;
 import com.android.systemui.statusbar.policy.ZenModeController;
+
+import com.mediatek.systemui.statusbar.policy.AudioProfileController;
+import com.mediatek.systemui.statusbar.policy.HotKnotController;
+import com.mediatek.systemui.statusbar.policy.DataConnectionController;
 
 import java.util.Collection;
 import java.util.Objects;
@@ -174,7 +183,14 @@ public abstract class QSTile<TState extends State> implements Listenable {
     private void handleStateChanged() {
         boolean delayAnnouncement = shouldAnnouncementBeDelayed();
         if (mCallback != null) {
-            mCallback.onStateChanged(mState);
+
+            /// M: copy value for fixing racing condition @{
+            // QSTileView.setIcon will use different thread to access the state
+            TState state = newTileState();
+            mState.copyTo(state);
+            mCallback.onStateChanged(state);
+            /// M: copy value for fixing racing condition @}
+
             if (mAnnounceNextStateChange && !delayAnnouncement) {
                 String announcement = composeChangeAnnouncement();
                 if (announcement != null) {
@@ -307,6 +323,30 @@ public abstract class QSTile<TState extends State> implements Listenable {
         CastController getCastController();
         FlashlightController getFlashlightController();
         KeyguardMonitor getKeyguardMonitor();
+
+        /// M: add HotKnot in quicksetting
+        /**
+         *
+         * @getHotKnotController : get HotKnot Controller.
+         * @return HotKnotController
+         */
+        HotKnotController getHotKnotController();
+
+        /// M: add AudioProfile in quicksetting
+        /**
+         *
+         * @getAudioProfileController : get AudioProfile Controller.
+         * @return AudioProfileController
+         */
+        AudioProfileController getAudioProfileController();
+        
+        /// M: add DataConnection in quicksetting
+        /**
+         *
+         * @getDataConnectionController : get DataConnection Controller.
+         * @return DataConnectionController
+         */
+        DataConnectionController getDataConnectionController();
 
         public interface Callback {
             void onTilesChanged();

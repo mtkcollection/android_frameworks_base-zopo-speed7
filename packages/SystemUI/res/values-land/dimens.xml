@@ -44,4 +44,11 @@
     <!-- Standard notification width + gravity -->
     <dimen name="notification_panel_width">@dimen/standard_notification_panel_width</dimen>
     <integer name="notification_panel_layout_gravity">@integer/standard_notification_panel_layout_gravity</integer>
+	    <!--M:add for multi window@{-->
+    <dimen name="gridview_more_height">285dp</dimen>
+    <dimen name="gridview_column_width">100dp</dimen>
+    <dimen name="gridview_horizontal_spacing">0dp</dimen>
+    <dimen name="gridview_vertical_spacing">32dp</dimen>
+    <dimen name="float_container_width">4000dp</dimen>
+    <dimen name="float_bottom_min_width">1152dp</dimen>
 </resources>

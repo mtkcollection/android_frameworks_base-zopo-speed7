@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +27,9 @@
 #include "../RenderState.h"
 #include "RenderThread.h"
 
+/// M: log egl execution time
+#include "Debug.h"
+
 #define PROPERTY_RENDER_DIRTY_REGIONS "debug.hwui.render_dirty_regions"
 #define GLES_VERSION 2
 
@@ -31,6 +39,12 @@ EGLAPI void EGLAPIENTRY eglBeginFrame(EGLDisplay dpy, EGLSurface surface);
 namespace android {
 namespace uirenderer {
 namespace renderthread {
+
+#if defined(MTK_DEBUG_RENDERER)
+    #define EGL_LOGD(...) ALOGD(__VA_ARGS__)
+#else
+    #define EGL_LOGD(...)
+#endif
 
 #define ERROR_CASE(x) case x: return #x;
 static const char* egl_error_str(EGLint error) {
@@ -84,12 +98,14 @@ void EglManager::initialize() {
 
     ATRACE_NAME("Creating EGLContext");
 
-    mEglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    TIME_LOG("eglGetDisplay", mEglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY));
     LOG_ALWAYS_FATAL_IF(mEglDisplay == EGL_NO_DISPLAY,
             "Failed to get EGL_DEFAULT_DISPLAY! err=%s", egl_error_str());
 
     EGLint major, minor;
-    LOG_ALWAYS_FATAL_IF(eglInitialize(mEglDisplay, &major, &minor) == EGL_FALSE,
+    EGLBoolean success;
+    TIME_LOG("eglInitialize", success = eglInitialize(mEglDisplay, &major, &minor));
+    LOG_ALWAYS_FATAL_IF(success == EGL_FALSE,
             "Failed to initialize display %p! err=%s", mEglDisplay, egl_error_str());
 
     ALOGI("Initialized EGL, version %d.%d", (int)major, (int)minor);
@@ -132,8 +148,9 @@ void EglManager::loadConfig() {
     };
 
     EGLint num_configs = 1;
-    if (!eglChooseConfig(mEglDisplay, attribs, &mEglConfig, num_configs, &num_configs)
-            || num_configs != 1) {
+    EGLBoolean success;
+    TIME_LOG("eglChooseConfig", success = eglChooseConfig(mEglDisplay, attribs, &mEglConfig, num_configs, &num_configs));
+    if (!success || num_configs != 1) {
         // Failed to get a valid config
         if (mCanSetPreserveBuffer) {
             ALOGW("Failed to choose config with EGL_SWAP_BEHAVIOR_PRESERVED, retrying without...");
@@ -148,9 +165,10 @@ void EglManager::loadConfig() {
 
 void EglManager::createContext() {
     EGLint attribs[] = { EGL_CONTEXT_CLIENT_VERSION, GLES_VERSION, EGL_NONE };
-    mEglContext = eglCreateContext(mEglDisplay, mEglConfig, EGL_NO_CONTEXT, attribs);
+    TIME_LOG("eglCreateContext", mEglContext = eglCreateContext(mEglDisplay, mEglConfig, EGL_NO_CONTEXT, attribs));
     LOG_ALWAYS_FATAL_IF(mEglContext == EGL_NO_CONTEXT,
         "Failed to create context, error = %s", egl_error_str());
+    EGL_LOGD("Created EGL context (%p)", mEglContext);
 }
 
 void EglManager::setTextureAtlas(const sp<GraphicBuffer>& buffer,
@@ -186,14 +204,15 @@ void EglManager::usePBufferSurface() {
 
     if (mPBufferSurface == EGL_NO_SURFACE) {
         EGLint attribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
-        mPBufferSurface = eglCreatePbufferSurface(mEglDisplay, mEglConfig, attribs);
+        TIME_LOG("eglCreatePbufferSurface", mPBufferSurface = eglCreatePbufferSurface(mEglDisplay, mEglConfig, attribs));
     }
     makeCurrent(mPBufferSurface);
 }
 
 EGLSurface EglManager::createSurface(EGLNativeWindowType window) {
     initialize();
-    EGLSurface surface = eglCreateWindowSurface(mEglDisplay, mEglConfig, window, NULL);
+    EGLSurface surface;
+    TIME_LOG("eglCreateWindowSurface", surface = eglCreateWindowSurface(mEglDisplay, mEglConfig, window, NULL));
     LOG_ALWAYS_FATAL_IF(surface == EGL_NO_SURFACE,
             "Failed to create EGLSurface for window %p, eglErr = %s",
             (void*) window, egl_error_str());
@@ -204,7 +223,9 @@ void EglManager::destroySurface(EGLSurface surface) {
     if (isCurrent(surface)) {
         makeCurrent(EGL_NO_SURFACE);
     }
-    if (!eglDestroySurface(mEglDisplay, surface)) {
+    EGLBoolean success;
+    TIME_LOG("eglDestroySurface", success = eglDestroySurface(mEglDisplay, surface));
+    if (!success) {
         ALOGW("Failed to destroy surface %p, error=%s", (void*)surface, egl_error_str());
     }
 }
@@ -218,11 +239,13 @@ void EglManager::destroy() {
     }
 
     mRenderThread.renderState().onGLContextDestroyed();
-    eglDestroyContext(mEglDisplay, mEglContext);
-    eglDestroySurface(mEglDisplay, mPBufferSurface);
-    eglMakeCurrent(mEglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    eglTerminate(mEglDisplay);
-    eglReleaseThread();
+    TIME_LOG("eglDestroyContext", eglDestroyContext(mEglDisplay, mEglContext));
+    EGL_LOGD("Destroyed EGL context (%p)", mEglContext);
+    TIME_LOG("eglDestroySurface", eglDestroySurface(mEglDisplay, mPBufferSurface));
+    TIME_LOG("eglMakeCurrent", eglMakeCurrent(mEglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    TIME_LOG("eglTerminate", eglTerminate(mEglDisplay));
+    EGL_LOGD("Terminated EGL display (%p)", mEglDisplay);
+    TIME_LOG("eglReleaseThread", eglReleaseThread());
 
     mEglDisplay = EGL_NO_DISPLAY;
     mEglContext = EGL_NO_CONTEXT;
@@ -237,10 +260,14 @@ bool EglManager::makeCurrent(EGLSurface surface) {
         // If we are setting EGL_NO_SURFACE we don't care about any of the potential
         // return errors, which would only happen if mEglDisplay had already been
         // destroyed in which case the current context is already NO_CONTEXT
-        eglMakeCurrent(mEglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    } else if (!eglMakeCurrent(mEglDisplay, surface, surface, mEglContext)) {
-        LOG_ALWAYS_FATAL("Failed to make current on surface %p, error=%s",
+        TIME_LOG("eglMakeCurrent", eglMakeCurrent(mEglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    } else {
+        EGLBoolean success;
+        TIME_LOG("eglMakeCurrent", success = eglMakeCurrent(mEglDisplay, surface, surface, mEglContext));
+        if (!success) {
+            LOG_ALWAYS_FATAL("Failed to make current on surface %p, error=%s",
                 (void*)surface, egl_error_str());
+        }
     }
     mCurrentSurface = surface;
     return true;
@@ -251,18 +278,22 @@ void EglManager::beginFrame(EGLSurface surface, EGLint* width, EGLint* height) {
             "Tried to beginFrame on EGL_NO_SURFACE!");
     makeCurrent(surface);
     if (width) {
-        eglQuerySurface(mEglDisplay, surface, EGL_WIDTH, width);
+        TIME_LOG("eglQuerySurface", eglQuerySurface(mEglDisplay, surface, EGL_WIDTH, width));
     }
     if (height) {
-        eglQuerySurface(mEglDisplay, surface, EGL_HEIGHT, height);
+        TIME_LOG("eglQuerySurface", eglQuerySurface(mEglDisplay, surface, EGL_HEIGHT, height));
     }
-    eglBeginFrame(mEglDisplay, surface);
+    /// M: use basic because driver has added systrace for it
+    nsecs_t duration;
+    TIME_LOG_BASIC("eglBeginFrame", eglBeginFrame(mEglDisplay, surface), duration);
     mInFrame = true;
 }
 
 bool EglManager::swapBuffers(EGLSurface surface) {
     mInFrame = false;
-    eglSwapBuffers(mEglDisplay, surface);
+    /// M: use basic because driver has added systrace for it
+    nsecs_t duration;
+    TIME_LOG_BASIC("eglSwapBuffers", eglSwapBuffers(mEglDisplay, surface), duration);
     EGLint err = eglGetError();
     if (CC_LIKELY(err == EGL_SUCCESS)) {
         return true;
@@ -289,8 +320,8 @@ bool EglManager::setPreserveBuffer(EGLSurface surface, bool preserve) {
 
     bool preserved = false;
     if (mCanSetPreserveBuffer) {
-        preserved = eglSurfaceAttrib(mEglDisplay, surface, EGL_SWAP_BEHAVIOR,
-                preserve ? EGL_BUFFER_PRESERVED : EGL_BUFFER_DESTROYED);
+        TIME_LOG("eglSurfaceAttrib", preserved = eglSurfaceAttrib(mEglDisplay, surface, EGL_SWAP_BEHAVIOR,
+                preserve ? EGL_BUFFER_PRESERVED : EGL_BUFFER_DESTROYED));
         if (CC_UNLIKELY(!preserved)) {
             ALOGW("Failed to set EGL_SWAP_BEHAVIOR on surface %p, error=%s",
                     (void*) surface, egl_error_str());
@@ -299,7 +330,9 @@ bool EglManager::setPreserveBuffer(EGLSurface surface, bool preserve) {
     if (CC_UNLIKELY(!preserved)) {
         // Maybe it's already set?
         EGLint swapBehavior;
-        if (eglQuerySurface(mEglDisplay, surface, EGL_SWAP_BEHAVIOR, &swapBehavior)) {
+        EGLBoolean success;
+        TIME_LOG("eglQuerySurface", success = eglQuerySurface(mEglDisplay, surface, EGL_SWAP_BEHAVIOR, &swapBehavior));
+        if (success) {
             preserved = (swapBehavior == EGL_BUFFER_PRESERVED);
         } else {
             ALOGW("Failed to query EGL_SWAP_BEHAVIOR on surface %p, error=%p",

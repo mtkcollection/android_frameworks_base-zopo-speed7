@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +46,7 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
+import android.hardware.display.DisplayManager;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Handler;
@@ -59,11 +65,11 @@ import android.service.notification.NotificationListenerService.RankingMap;
 import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.Log;
-import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.view.Display;
 import android.view.IWindowManager;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -102,6 +108,15 @@ import com.android.systemui.statusbar.stack.NotificationStackScrollLayout;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+/// M: add for multi window @{
+import com.android.systemui.floatpanel.FloatPanelView;
+import com.android.systemui.statusbar.phone.PhoneStatusBar;
+import com.mediatek.xlog.Xlog;
+import android.os.ServiceManager;
+import android.os.storage.IMountService;
+import android.os.storage.StorageManager;
+
+/// @}
 
 import static com.android.keyguard.KeyguardHostView.OnDismissAction;
 
@@ -128,6 +143,9 @@ public abstract class BaseStatusBar extends SystemUI implements
     protected static final int MSG_HIDE_HEADS_UP = 1029;
     protected static final int MSG_ESCALATE_HEADS_UP = 1030;
     protected static final int MSG_DECAY_HEADS_UP = 1031;
+	/// M: add for multi window 
+		protected static final int MSG_TOGGLE_FLOAT_PANEL = 2029;
+		protected static final int MSG_CLOSE_FLOAT_PANEL = 2030;
 
     protected static final boolean ENABLE_HEADS_UP = true;
     // scores above this threshold should be displayed in heads up mode.
@@ -222,6 +240,9 @@ public abstract class BaseStatusBar extends SystemUI implements
     private boolean mDeviceProvisioned = false;
 
     private RecentsComponent mRecents;
+	/// M: add for multi window
+	   private FloatPanelView mFloatPanelView;
+	   private View.OnClickListener mEditButtonListner;
 
     protected int mZenMode;
 
@@ -723,6 +744,10 @@ public abstract class BaseStatusBar extends SystemUI implements
             mLayoutDirection = ld;
             refreshLayout(ld);
         }
+		 /// M: add for multi window. @{
+        cancelCloseFloatPanel();
+        postCloseFloatPanel();
+        /// }@
     }
 
     protected View updateNotificationVetoButton(View row, StatusBarNotification n) {
@@ -1256,6 +1281,16 @@ public abstract class BaseStatusBar extends SystemUI implements
                      mSearchPanelView.show(false, true);
                  }
                  break;
+	    /// M: add for multi window @{
+            case MSG_TOGGLE_FLOAT_PANEL:
+                Xlog.d(TAG, "Toggle float panel.");
+                toggleFloatPanel();
+                break;
+            case MSG_CLOSE_FLOAT_PANEL:
+                Xlog.d(TAG, "Close float panel.");
+                closeFloatPanel();
+                break;
+             /// @}
             }
         }
     }
@@ -1356,6 +1391,9 @@ public abstract class BaseStatusBar extends SystemUI implements
                 (NotificationContentView) row.findViewById(R.id.expanded);
         NotificationContentView expandedPublic =
                 (NotificationContentView) row.findViewById(R.id.expandedPublic);
+
+        /// M: Notification UI Support RTL.
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
 
         row.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
 
@@ -2101,13 +2139,21 @@ public abstract class BaseStatusBar extends SystemUI implements
         boolean accessibilityForcesLaunch = isFullscreen
                 && mAccessibilityManager.isTouchExplorationEnabled();
 
+
+        /// M: Modify ScreenOn API @{
+        final DisplayManager displayManager = (DisplayManager) mContext
+                .getSystemService(Context.DISPLAY_SERVICE);
+        boolean isScreeOn = displayManager.getDisplay(Display.DEFAULT_DISPLAY).getRealState()
+                == Display.STATE_ON;        
         boolean interrupt = (isFullscreen || (isHighPriority && (isNoisy || hasTicker)))
                 && isAllowed
                 && !accessibilityForcesLaunch
-                && mPowerManager.isScreenOn()
+                // && mPowerManager.isScreenOn()
+                && isScreeOn
                 && (!mStatusBarKeyguardViewManager.isShowing()
                         || mStatusBarKeyguardViewManager.isOccluded())
                 && !mStatusBarKeyguardViewManager.isInputRestricted();
+        /// M: Modify ScreenOn API @}
         try {
             interrupt = interrupt && !mDreamManager.isDreaming();
         } catch (RemoteException e) {
@@ -2176,14 +2222,269 @@ public abstract class BaseStatusBar extends SystemUI implements
     }
 
     public boolean isKeyguardSecure() {
-        if (mStatusBarKeyguardViewManager == null) {
-            // startKeyguard() hasn't been called yet, so we don't know.
-            // Make sure anything that needs to know isKeyguardSecure() checks and re-checks this
-            // value onVisibilityChanged().
-            Slog.w(TAG, "isKeyguardSecure() called before startKeyguard(), returning false",
-                    new Throwable());
-            return false;
-        }
         return mStatusBarKeyguardViewManager.isSecure();
     }
+
+    /** M: Support "SystemUI - SIM indicator". @{ */
+    public void showSimIndicator(String businessType) {}
+    public void hideSimIndicator(){}
+    /** @} */
+
+    /** M: [SystemUI] Support Smartbook Feature. @{ */
+    public void dispatchStatusBarKeyEvent(KeyEvent event) {}
+    /** @} */
+	  /// M: add for multi window @{
+    public boolean isFloatPanelOpened() {
+        return mFloatPanelView != null ? mFloatPanelView.isShown() : false;
+    }
+
+    public void changgeFloatPanelFocus(boolean focus) {
+//        Xlog.d(TAG, "changgeFloatPanelFocus: focus = " + focus + ",mFloatPanelView = "
+//                + mFloatPanelView);
+        if (mFloatPanelView != null) {
+            WindowManager.LayoutParams lp = getFloatLayoutParams(mFloatPanelView.getLayoutParams(),
+                    focus);
+            mWindowManager.updateViewLayout(mFloatPanelView, lp);
+        }
+    }
+
+    public void setExtensionButtonVisibility(int visibility) {
+
+    }
+
+	public void setFloatButtonVisibility(int visibility) {
+
+    }
+
+    public void updateFloatButtonIcon(boolean flaotPanelOpen) {
+
+    }
+	public void updateFloatButtonIconOnly(boolean floatPanelOpen) { /// M: [SystemUI] [Tablet Only]Support "Multi Window" 
+
+    }
+    public void toggleFloatApps() {
+        int msg = MSG_TOGGLE_FLOAT_PANEL;
+        mHandler.removeMessages(msg);
+        mHandler.sendEmptyMessage(msg);
+    }
+
+    public void closeFloatPanel(int delayMillis) {
+        mHandler.removeMessages(MSG_CLOSE_FLOAT_PANEL);
+        mHandler.sendEmptyMessageDelayed(MSG_CLOSE_FLOAT_PANEL, delayMillis);
+    }
+
+    public void cancelCloseFloatPanel() {
+        mHandler.removeMessages(MSG_CLOSE_FLOAT_PANEL);
+    }
+
+    public void postCloseFloatPanel() {
+        closeFloatPanel(6 * 1000);
+    }
+    
+    protected WindowManager.LayoutParams getFloatLayoutParams(LayoutParams layoutParams,
+            boolean focus) {
+        return null;
+    }
+
+    public void toggleFloatPanel() {
+        LayoutInflater inflater = (LayoutInflater) mContext
+                .getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        int visible = View.SYSTEM_UI_FLAG_VISIBLE;//
+        if (mFloatPanelView == null) {
+            mFloatPanelView = (FloatPanelView) inflater.inflate(R.layout.float_control_panel, null,
+                    false);
+            mFloatPanelView.setBar(this);
+            if (mEditButtonListner == null) {
+                mEditButtonListner = new View.OnClickListener() {
+                    public void onClick(View v) {
+						if (mFloatPanelView != null) {/// M: to fix the JE issue of ALPS01457183
+	                        mFloatPanelView.enterExtensionMode();
+	                        postCloseFloatPanel();
+						}
+                    }
+                };
+            }
+            ((PhoneStatusBar) this).setNavigationBarEditFloatListener(mEditButtonListner);
+        }
+        Xlog.d(TAG, "toggleFloatPanel: mFloatPanelView = " + mFloatPanelView + ", shown = "
+                + mFloatPanelView.isShown());
+        boolean floatPanelOpen = mFloatPanelView.isShown();
+        if (floatPanelOpen) {
+            mFloatPanelView.setVisibility(View.INVISIBLE);
+            if (this instanceof PhoneStatusBar) {
+                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+                ((PhoneStatusBar) this).updateFloatButtonIcon(floatPanelOpen);
+            } else {
+                mFloatPanelView.setSystemUiVisibility(visible);
+            }
+            mWindowManager.removeView(mFloatPanelView);
+            mFloatPanelView = null;
+            cancelCloseFloatPanel();
+        } else {
+            WindowManager.LayoutParams lp = getFloatLayoutParams(mFloatPanelView.getLayoutParams(),
+                    true);
+            mWindowManager.addView(mFloatPanelView, lp);
+            mFloatPanelView.setVisibility(View.VISIBLE);
+            visible = View.STATUS_BAR_DISABLE_BACK | View.STATUS_BAR_DISABLE_HOME
+                    | View.STATUS_BAR_DISABLE_RECENT;
+            if (this instanceof PhoneStatusBar) {
+                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+                ((PhoneStatusBar) this).updateFloatButtonIcon(floatPanelOpen);
+            } else {
+                mFloatPanelView.setSystemUiVisibility(visible);
+            }
+            setExtensionButtonVisibility(View.VISIBLE);
+            postCloseFloatPanel();
+        }
+    }
+	///* M:ALPS01454734 Icon of multi window display on lock screen,toggleFloatPanel() based*/
+	public void toggleFloatPanelScreenOff() {			
+       /* LayoutInflater inflater = (LayoutInflater) mContext
+                .getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        int visible = View.SYSTEM_UI_FLAG_VISIBLE;//No use
+        if (mFloatPanelView == null) {
+            mFloatPanelView = (FloatPanelView) inflater.inflate(R.layout.float_control_panel, null,
+                    false);
+            mFloatPanelView.setBar(this);
+            if (mEditButtonListner == null) {
+                mEditButtonListner = new View.OnClickListener() {
+                    public void onClick(View v) {
+						if (mFloatPanelView != null) {/// M: to fix the JE issue of ALPS01457183
+	                        mFloatPanelView.enterExtensionMode();
+	                        postCloseFloatPanel();
+						}
+                    }
+                };
+            }
+            ((PhoneStatusBar) this).setNavigationBarEditFloatListener(mEditButtonListner);
+        }
+        Xlog.d(TAG, "toggleFloatPanel: mFloatPanelView = " + mFloatPanelView + ", shown = "
+                + mFloatPanelView.isShown()+ "visible = "+visible);
+        boolean floatPanelOpen = mFloatPanelView.isShown();
+       if (floatPanelOpen) { 
+            mFloatPanelView.setVisibility(View.INVISIBLE);
+
+			visible = View.STATUS_BAR_DISABLE_BACK | View.STATUS_BAR_DISABLE_HOME
+                    | View.STATUS_BAR_DISABLE_RECENT|View.STATUS_BAR_DISABLE_CLOCK
+                    |View.STATUS_BAR_DISABLE_SEARCH;
+			
+            if (this instanceof PhoneStatusBar) {
+                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+                ((PhoneStatusBar) this).updateFloatButtonIcon(floatPanelOpen);
+			    ((PhoneStatusBar) this).setExtensionButtonVisibility(View.INVISIBLE);
+			    ((PhoneStatusBar) this).setFloatButtonVisibility(View.INVISIBLE);
+            } else {
+                mFloatPanelView.setSystemUiVisibility(visible);
+            }
+            mWindowManager.removeView(mFloatPanelView);
+            mFloatPanelView = null;
+            cancelCloseFloatPanel();
+        } else {
+            WindowManager.LayoutParams lp = getFloatLayoutParams(mFloatPanelView.getLayoutParams(),
+                    true);
+            mWindowManager.addView(mFloatPanelView, lp);
+            mFloatPanelView.setVisibility(View.VISIBLE);
+            visible = View.STATUS_BAR_DISABLE_BACK | View.STATUS_BAR_DISABLE_HOME
+                    | View.STATUS_BAR_DISABLE_RECENT;
+            if (this instanceof PhoneStatusBar) {
+                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+                ((PhoneStatusBar) this).updateFloatButtonIcon(floatPanelOpen);
+            } else {
+                mFloatPanelView.setSystemUiVisibility(visible);
+            }
+            setExtensionButtonVisibility(View.VISIBLE);
+            postCloseFloatPanel();
+        }*/
+
+	   ///M:ALPS01898743,ALPS01901240,always show float button when  keyguard not set / Don not show float button on keyguard  
+        Log.d(TAG, "toggleFloatPanelScreenOff");
+	new AsyncTask<Void, Void, Void>() {
+                int type = StorageManager.CRYPT_TYPE_PASSWORD;
+
+                @Override
+                public Void doInBackground(Void... v) {
+                    try {
+                        final IMountService service = getMountService();
+                        type = service.getPasswordType();
+                       Log.d(TAG, "getPasswordType_type= " + type);
+                    } catch (Exception e) {
+                        Log.d(TAG, "Error calling mount service " + e);
+                    }
+                    return null;
+                }
+
+                @Override
+                public void onPostExecute(java.lang.Void v) {
+                    if(type == 1) {//NONE(no keygurd)
+			closeFloatPanel();
+                    } else {               
+			closeFloatPanelNotShowFloatButton();
+                    }
+                }
+            }.execute();
+    }
+
+    public void closeFloatPanel() {
+        final int visible = View.SYSTEM_UI_FLAG_VISIBLE;
+        Xlog.d(TAG, "closeFloatPanel: mFloatPanelView = " + mFloatPanelView + ",visible = "
+                + visible + ", shown = "
+                + ((mFloatPanelView != null) ? mFloatPanelView.isShown() : "null"));
+        if (mFloatPanelView != null && mFloatPanelView.isShown()) {
+            mFloatPanelView.setVisibility(View.INVISIBLE);
+            if (this instanceof PhoneStatusBar) {
+                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+                ((PhoneStatusBar) this).updateFloatButtonIcon(true);
+            } else {
+                mFloatPanelView.setSystemUiVisibility(visible);
+            }
+            mWindowManager.removeView(mFloatPanelView);
+            mFloatPanelView = null;
+        }
+    }
+	 public void closeFloatPanelNotShowFloatButton() {
+		  Log.d(TAG, "closeFloatPanelNotShowFloatButton");
+		  final int	 visible =  View.STATUS_BAR_DISABLE_HOME
+		                    | View.STATUS_BAR_DISABLE_RECENT|View.STATUS_BAR_DISABLE_CLOCK
+		                    |View.STATUS_BAR_DISABLE_SEARCH;
+		        if (mFloatPanelView != null && mFloatPanelView.isShown()) {
+		            mFloatPanelView.setVisibility(View.INVISIBLE);
+		            if (this instanceof PhoneStatusBar) {
+				
+		                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+		                ((PhoneStatusBar) this).updateFloatButtonIcon(true);
+						Log.d(TAG, "#updateNavigationBarIcon#");
+		            } else {
+		                mFloatPanelView.setSystemUiVisibility(visible);
+		            }
+				setExtensionButtonVisibility(View.INVISIBLE);
+				setFloatButtonVisibility(View.INVISIBLE);
+		            mWindowManager.removeView(mFloatPanelView);
+		            mFloatPanelView = null;
+		        }else{
+					
+					  if (this instanceof PhoneStatusBar) {		
+				                ((PhoneStatusBar) this).updateNavigationBarIcon(visible);
+				                ((PhoneStatusBar) this).updateFloatButtonIcon(true);						
+				            } 
+				        setExtensionButtonVisibility(View.INVISIBLE);
+					setFloatButtonVisibility(View.INVISIBLE);
+			}
+    }
+    /// @}
+    
+    /** M: [SystemUI] BMW. @{ */
+    public void showRestoreButton(boolean flag) {}
+    /** @} */  
+    /** M: [SystemUI] Support SIM Info Notification. @{ */
+    public void updateNotificationSimInfo(NotificationData.Entry entry) {}
+    /** @} */
+   ///M:for multi-window@{ 
+   private IMountService getMountService() {
+        final IBinder service = ServiceManager.getService("mount");
+        if (service != null) {
+            return IMountService.Stub.asInterface(service);
+        }
+        return null;
+    }
+   /** @} */
 }

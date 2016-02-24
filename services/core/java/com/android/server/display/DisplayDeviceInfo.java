@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +109,13 @@ final class DisplayDeviceInfo {
     public static final int TOUCH_EXTERNAL = 2;
 
     /**
+     * M:[SmartBook] Extra info: Local dispaly device type definition
+     */
+    public static final int EXTRA_TYPE_LCM = 0;
+    public static final int EXTRA_TYPE_HDMI_MHL = 1;
+    public static final int EXTRA_TYPE_SMARTBOOK = 2;
+
+    /**
      * Gets the name of the display device, which may be derived from EDID or
      * other sources. The name may be localized and displayed to the user.
      */
@@ -202,6 +214,8 @@ final class DisplayDeviceInfo {
      */
     public String address;
 
+    /// M:[SmartBook] Add extra info for smartbook
+    public int subtype = EXTRA_TYPE_LCM;
     /**
      * Display state.
      */
@@ -307,6 +321,7 @@ final class DisplayDeviceInfo {
             sb.append(", address ").append(address);
         }
         sb.append(", state ").append(Display.stateToString(state));
+        sb.append(", subtype ").append(subtype);
         if (ownerUid != 0 || ownerPackageName != null) {
             sb.append(", owner ").append(ownerPackageName);
             sb.append(" (uid ").append(ownerUid).append(")");

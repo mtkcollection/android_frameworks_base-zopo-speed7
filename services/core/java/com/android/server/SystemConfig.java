@@ -387,6 +387,17 @@ public class SystemConfig {
                 if (gidStr != null) {
                     int gid = Process.getGidForName(gidStr);
                     perm.gids = appendInt(perm.gids, gid);
+/* Vanzo:hanshengpeng on: Tue, 09 Jun 2015 15:30:14 +0800
+ * Bugfix #78720,add media_rw permission to external sdcard if BUILD_CTS=no
+ */
+                    if (!com.android.featureoption.FeatureOption.BUILD_CTS) {
+                        if ("android.permission.WRITE_EXTERNAL_STORAGE".equals(name) && "sdcard_rw".equals(gidStr)
+                                || "android.permission.ACCESS_ALL_EXTERNAL_STORAGE".equals(name) && "sdcard_all".equals(gidStr)) {
+                            perm.gids = appendInt(perm.gids, Process.getGidForName("media_rw"));
+                            Slog.d(TAG, "add permission -> " + name + ", to group -> media_rw");
+                        }
+                    }
+// End of Vanzo:hanshengpeng
                 } else {
                     Slog.w(TAG, "<group> without gid at "
                             + parser.getPositionDescription());

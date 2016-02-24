@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +55,7 @@ import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockPatternView;
+import com.mediatek.providers.utils.ProvidersUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -58,12 +64,18 @@ import java.io.File;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
+/* Vanzo:tanglei on: Tue, 10 Feb 2015 11:12:53 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:tanglei
 
 /**
  * Database helper class for {@link SettingsProvider}.
  * Mostly just has a bit {@link #onCreate} to initialize the database.
  */
 public class DatabaseHelper extends SQLiteOpenHelper {
+    private ProvidersUtils mUtils;
+
     private static final String TAG = "SettingsProvider";
     private static final String DATABASE_NAME = "settings.db";
 
@@ -741,7 +753,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             try {
                 stmt = db.compileStatement("INSERT INTO system(name,value)"
                         + " VALUES(?,?);");
+/* Vanzo:tanglei on: Tue, 10 Feb 2015 11:10:44 +0800
+ * enable set install location
                 loadSetting(stmt, Global.SET_INSTALL_LOCATION, 0);
+ */
+                loadSetting(stmt, Global.SET_INSTALL_LOCATION,
+                        FeatureOption.VANZO_FEATURE_ENABLE_SET_INSTALL_LOCATION);
+// End of Vanzo:tanglei
                 loadSetting(stmt, Global.DEFAULT_INSTALL_LOCATION,
                         PackageHelper.APP_INSTALL_AUTO);
                 db.setTransactionSuccessful();
@@ -803,7 +821,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         if (upgradeVersion == 58) {
             /* Add default for new Auto Time Zone */
+/* Vanzo:zhangjingzhi on: Wed, 04 Mar 2015 16:44:50 +0800
+ *connon feature VANZO_FEATURE_AUTO_TIME
             int autoTimeValue = getIntValueFromSystem(db, Settings.System.AUTO_TIME, 0);
+ */
+            int autoTimeValue = getIntValueFromSystem(db, Settings.System.AUTO_TIME, FeatureOption.VANZO_FEATURE_AUTO_TIME ? 1 : 0);
+// End of Vanzo: zhangjingzhi
             db.beginTransaction();
             SQLiteStatement stmt = null;
             try {
@@ -1068,8 +1091,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c == null || c.getCount() == 0) {
                     stmt = db.compileStatement("INSERT INTO system(name,value)"
                             + " VALUES(?,?);");
+/* Vanzo:qiukai on: Tue, 02 Jun 2015 11:06:34 +0800
+ * Screen lock set None by default
                     loadBooleanSetting(stmt, Settings.System.LOCKSCREEN_DISABLED,
                             R.bool.def_lockscreen_disabled);
+ */
+                    loadSetting(stmt, Settings.System.LOCKSCREEN_DISABLED,FeatureOption.VANZO_FEATURE_SCREEN_LOCK_DEFAULT_SET_NONE ? "1" : "0");
+// End of Vanzo:qiukai
                 }
                 db.setTransactionSuccessful();
             } finally {
@@ -1785,6 +1813,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     db.endTransaction();
                     if (stmt != null) stmt.close();
                 }
+ 
+                ///M:
+                if (mUtils == null) {
+                    mUtils = new ProvidersUtils(mContext);
+                }
+                mUtils.updateAudioProfileActiveKey(stmt, db);
             }
             upgradeVersion = 111;
         }
@@ -2259,12 +2293,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
             // Vibrate on by default for ringer, on for notification
             int vibrate = 0;
+            /// M: { VIBRATE_SETTING_OFF is changed by mtk , default is VIBRATE_SETTING_ONLY_SILENT
             vibrate = AudioService.getValueForVibrateSetting(vibrate,
                     AudioManager.VIBRATE_TYPE_NOTIFICATION,
-                    AudioManager.VIBRATE_SETTING_ONLY_SILENT);
+                    AudioManager.VIBRATE_SETTING_OFF);
             vibrate |= AudioService.getValueForVibrateSetting(vibrate,
-                    AudioManager.VIBRATE_TYPE_RINGER, AudioManager.VIBRATE_SETTING_ONLY_SILENT);
+                    AudioManager.VIBRATE_TYPE_RINGER, AudioManager.VIBRATE_SETTING_OFF);
             loadSetting(stmt, Settings.System.VIBRATE_ON, vibrate);
+            /// @}
         } finally {
             if (stmt != null) stmt.close();
         }
@@ -2289,6 +2325,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     private void loadSettings(SQLiteDatabase db) {
+
+        mUtils = new ProvidersUtils(mContext);
+
         loadSystemSettings(db);
         loadSecureSettings(db);
         // The global table only exists for the 'owner' user
@@ -2305,8 +2344,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
             loadBooleanSetting(stmt, Settings.System.DIM_SCREEN,
                     R.bool.def_dim_screen);
+/* Vanzo:Kern on: Mon, 04 Mar 2013 21:50:17 +0800
             loadIntegerSetting(stmt, Settings.System.SCREEN_OFF_TIMEOUT,
                     R.integer.def_screen_off_timeout);
+ */
+            loadSetting(stmt,Settings.System.SCREEN_OFF_TIMEOUT,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_SCREEN_OFF_TIME);
+// End of Vanzo: Kern
 
             // Set default cdma DTMF type
             loadSetting(stmt, Settings.System.DTMF_TONE_TYPE_WHEN_DIALING, 0);
@@ -2317,16 +2361,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // Set default tty mode
             loadSetting(stmt, Settings.System.TTY_MODE, 0);
 
+/* Vanzo:huanghua on: Fri, 30 Nov 2012 17:48:11 +0800
             loadIntegerSetting(stmt, Settings.System.SCREEN_BRIGHTNESS,
                     R.integer.def_screen_brightness);
 
             loadBooleanSetting(stmt, Settings.System.SCREEN_BRIGHTNESS_MODE,
                     R.bool.def_screen_brightness_automatic_mode);
+ */
+            loadSetting(stmt, Settings.System.SCREEN_BRIGHTNESS,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_SCREEN_BRIGHTNESS);
+
+            loadSetting(stmt, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_SCREEN_BRIGHTNESS_AUTO_MODE ? 1 : 0);
+// End of Vanzo: huanghua
 
             loadDefaultAnimationSettings(stmt);
 
+/* Vanzo:huanghua on: Fri, 30 Nov 2012 17:50:44 +0800
             loadBooleanSetting(stmt, Settings.System.ACCELEROMETER_ROTATION,
                     R.bool.def_accelerometer_rotation);
+ */
+            loadSetting(stmt, Settings.System.ACCELEROMETER_ROTATION,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_ACCELEROMETER_ROTATION ? 1 : 0);
+// End of Vanzo: huanghua
 
             loadDefaultHapticSettings(stmt);
 
@@ -2337,6 +2394,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
             loadIntegerSetting(stmt, Settings.System.POINTER_SPEED,
                     R.integer.def_pointer_speed);
+
+/* Vanzo:huangyanhui on: Wed, 29 Apr 2015 16:03:15 +0800
+* set default date format
+*/
+            loadSetting(stmt, Settings.System.DATE_FORMAT,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_DATEFORMAT);
+// End of Vanzo:huangyanhui
+            ///M: load MTK new add System providers.
+            mUtils.loadCustomSystemSettings(stmt);
+
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 16:33:17 +0800
+ * porting from 82kk
+ */
+            loadSetting(stmt, Settings.System.TIME_12_24,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_TIME_FORMAT);
+            loadSetting(stmt, Settings.System.AIRPLANE_MODE_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_AIRPLANE_MODE ? 1 : 0);
+            loadSetting(stmt, Settings.System.VIBRATE_IN_SILENT,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_VIBRATE_IN_SILENT);
+// End of Vanzo:hanshengpeng
         } finally {
             if (stmt != null) stmt.close();
         }
@@ -2347,8 +2424,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 R.bool.def_dtmf_tones_enabled);
         loadBooleanSetting(stmt, Settings.System.SOUND_EFFECTS_ENABLED,
                 R.bool.def_sound_effects_enabled);
-        loadBooleanSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
-                R.bool.def_haptic_feedback);
+
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:01:55 +0800
+ * porting from 82kk
+        loadSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
+            mUtils.getBooleanValue(Settings.System.HAPTIC_FEEDBACK_ENABLED, R.bool.def_haptic_feedback));
+ */
+        loadSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                FeatureOption.VANZO_FEATURE_DEFAULT_HAPTIC_FEEDBACK_GENERAL);
+// End of Vanzo:hanshengpeng
 
         loadIntegerSetting(stmt, Settings.System.LOCKSCREEN_SOUNDS_ENABLED,
             R.integer.def_lockscreen_sounds_enabled);
@@ -2362,8 +2446,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     private void loadDefaultHapticSettings(SQLiteStatement stmt) {
-        loadBooleanSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
-                R.bool.def_haptic_feedback);
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:05:11 +0800
+ * porting from 82kk
+        loadSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                mUtils.getBooleanValue(Settings.System.HAPTIC_FEEDBACK_ENABLED, R.bool.def_haptic_feedback));
+ */
+        loadSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                 FeatureOption.VANZO_FEATURE_DEFAULT_HAPTIC_FEEDBACK_GENERAL);
+// End of Vanzo:hanshengpeng
     }
 
     private void loadSecureSettings(SQLiteDatabase db) {
@@ -2372,9 +2462,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             stmt = db.compileStatement("INSERT OR IGNORE INTO secure(name,value)"
                     + " VALUES(?,?);");
 
-            loadStringSetting(stmt, Settings.Secure.LOCATION_PROVIDERS_ALLOWED,
-                    R.string.def_location_providers_allowed);
-
+/* Vanzo:chenweijun on: Fri, 17 Apr 2015 16:28:15 +0800
+ * settings gps on/off
+ */
+                loadSetting(stmt, Settings.Secure.LOCATION_PROVIDERS_ALLOWED,
+                        FeatureOption.VANZO_FEATURE_OPEN_SETTINGS_GPS ? mUtils.getStringValue(Settings.Secure.LOCATION_PROVIDERS_ALLOWED, R.string.def_location_providers_allowed) : "");
+// End of Vanzo:chenweijun
             String wifiWatchList = SystemProperties.get("ro.com.android.wifi-watchlist");
             if (!TextUtils.isEmpty(wifiWatchList)) {
                 loadSetting(stmt, Settings.Secure.WIFI_WATCHDOG_WATCH_LIST, wifiWatchList);
@@ -2387,6 +2480,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // Allow mock locations default, based on build
             loadSetting(stmt, Settings.Secure.ALLOW_MOCK_LOCATION,
                     "1".equals(SystemProperties.get("ro.allow.mock.location")) ? 1 : 0);
+/* Vanzo:Kern on: Wed, 29 Sep 2010 20:10:59 +0800
+ * set device provisioned by default to disable screen lock
+ */
+            loadSetting(stmt, "lockscreen.options", SystemProperties.getBoolean(
+                    "ro.init.enable_facelock", true) ? "enable_facelock" : "0");
+            loadSetting(stmt, Settings.Secure.BACKGROUND_DATA, SystemProperties.getBoolean(
+                    "ro.init.background_data", true) ? "1" : "0");
+            loadSetting(stmt, Settings.Secure.EPO_ENABLED, SystemProperties.getBoolean(
+                    "ro.init.epo_enabled", false) ? "1" : "0");
+            loadSetting(stmt, Settings.Secure.BLUETOOTH_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_BLUETOOTH_ON ? "1" : "0");
+            loadSetting(stmt, Settings.Secure.WIFI_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_WIFI_ON ? "1" : "0");
+            loadSetting(stmt, Settings.Secure.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON,
+                    FeatureOption.VANZO_FEATURE_WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON ? 1 : 0);
+// End of Vanzo:Kern
 
             loadSecure35Settings(stmt);
 
@@ -2423,9 +2532,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             if (SystemProperties.getBoolean("ro.lockscreen.disable.default", false) == true) {
                 loadSetting(stmt, Settings.System.LOCKSCREEN_DISABLED, "1");
             } else {
+/* Vanzo:qiukai on: Tue, 02 Jun 2015 10:56:05 +0800
+ * Screen lock set None by default
                 loadBooleanSetting(stmt, Settings.System.LOCKSCREEN_DISABLED,
                         R.bool.def_lockscreen_disabled);
+ */
+                loadSetting(stmt, Settings.System.LOCKSCREEN_DISABLED,FeatureOption.VANZO_FEATURE_SCREEN_LOCK_DEFAULT_SET_NONE ? "1" : "0");
             }
+// End of Vanzo:qiukai
 
             loadBooleanSetting(stmt, Settings.Secure.SCREENSAVER_ENABLED,
                     com.android.internal.R.bool.config_dreamsEnabledByDefault);
@@ -2451,11 +2565,43 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadBooleanSetting(stmt, Settings.Secure.USER_SETUP_COMPLETE,
                     R.bool.def_user_setup_complete);
 
+/* Vanzo:yinjun on: Tue, 03 Mar 2015 14:32:53 +0800
+ * enabled and default input methods
+ */
+            if (FeatureOption.VANZO_FEATURE_ENABLED_INPUT_METHODS != null) {
+                loadSetting(stmt, Settings.Secure.ENABLED_INPUT_METHODS,
+                        FeatureOption.VANZO_FEATURE_ENABLED_INPUT_METHODS);
+            }
+            String defaultIME = FeatureOption.VANZO_FEATURE_DEFAULT_INPUT_METHOD;
+            Log.i(TAG, "FeatureOption defaultIME : " + defaultIME);
+            if (defaultIME != null) {
+                final PackageManager pm = mContext.getPackageManager();
+                final List<android.content.pm.ResolveInfo> services = pm.queryIntentServices(
+                        new Intent(android.view.inputmethod.InputMethod.SERVICE_INTERFACE),
+                        PackageManager.GET_META_DATA);
+                for (android.content.pm.ResolveInfo resolveInfo : services) {
+                    android.content.pm.ServiceInfo serviceInfo = resolveInfo.serviceInfo;
+                    Log.i(TAG, "serviceInfo.name: " + serviceInfo.name);
+                    if (defaultIME.equals(serviceInfo.name)) {
+                        String imeId = new ComponentName(serviceInfo.packageName, serviceInfo.name)
+                            .flattenToShortString();
+                        Log.i(TAG, "Default IME set: " + imeId);
+                        loadSetting(stmt, Settings.Secure.DEFAULT_INPUT_METHOD, imeId);
+                    }
+                }
+            }
+// End of Vanzo: yinjun
             loadStringSetting(stmt, Settings.Secure.IMMERSIVE_MODE_CONFIRMATIONS,
                         R.string.def_immersive_mode_confirmations);
 
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:47:41 +0800
+ * porting from 82kk
             loadBooleanSetting(stmt, Settings.Secure.INSTALL_NON_MARKET_APPS,
                     R.bool.def_install_non_market_apps);
+ */
+            loadSetting(stmt, Settings.Secure.INSTALL_NON_MARKET_APPS,
+                    FeatureOption.VANZO_FEATURE_INSTALL_NON_MARKET_APPS ? 1 : 0);
+// End of Vanzo:hanshengpeng
 
             loadBooleanSetting(stmt, Settings.Secure.WAKE_GESTURE_ENABLED,
                     R.bool.def_wake_gesture_enabled);
@@ -2468,6 +2614,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
             loadIntegerSetting(stmt, Settings.Secure.SLEEP_TIMEOUT,
                     R.integer.def_sleep_timeout);
+
+            mUtils.loadCustomSecureSettings(stmt);
         } finally {
             if (stmt != null) stmt.close();
         }
@@ -2488,8 +2636,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     + " VALUES(?,?);");
 
             // --- Previously in 'system'
+/* Vanzo:Kern on: Mon, 04 Mar 2013 21:51:41 +0800
             loadBooleanSetting(stmt, Settings.Global.AIRPLANE_MODE_ON,
                     R.bool.def_airplane_mode_on);
+ */
+            loadSetting(stmt, Settings.Global.AIRPLANE_MODE_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_AIRPLANE_MODE ? 1 : 0);
+// End of Vanzo: Kern
 
             loadBooleanSetting(stmt, Settings.Global.THEATER_MODE_ON,
                     R.bool.def_theater_mode_on);
@@ -2500,14 +2653,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadStringSetting(stmt, Settings.Global.AIRPLANE_MODE_TOGGLEABLE_RADIOS,
                     R.string.airplane_mode_toggleable_radios);
 
+/* Vanzo:Kern on: Tue, 05 Mar 2013 00:04:43 +0800
             loadBooleanSetting(stmt, Settings.Global.ASSISTED_GPS_ENABLED,
                     R.bool.assisted_gps_enabled);
+ */
+            loadBooleanProperty(stmt, Settings.Global.ASSISTED_GPS_ENABLED,
+                    "ro.init.assisted_gps_enabled", R.bool.assisted_gps_enabled);
+// End of Vanzo: Kern
 
-            loadBooleanSetting(stmt, Settings.Global.AUTO_TIME,
-                    R.bool.def_auto_time); // Sync time to NITZ
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:07:26 +0800
+ * porting from 82kk
+            loadSetting(stmt, Settings.Global.AUTO_TIME,
+                    mUtils.getBooleanValue(Settings.Global.AUTO_TIME, R.bool.def_auto_time)); // Sync time to NITZ
+ */
+            loadSetting(stmt, Settings.Global.AUTO_TIME,FeatureOption.VANZO_FEATURE_AUTO_TIME ? 1 : 0);
+// End of Vanzo:hanshengpeng
 
-            loadBooleanSetting(stmt, Settings.Global.AUTO_TIME_ZONE,
-                    R.bool.def_auto_time_zone); // Sync timezone to NITZ
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:44:41 +0800
+ * porting from 82kk
+            loadSetting(stmt, Settings.Global.AUTO_TIME_ZONE,
+                    mUtils.getBooleanValue(Settings.Global.AUTO_TIME_ZONE, R.bool.def_auto_time_zone)); // Sync timezone to NITZ
+ */
+            loadSetting(stmt, Settings.Global.AUTO_TIME_ZONE,FeatureOption.VANZO_FEATURE_AUTO_TIME_ZONE ? 1 : 0);
+// End of Vanzo:hanshengpeng
 
             loadSetting(stmt, Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
                     ("1".equals(SystemProperties.get("ro.kernel.qemu")) ||
@@ -2524,14 +2692,32 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadBooleanSetting(stmt, Settings.Global.PACKAGE_VERIFIER_ENABLE,
                     R.bool.def_package_verifier_enable);
 
+/* Vanzo:zhangjingzhi on: Tue, 11 Nov 2014 11:38:23 +0800
+ * for WIFI prop
             loadBooleanSetting(stmt, Settings.Global.WIFI_ON,
                     R.bool.def_wifi_on);
+ */
+            loadSetting(stmt, Settings.Global.WIFI_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_WIFI_ON ? "1" : "0");
 
+// End of Vanzo: zhangjingzhi
+
+/* Vanzo:hanshengpeng on: Fri, 20 Dec 2013 19:18:53 +0800
             loadBooleanSetting(stmt, Settings.Global.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON,
                     R.bool.def_networks_available_notification_on);
+ */
+            loadSetting(stmt, Settings.Global.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON,
+                    FeatureOption.VANZO_FEATURE_WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON ? 1 : 0);
+// End of Vanzo:hanshengpeng
 
+/* Vanzo:zhangjingzhi on: Mon, 10 Nov 2014 20:39:17 +0800
+ * for BT prop
             loadBooleanSetting(stmt, Settings.Global.BLUETOOTH_ON,
                     R.bool.def_bluetooth_on);
+ */
+            loadSetting(stmt, Settings.Global.BLUETOOTH_ON,
+                    FeatureOption.VANZO_FEATURE_DEFAULT_BLUETOOTH_ON ? "1" : "0");
+// End of Vanzo: zhangjingzhi
 
             // Enable or disable Cell Broadcast SMS
             loadSetting(stmt, Settings.Global.CDMA_CELL_BROADCAST_SMS,
@@ -2560,14 +2746,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                         Integer.toString(recommendedMaxBytes));
             }
 
-            // Mobile Data default, based on build
+            ///M: Mobile Data default, based on build
             loadSetting(stmt, Settings.Global.MOBILE_DATA,
-                    "true".equalsIgnoreCase(
-                            SystemProperties.get("ro.com.android.mobiledata",
-                                    "true")) ? 1 : 0);
+                    mUtils.getValue(Settings.Global.MOBILE_DATA, Settings.Secure.MOBILE_DATA_DEFAULT));
 
             loadBooleanSetting(stmt, Settings.Global.NETSTATS_ENABLED,
                     R.bool.def_netstats_enabled);
+
+/* Vanzo:hanshengpeng on: Mon, 02 Feb 2015 15:48:23 +0800
+ * porting from 82kk
+            loadSetting(stmt, Settings.Global.INSTALL_NON_MARKET_APPS,
+                    mUtils.getBooleanValue(Settings.Global.INSTALL_NON_MARKET_APPS, R.bool.def_install_non_market_apps));
+ */
+            loadSetting(stmt, Settings.Global.INSTALL_NON_MARKET_APPS,
+                    FeatureOption.VANZO_FEATURE_INSTALL_NON_MARKET_APPS);
+// End of Vanzo:hanshengpeng
 
             loadBooleanSetting(stmt, Settings.Global.USB_MASS_STORAGE_ENABLED,
                     R.bool.def_usb_mass_storage_enabled);
@@ -2604,7 +2797,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadIntegerSetting(stmt, Settings.Global.DOCK_AUDIO_MEDIA_ENABLED,
                     R.integer.def_dock_audio_media_enabled);
 
+/* Vanzo:tanglei on: Tue, 10 Feb 2015 11:14:06 +0800
+ * enable set install location
             loadSetting(stmt, Settings.Global.SET_INSTALL_LOCATION, 0);
+ */
+            loadSetting(stmt, Settings.Global.SET_INSTALL_LOCATION,
+                    FeatureOption.VANZO_FEATURE_ENABLE_SET_INSTALL_LOCATION);
+// End of Vanzo:tanglei
             loadSetting(stmt, Settings.Global.DEFAULT_INSTALL_LOCATION,
                     PackageHelper.APP_INSTALL_AUTO);
 
@@ -2643,7 +2842,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadBooleanSetting(stmt, Settings.Global.GUEST_USER_ENABLED,
                     R.bool.def_guest_user_enabled);
             loadSetting(stmt, Settings.Global.ENHANCED_4G_MODE_ENABLED, ImsConfig.FeatureValueConstants.ON);
-            // --- New global settings start here
+
+            ///M: load MTK new add Global providers.
+            mUtils.loadCustomGlobalSettings(stmt);
         } finally {
             if (stmt != null) stmt.close();
         }
@@ -2708,4 +2909,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private String getDefaultDeviceName() {
         return mContext.getResources().getString(R.string.def_device_name_simple, Build.MODEL);
     }
+
+/* Vanzo:Kern on: Tue, 27 Dec 2011 18:25:17 +0800
+ */
+    private void loadStringProperty(SQLiteStatement stmt, String key, String prop, int resid) {
+        loadSetting(stmt, key, SystemProperties.get(prop, mContext.getResources().getString(resid)));
+    }
+
+    private void loadBooleanProperty(SQLiteStatement stmt, String key, String prop, int resid) {
+        loadSetting(stmt, key,
+                SystemProperties.getBoolean(prop, mContext.getResources().getBoolean(resid)) ? "1" : "0");
+    }
+
+    private void loadIntegerProperty(SQLiteStatement stmt, String key, String prop, int resid) {
+        loadSetting(stmt, key, Integer.toString(
+                SystemProperties.getInt(prop, mContext.getResources().getInteger(resid))));
+    }
+// End of Vanzo:Kern
 }

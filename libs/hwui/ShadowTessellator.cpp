@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +20,6 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include <math.h>
 #include <utils/Log.h>
@@ -33,7 +37,7 @@ void ShadowTessellator::tessellateAmbientShadow(bool isCasterOpaque,
         const Vector3* casterPolygon, int casterVertexCount,
         const Vector3& centroid3d, const Rect& casterBounds,
         const Rect& localClip, float maxZ, VertexBuffer& shadowVertexBuffer) {
-    ATRACE_CALL();
+    ATRACE_CALL_L2();
 
     // A bunch of parameters to tweak the shadow.
     // TODO: Allow some of these changable by debug settings or APIs.
@@ -49,9 +53,7 @@ void ShadowTessellator::tessellateAmbientShadow(bool isCasterOpaque,
     ambientShadowBounds.outset(maxZ * geomFactor * heightFactor);
 
     if (!localClip.intersects(ambientShadowBounds)) {
-#if DEBUG_SHADOW
-        ALOGD("Ambient shadow is out of clip rect!");
-#endif
+        SHADOW_LOGD("Ambient shadow is out of clip rect!");
         return;
     }
 
@@ -64,7 +66,7 @@ void ShadowTessellator::tessellateSpotShadow(bool isCasterOpaque,
         const Vector3* casterPolygon, int casterVertexCount, const Vector3& casterCentroid,
         const mat4& receiverTransform, const Vector3& lightCenter, int lightRadius,
         const Rect& casterBounds, const Rect& localClip, VertexBuffer& shadowVertexBuffer) {
-    ATRACE_CALL();
+    ATRACE_CALL_L2();
 
     Caches& caches = Caches::getInstance();
 
@@ -76,10 +78,8 @@ void ShadowTessellator::tessellateSpotShadow(bool isCasterOpaque,
         adjustedLightCenter.z = caches.propertyLightPosZ;
     }
 
-#if DEBUG_SHADOW
-    ALOGD("light center %f %f %f",
+    SHADOW_LOGD("light center %f %f %f",
             adjustedLightCenter.x, adjustedLightCenter.y, adjustedLightCenter.z);
-#endif
 
     // light position (because it's in local space) needs to compensate for receiver transform
     // TODO: should apply to light orientation, not just position
@@ -98,9 +98,7 @@ void ShadowTessellator::tessellateSpotShadow(bool isCasterOpaque,
             adjustedLightCenter.x + lightRadius, adjustedLightCenter.y + lightRadius);
     lightRect.unionWith(localClip);
     if (!lightRect.intersects(casterBounds)) {
-#if DEBUG_SHADOW
-        ALOGD("Spot shadow is out of clip rect!");
-#endif
+        SHADOW_LOGD("Spot shadow is out of clip rect!");
         return;
     }
 
@@ -108,9 +106,11 @@ void ShadowTessellator::tessellateSpotShadow(bool isCasterOpaque,
             casterPolygon, casterVertexCount, casterCentroid, shadowVertexBuffer);
 
 #if DEBUG_SHADOW
-     if(shadowVertexBuffer.getVertexCount() <= 0) {
-        ALOGD("Spot shadow generation failed %d", shadowVertexBuffer.getVertexCount());
-     }
+    if (g_HWUI_debug_shadow) {
+        if(shadowVertexBuffer.getVertexCount() <= 0) {
+            ALOGD("Spot shadow generation failed %d", shadowVertexBuffer.getVertexCount());
+        }
+    }
 #endif
 }
 
@@ -135,8 +135,10 @@ void ShadowTessellator::generateShadowIndices(uint16_t* shadowIndices) {
         ALOGW("vertex index count is wrong. current %d, expected %d",
                 currentIndex, MAX_SHADOW_INDEX_COUNT);
     }
-    for (int i = 0; i < MAX_SHADOW_INDEX_COUNT; i++) {
-        ALOGD("vertex index is (%d, %d)", i, shadowIndices[i]);
+    if (g_HWUI_debug_shadow) {
+        for (int i = 0; i < MAX_SHADOW_INDEX_COUNT; i++) {
+            ALOGD("vertex index is (%d, %d)", i, shadowIndices[i]);
+        }
     }
 #endif
 }

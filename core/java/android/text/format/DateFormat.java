@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -311,34 +316,100 @@ public class DateFormat {
     }
 
     private static String getDateFormatStringForSetting(Context context, String value) {
+        String result = null;
         if (value != null) {
-            int month = value.indexOf('M');
-            int day = value.indexOf('d');
-            int year = value.indexOf('y');
+            /// M: add week and arrange month day year according to resource's date format defination for settings. CR: ALPS00049014 @{
+            String dayValue = value.indexOf("dd") < 0 ? "d" : "dd";
+            String monthValue = value.indexOf("MMMM") < 0 ? (value.indexOf("MMM") < 0 ? (value.indexOf("MM") < 0 ? "M" : "MM") : "MMM") : "MMMM";
+            String yearValue = value.indexOf("yyyy") < 0 ? "y" : "yyyy";
+            String weekValue = value.indexOf("EEEE") < 0 ? "E" : "EEEE";
 
-            if (month >= 0 && day >= 0 && year >= 0) {
-                String template = context.getString(R.string.numeric_date_template);
-                if (year < month && year < day) {
-                    if (month < day) {
-                        value = String.format(template, "yyyy", "MM", "dd");
+            int day = value.indexOf(dayValue);
+            int month = value.indexOf(monthValue);
+            int year = value.indexOf(yearValue);
+            int week = value.indexOf(weekValue);
+
+            if (week >= 0 && month >= 0 && day >= 0 && year >= 0) {
+                String template = null;
+                if (week < day) {
+                    if (year < month && year < day) {
+                        if (month < day) {
+                            template = context.getString(com.mediatek.internal.R.string.wday_year_month_day);
+                            result = String.format(template, weekValue, yearValue, monthValue, dayValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.wday_year_day_month);
+                            result = String.format(template, weekValue, yearValue, dayValue, monthValue);
+                        }
+                    } else if (month < day) {
+                        if (day < year) {
+                            template = context.getString(com.mediatek.internal.R.string.wday_month_day_year);
+                            result = String.format(template, weekValue, monthValue, dayValue, yearValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.wday_month_year_day);
+                            result = String.format(template, weekValue, monthValue, yearValue, dayValue);
+                        }
                     } else {
-                        value = String.format(template, "yyyy", "dd", "MM");
+                        if (month < year) {
+                            template = context.getString(com.mediatek.internal.R.string.wday_day_month_year);
+                            result = String.format(template, weekValue, dayValue, monthValue, yearValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.wday_day_year_month);
+                            result = String.format(template, weekValue, dayValue, yearValue, monthValue);
+                        }
                     }
-                } else if (month < day) {
-                    if (day < year) {
-                        value = String.format(template, "MM", "dd", "yyyy");
-                    } else { // unlikely
-                        value = String.format(template, "MM", "yyyy", "dd");
-                    }
-                } else { // day < month
-                    if (month < year) {
-                        value = String.format(template, "dd", "MM", "yyyy");
-                    } else { // unlikely
-                        value = String.format(template, "dd", "yyyy", "MM");
+                } else {
+                    if (year < month && year < day) {
+                        if (month < day) {
+                            template = context.getString(com.mediatek.internal.R.string.year_month_day_wday);
+                            result = String.format(template, yearValue, monthValue, dayValue, weekValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.year_day_month_wday);
+                            result = String.format(template, yearValue, dayValue, monthValue, weekValue);
+                        }
+                    } else if (month < day) {
+                        if (day < year) {
+                            template = context.getString(com.mediatek.internal.R.string.month_day_year_wday);
+                            result = String.format(template, monthValue, dayValue, yearValue, weekValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.month_year_day_wday);
+                            result = String.format(template, monthValue, yearValue, dayValue, weekValue);
+                        }
+                    } else {
+                        if (month < year) {
+                            template = context.getString(com.mediatek.internal.R.string.day_month_year_wday);
+                            result = String.format(template, dayValue, monthValue, yearValue, weekValue);
+                        } else {
+                            template = context.getString(com.mediatek.internal.R.string.day_year_month_wday);
+                            result = String.format(template, dayValue, yearValue, monthValue, weekValue);
+                        }
                     }
                 }
 
-                return value;
+                return result;
+            /// M: @}
+            } else if (month >= 0 && day >= 0 && year >= 0) {
+                String template = context.getString(R.string.numeric_date_template);
+                if (year < month && year < day) {
+                    if (month < day) {
+                        result = String.format(template, yearValue, monthValue, dayValue);
+                    } else {
+                        result = String.format(template, yearValue, dayValue, monthValue);
+                    }
+                } else if (month < day) {
+                    if (day < year) {
+                        result = String.format(template, monthValue, dayValue, yearValue);
+                    } else { // unlikely
+                        result = String.format(template, monthValue, yearValue, dayValue);
+                    }
+                } else { // date < month
+                    if (month < year) {
+                        result = String.format(template, dayValue, monthValue, yearValue);
+                    } else { // unlikely
+                        result = String.format(template, dayValue, yearValue, monthValue);
+                    }
+                }
+
+                return result;
             }
         }
 

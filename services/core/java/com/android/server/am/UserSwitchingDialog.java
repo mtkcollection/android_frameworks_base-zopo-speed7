@@ -17,13 +17,17 @@
 package com.android.server.am;
 
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.widget.TextView;
+import android.util.Slog;
 
 import com.android.internal.R;
 
@@ -39,6 +43,18 @@ final class UserSwitchingDialog extends AlertDialog
 
     private final ActivityManagerService mService;
     private final int mUserId;
+
+    // M: IPO
+    public static final String ACTION_SHUTDOWN_IPO = "android.intent.action.ACTION_SHUTDOWN_IPO";
+    public static boolean mIsIPO = false;
+
+    private final BroadcastReceiver mShutdownReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Slog.d(TAG, "Got IPO intent=" + intent);
+            mIsIPO = true;
+        }
+    };
 
     public UserSwitchingDialog(ActivityManagerService service, Context context,
             int userId, String userName, boolean aboveSystem) {
@@ -63,22 +79,37 @@ final class UserSwitchingDialog extends AlertDialog
         attrs.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_SYSTEM_ERROR |
                 WindowManager.LayoutParams.PRIVATE_FLAG_SHOW_FOR_ALL_USERS;
         getWindow().setAttributes(attrs);
+
+        // M: For IPO shutdown
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SHUTDOWN);
+        filter.addAction(ACTION_SHUTDOWN_IPO);
+        context.registerReceiver(mShutdownReceiver, filter);
     }
 
     @Override
     public void show() {
-        // Slog.v(TAG, "show called");
+        Slog.d(TAG, "show called");
         super.show();
-        final View decorView = getWindow().getDecorView();
-        if (decorView != null) {
-            decorView.getViewTreeObserver().addOnWindowShownListener(this);
+
+        if (mIsIPO) {
+            Slog.d(TAG, "IPO shutdown, switch user to foreground.");
+            mService.startUserInForeground(mUserId, this);
+            mIsIPO = false;
+        } else {
+            final View decorView = getWindow().getDecorView();
+            if (decorView != null) {
+                decorView.getViewTreeObserver().addOnWindowShownListener(this);
+            }
         }
     }
 
     @Override
     public void onWindowShown() {
-        // Slog.v(TAG, "onWindowShown called");
-        mService.startUserInForeground(mUserId, this);
+        Slog.d(TAG, "onWindowShown called");
+        if (!mIsIPO) {
+            mService.startUserInForeground(mUserId, this);
+        }
+        
         final View decorView = getWindow().getDecorView();
         if (decorView != null) {
             decorView.getViewTreeObserver().removeOnWindowShownListener(this);

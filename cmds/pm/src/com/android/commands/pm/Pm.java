@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1320,6 +1325,7 @@ public final class Pm {
                 System.err.println("Failure - not installed for " + userId);
                 return 1;
             }
+
             final boolean isSystem =
                     (info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             // If we are being asked to delete a system app for just one
@@ -1329,6 +1335,25 @@ public final class Pm {
                 flags |= PackageManager.DELETE_SYSTEM_APP;
             }
         }
+
+        /// M: [Operator] Operator package SHOULD NOT have PackageManager.DELETE_ALL_USERS flag. @{
+        PackageInfo info2;
+        try {
+            info2 = mPm.getPackageInfo(pkg, 0, userId);
+        } catch (RemoteException e) {
+            System.err.println(e.toString());
+            System.err.println(PM_NOT_RUNNING_ERR);
+            return 1;
+        }
+        if (info2 == null) {
+            System.err.println("Failure - not installed for " + userId);
+            return 1;
+        }
+
+        if ((info2.applicationInfo.flagsEx & ApplicationInfo.FLAG_EX_OPERATOR) != 0) {
+            flags &= ~PackageManager.DELETE_ALL_USERS;
+        }
+        /// @}
 
         final LocalIntentReceiver receiver = new LocalIntentReceiver();
         mInstaller.uninstall(pkg, flags, receiver.getIntentSender(), userId);

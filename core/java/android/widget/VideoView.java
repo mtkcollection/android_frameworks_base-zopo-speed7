@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,44 +78,122 @@ public class VideoView extends SurfaceView
         implements MediaPlayerControl, SubtitleController.Anchor {
     private String TAG = "VideoView";
     // settable by the client
-    private Uri         mUri;
-    private Map<String, String> mHeaders;
-
+    /**
+     * @hide
+     */
+    protected Uri         mUri;
+    /**
+     * @hide
+     */
+    protected Map<String, String> mHeaders;
     // all possible internal states
-    private static final int STATE_ERROR              = -1;
-    private static final int STATE_IDLE               = 0;
-    private static final int STATE_PREPARING          = 1;
-    private static final int STATE_PREPARED           = 2;
-    private static final int STATE_PLAYING            = 3;
-    private static final int STATE_PAUSED             = 4;
-    private static final int STATE_PLAYBACK_COMPLETED = 5;
+    /**
+     * @hide
+     */
+    protected static final int STATE_ERROR              = -1;
+    /**
+     * @hide
+     */
+    protected static final int STATE_IDLE               = 0;
+    /**
+     * @hide
+     */
+    protected static final int STATE_PREPARING          = 1;
+    /**
+     * @hide
+     */
+    protected static final int STATE_PREPARED           = 2;
+    /**
+     * @hide
+     */
+    protected static final int STATE_PLAYING            = 3;
+    /**
+     * @hide
+     */
+    protected static final int STATE_PAUSED             = 4;
+    /**
+     * @hide
+     */
+    protected static final int STATE_PLAYBACK_COMPLETED = 5;
 
     // mCurrentState is a VideoView object's current state.
     // mTargetState is the state that a method caller intends to reach.
     // For instance, regardless the VideoView object's current state,
     // calling pause() intends to bring the object to a target state
     // of STATE_PAUSED.
-    private int mCurrentState = STATE_IDLE;
-    private int mTargetState  = STATE_IDLE;
+    /**
+     * @hide
+     */
+    protected int mCurrentState = STATE_IDLE;
+    /**
+     * @hide
+     */
+    protected int mTargetState  = STATE_IDLE;
 
     // All the stuff we need for playing and showing a video
-    private SurfaceHolder mSurfaceHolder = null;
-    private MediaPlayer mMediaPlayer = null;
+    /**
+     * @hide
+     */
+    protected SurfaceHolder mSurfaceHolder = null;
+    /**
+     * @hide
+     */
+    protected MediaPlayer mMediaPlayer = null;
     private int         mAudioSession;
-    private int         mVideoWidth;
-    private int         mVideoHeight;
-    private int         mSurfaceWidth;
-    private int         mSurfaceHeight;
-    private MediaController mMediaController;
-    private OnCompletionListener mOnCompletionListener;
-    private MediaPlayer.OnPreparedListener mOnPreparedListener;
-    private int         mCurrentBufferPercentage;
-    private OnErrorListener mOnErrorListener;
+    /**
+     * @hide
+     */
+    protected int         mVideoWidth;
+    /**
+     * @hide
+     */
+    protected int         mVideoHeight;
+    /**
+     * @hide
+     */
+    protected int         mSurfaceWidth;
+    /**
+     * @hide
+     */
+    protected int         mSurfaceHeight;
+    /**
+     * @hide
+     */
+    protected MediaController mMediaController;
+    /**
+     * @hide
+     */
+    protected OnCompletionListener mOnCompletionListener;
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnPreparedListener mOnPreparedListener;
+    /**
+     * @hide
+     */
+    protected int         mCurrentBufferPercentage;
+    /**
+     * @hide
+     */
+    protected OnErrorListener mOnErrorListener;
+
     private OnInfoListener  mOnInfoListener;
-    private int         mSeekWhenPrepared;  // recording the seek position while preparing
-    private boolean     mCanPause;
-    private boolean     mCanSeekBack;
-    private boolean     mCanSeekForward;
+    /**
+     * @hide
+     */
+    protected int         mSeekWhenPrepared;  // recording the seek position while preparing
+    /**
+     * @hide
+     */
+    protected boolean     mCanPause;
+    /**
+     * @hide
+     */
+    protected boolean     mCanSeekBack;
+    /**
+     * @hide
+     */
+    protected boolean     mCanSeekForward;
 
     /** Subtitle rendering widget overlaid on top of the video. */
     private RenderingWidget mSubtitleWidget;
@@ -217,7 +300,10 @@ public class VideoView extends SurfaceView
         return getDefaultSize(desiredSize, measureSpec);
     }
 
-    private void initVideoView() {
+    /**
+     * @hide
+     */
+    protected void initVideoView() {
         mVideoWidth = 0;
         mVideoHeight = 0;
         getHolder().addCallback(mSHCallback);
@@ -301,8 +387,11 @@ public class VideoView extends SurfaceView
             }
         }
     }
-
-    private Vector<Pair<InputStream, MediaFormat>> mPendingSubtitleTracks;
+    
+    /**
+     * @hide
+     */
+    protected Vector<Pair<InputStream, MediaFormat>> mPendingSubtitleTracks;
 
     public void stopPlayback() {
         if (mMediaPlayer != null) {
@@ -313,8 +402,10 @@ public class VideoView extends SurfaceView
             mTargetState  = STATE_IDLE;
         }
     }
-
-    private void openVideo() {
+    /**
+     * @hide
+     */
+    protected void openVideo() {
         if (mUri == null || mSurfaceHolder == null) {
             // not ready for playback just yet, will try again later
             return;
@@ -370,14 +461,14 @@ public class VideoView extends SurfaceView
             attachMediaController();
         } catch (IOException ex) {
             Log.w(TAG, "Unable to open content: " + mUri, ex);
-            mCurrentState = STATE_ERROR;
-            mTargetState = STATE_ERROR;
+            /// M: avoid posting two or more errors to application @{
+            /// @}
             mErrorListener.onError(mMediaPlayer, MediaPlayer.MEDIA_ERROR_UNKNOWN, 0);
             return;
         } catch (IllegalArgumentException ex) {
             Log.w(TAG, "Unable to open content: " + mUri, ex);
-            mCurrentState = STATE_ERROR;
-            mTargetState = STATE_ERROR;
+            /// M: avoid posting two or more errors to application @{
+            /// @}
             mErrorListener.onError(mMediaPlayer, MediaPlayer.MEDIA_ERROR_UNKNOWN, 0);
             return;
         } finally {
@@ -392,8 +483,10 @@ public class VideoView extends SurfaceView
         mMediaController = controller;
         attachMediaController();
     }
-
-    private void attachMediaController() {
+    /**
+     * @hide
+     */
+    protected void attachMediaController() {
         if (mMediaPlayer != null && mMediaController != null) {
             mMediaController.setMediaPlayer(this);
             View anchorView = this.getParent() instanceof View ?
@@ -402,8 +495,10 @@ public class VideoView extends SurfaceView
             mMediaController.setEnabled(isInPlaybackState());
         }
     }
-
-    MediaPlayer.OnVideoSizeChangedListener mSizeChangedListener =
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnVideoSizeChangedListener mSizeChangedListener =
         new MediaPlayer.OnVideoSizeChangedListener() {
             public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
                 mVideoWidth = mp.getVideoWidth();
@@ -414,8 +509,10 @@ public class VideoView extends SurfaceView
                 }
             }
     };
-
-    MediaPlayer.OnPreparedListener mPreparedListener = new MediaPlayer.OnPreparedListener() {
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnPreparedListener mPreparedListener = new MediaPlayer.OnPreparedListener() {
         public void onPrepared(MediaPlayer mp) {
             mCurrentState = STATE_PREPARED;
 
@@ -440,6 +537,9 @@ public class VideoView extends SurfaceView
             if (mMediaController != null) {
                 mMediaController.setEnabled(true);
             }
+            /// M: work around for ALPS01306192 which is caused by operations
+            // in the same main thread strangely @{
+            try {
             mVideoWidth = mp.getVideoWidth();
             mVideoHeight = mp.getVideoHeight();
 
@@ -474,10 +574,17 @@ public class VideoView extends SurfaceView
                     start();
                 }
             }
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "onPrepared IllegalStateException");
+                e.printStackTrace();
+            }
+            /// @}
         }
     };
-
-    private MediaPlayer.OnCompletionListener mCompletionListener =
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnCompletionListener mCompletionListener =
         new MediaPlayer.OnCompletionListener() {
         public void onCompletion(MediaPlayer mp) {
             mCurrentState = STATE_PLAYBACK_COMPLETED;
@@ -501,10 +608,19 @@ public class VideoView extends SurfaceView
         }
     };
 
-    private MediaPlayer.OnErrorListener mErrorListener =
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnErrorListener mErrorListener =
         new MediaPlayer.OnErrorListener() {
         public boolean onError(MediaPlayer mp, int framework_err, int impl_err) {
             Log.d(TAG, "Error: " + framework_err + "," + impl_err);
+            /// M: avoid posting two or more errors to application @{
+            if (mCurrentState == STATE_ERROR) {
+                Log.d(TAG, "current state is error, skip error:" + framework_err + "," + impl_err);
+                return true;
+            }
+            /// @}
             mCurrentState = STATE_ERROR;
             mTargetState = STATE_ERROR;
             if (mMediaController != null) {
@@ -552,8 +668,10 @@ public class VideoView extends SurfaceView
             return true;
         }
     };
-
-    private MediaPlayer.OnBufferingUpdateListener mBufferingUpdateListener =
+    /**
+     * @hide
+     */
+    protected MediaPlayer.OnBufferingUpdateListener mBufferingUpdateListener =
         new MediaPlayer.OnBufferingUpdateListener() {
         public void onBufferingUpdate(MediaPlayer mp, int percent) {
             mCurrentBufferPercentage = percent;
@@ -604,8 +722,10 @@ public class VideoView extends SurfaceView
     public void setOnInfoListener(OnInfoListener l) {
         mOnInfoListener = l;
     }
-
-    SurfaceHolder.Callback mSHCallback = new SurfaceHolder.Callback()
+    /**
+     * @hide
+     */
+    protected SurfaceHolder.Callback mSHCallback = new SurfaceHolder.Callback()
     {
         public void surfaceChanged(SurfaceHolder holder, int format,
                                     int w, int h)
@@ -637,10 +757,11 @@ public class VideoView extends SurfaceView
         }
     };
 
-    /*
+    /**
      * release the media player in any state
+     * @hide
      */
-    private void release(boolean cleartargetstate) {
+    protected void release(boolean cleartargetstate) {
         if (mMediaPlayer != null) {
             mMediaPlayer.reset();
             mMediaPlayer.release();
@@ -710,8 +831,10 @@ public class VideoView extends SurfaceView
 
         return super.onKeyDown(keyCode, event);
     }
-
-    private void toggleMediaControlsVisiblity() {
+    /**
+     * @hide
+     */
+    protected void toggleMediaControlsVisiblity() {
         if (mMediaController.isShowing()) {
             mMediaController.hide();
         } else {
@@ -786,8 +909,10 @@ public class VideoView extends SurfaceView
         }
         return 0;
     }
-
-    private boolean isInPlaybackState() {
+    /**
+     * @hide
+     */
+    public boolean isInPlaybackState() {
         return (mMediaPlayer != null &&
                 mCurrentState != STATE_ERROR &&
                 mCurrentState != STATE_IDLE &&

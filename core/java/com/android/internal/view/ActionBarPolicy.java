@@ -23,6 +23,11 @@ import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.os.Build;
 
+/* Vanzo:songlixin on: Mon, 12 Jan 2015 16:32:03 +0800
+ */
+import android.view.ViewConfiguration;
+// End of Vanzo:songlixin
+
 /**
  * Allows components to query for various configuration policy decisions
  * about how the action bar should lay out and behave on the current device.
@@ -43,7 +48,12 @@ public class ActionBarPolicy {
     }
 
     public boolean showsOverflowMenuButton() {
+/* Vanzo:libing on: Fri, 18 Apr 2014 17:09:56 +0800
+ * implement #75713 modify for kk by FAQ11327
         return true;
+ */
+        return !ViewConfiguration.get(mContext).hasPermanentMenuKey();
+// End of Vanzo:libing
     }
 
     public int getEmbeddedMenuWidthLimit() {

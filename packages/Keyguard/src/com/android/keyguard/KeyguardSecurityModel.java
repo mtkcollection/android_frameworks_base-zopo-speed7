@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,11 +25,14 @@ import android.content.Context;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.util.Log;
 
 import com.android.internal.telephony.IccCardConstants;
 import com.android.internal.widget.LockPatternUtils;
 
 import java.util.List;
+import com.mediatek.keyguard.AntiTheft.AntiTheftManager ;
+import com.mediatek.keyguard.PowerOffAlarm.PowerOffAlarmManager ;
 
 public class KeyguardSecurityModel {
 
@@ -32,7 +40,7 @@ public class KeyguardSecurityModel {
      * The different types of security available for {@link Mode#UnlockScreen}.
      * @see com.android.internal.policy.impl.LockPatternKeyguardView#getUnlockMode()
      */
-    public enum SecurityMode {
+     public static enum SecurityMode {
         Invalid, // NULL state
         None, // No security enabled
         Pattern, // Unlock by drawing a pattern.
@@ -40,14 +48,22 @@ public class KeyguardSecurityModel {
         PIN, // Strictly numeric password
         Biometric, // Unlock with a biometric key (e.g. finger print or face unlock)
         Account, // Unlock by entering an account's login and password.
-        SimPin, // Unlock by entering a sim pin.
-        SimPuk // Unlock by entering a sim puk
+        //SimPin, // Unlock by entering a sim pin.
+        //SimPuk, // Unlock by entering a sim puk.
+        SimPinPukMe1, // Unlock by entering a sim pin/puk/me for sim or gemini sim1.
+        SimPinPukMe2, // Unlock by entering a sim pin/puk/me for sim or gemini sim2.
+        SimPinPukMe3, // Unlock by entering a sim pin/puk/me for sim or gemini sim3.
+        SimPinPukMe4, // Unlock by entering a sim pin/puk/me for sim or gemini sim4.
+        AlarmBoot, // add for power-off alarm.
+        Voice, // Unlock with voice password
+        AntiTheft // Antitheft feature
     }
 
     private Context mContext;
     private LockPatternUtils mLockPatternUtils;
+    private static final String TAG = "KeyguardSecurityModel" ;
 
-    KeyguardSecurityModel(Context context) {
+    public KeyguardSecurityModel(Context context) {
         mContext = context;
         mLockPatternUtils = new LockPatternUtils(context);
     }
@@ -78,18 +94,45 @@ public class KeyguardSecurityModel {
                 || monitor.getPhoneState() != TelephonyManager.CALL_STATE_IDLE;
     }
 
-    SecurityMode getSecurityMode() {
-        KeyguardUpdateMonitor monitor = KeyguardUpdateMonitor.getInstance(mContext);
+    public SecurityMode getSecurityMode() {
+        //Log.d(TAG, "getSecurityMode() is called.") ;
+
+        KeyguardUpdateMonitor updateMonitor = KeyguardUpdateMonitor.getInstance(mContext);
+        IccCardConstants.State simState = IccCardConstants.State.UNKNOWN;
+
         SecurityMode mode = SecurityMode.None;
-        if (SubscriptionManager.isValidSubscriptionId(
-                monitor.getNextSubIdForState(IccCardConstants.State.PIN_REQUIRED))) {
-            mode = SecurityMode.SimPin;
-        } else if (SubscriptionManager.isValidSubscriptionId(
-                    monitor.getNextSubIdForState(IccCardConstants.State.PUK_REQUIRED))
-                && mLockPatternUtils.isPukUnlockScreenEnable()) {
-            mode = SecurityMode.SimPuk;
+
+        if (PowerOffAlarmManager.isAlarmBoot()) { /// M: add for power-off alarm
+            mode = SecurityMode.AlarmBoot;
         } else {
+            //Log.d(TAG, "getSecurityMode() - check SIM Pin/Puk/Me dismissed?") ;
+            for (int i = 0; i < KeyguardUtils.getNumOfPhone(); i++) {
+                if (isPinPukOrMeRequiredOfPhoneId(i)) {
+                    //Log.d(TAG, "getSecurityMode() - subId = " + subId + ", subIndex = "
+                    //+ i + " is pinpukme required!") ;
+                    if (0 == i) {
+                        mode = SecurityMode.SimPinPukMe1;
+                    } else if (1 == i) {
+                        mode = SecurityMode.SimPinPukMe2;
+                    } else if (2 == i) {
+                        mode = SecurityMode.SimPinPukMe3;
+                    } else if (3 == i) {
+                        mode = SecurityMode.SimPinPukMe4;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (AntiTheftManager.isAntiTheftPriorToSecMode(mode)) {
+            Log.d("KeyguardSecurityModel", "should show AntiTheft!") ;
+            mode = SecurityMode.AntiTheft;
+        }
+
+        if (mode == SecurityMode.None) {
             final int security = mLockPatternUtils.getKeyguardStoredPasswordQuality();
+            Log.d(TAG, "getSecurityMode() - PW_Quality = " + security) ;
+
             switch (security) {
                 case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC:
                 case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX:
@@ -115,6 +158,9 @@ public class KeyguardSecurityModel {
                     throw new IllegalStateException("Unknown security quality:" + security);
             }
         }
+
+        //Log.d(TAG, "getSecurityMode() - mode = " + mode) ;
+
         return mode;
     }
 
@@ -127,11 +173,15 @@ public class KeyguardSecurityModel {
      * @return alternate or the given mode
      */
     SecurityMode getAlternateFor(SecurityMode mode) {
-        if (isBiometricUnlockEnabled() && !isBiometricUnlockSuppressed()
+        if (!isBiometricUnlockSuppressed()
                 && (mode == SecurityMode.Password
                         || mode == SecurityMode.PIN
                         || mode == SecurityMode.Pattern)) {
-            return SecurityMode.Biometric;
+            if (isBiometricUnlockEnabled()) {
+                return SecurityMode.Biometric;
+            } else if (mLockPatternUtils.usingVoiceWeak()) { ///M add for voice unlock
+                return SecurityMode.Voice;
+            }
         }
         return mode; // no alternate, return what was given
     }
@@ -145,10 +195,85 @@ public class KeyguardSecurityModel {
     SecurityMode getBackupSecurityMode(SecurityMode mode) {
         switch(mode) {
             case Biometric:
+            case Voice: ///M: add for voice unlock
                 return getSecurityMode();
             case Pattern:
                 return SecurityMode.Account;
         }
         return mode; // no backup, return current security mode
+    }
+
+    /**
+     * M:
+     * Returns true if voice unlock is support and selected.  If this returns false there is
+     * no need to even construct the voice unlock.
+     */
+    boolean isVoiceUnlockEnabled() {
+        return KeyguardUtils.isVoiceUnlockSupport()
+                && mLockPatternUtils.usingVoiceWeak();
+    }
+
+    /**
+     * M:
+     * This function checking if we need to show the SimPin lock view for this sim id.
+     *
+     * @param phoneId phoneId
+     * @return subId does requre SIM PIN/PUK/ME unlock
+     */
+    public boolean isPinPukOrMeRequiredOfPhoneId(int phoneId) {
+        KeyguardUpdateMonitor updateMonitor = KeyguardUpdateMonitor.getInstance(mContext);
+        if (updateMonitor != null) {
+            final IccCardConstants.State simState = updateMonitor.getSimStateOfPhoneId(phoneId);
+
+            Log.d(TAG, "isPinPukOrMeRequiredOfSubId() - phoneId = " + phoneId +
+                       ", simState = " + simState) ;
+            return (
+                // check PIN required
+                (simState == IccCardConstants.State.PIN_REQUIRED
+                && !updateMonitor.getPinPukMeDismissFlagOfPhoneId(phoneId))
+                // check PUK required
+                || (simState == IccCardConstants.State.PUK_REQUIRED
+                && !updateMonitor.getPinPukMeDismissFlagOfPhoneId(phoneId)
+                && updateMonitor.getRetryPukCountOfPhoneId(phoneId) != 0)
+                // check ME required
+                || (simState == IccCardConstants.State.NETWORK_LOCKED
+                && !updateMonitor.getPinPukMeDismissFlagOfPhoneId(phoneId)
+                && updateMonitor.getSimMeLeftRetryCountOfPhoneId(phoneId) != 0
+                && KeyguardUtils.isMediatekSimMeLockSupport())
+                );
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * M:
+     * This function return the phone id of input SimPinPukMe mode.
+     * @param mode security mode
+     * @return phone id. If not in security mode, return -1.
+     */
+    int getPhoneIdUsingSecurityMode(SecurityMode mode) {
+        int phoneId = -1;
+
+        if (isSimPinPukSecurityMode(mode)) {
+            phoneId = mode.ordinal() - SecurityMode.SimPinPukMe1.ordinal();
+        }
+        return phoneId;
+    }
+
+    /**
+     * M:
+     * This function checking if the input security is SimPinPukMe mode or not.
+     */
+    boolean isSimPinPukSecurityMode(SecurityMode mode) {
+        switch(mode) {
+            case SimPinPukMe1:
+            case SimPinPukMe2:
+            case SimPinPukMe3:
+            case SimPinPukMe4:
+                return true;
+            default:
+                return false;
+        }
     }
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +46,7 @@
 #include "Matrix.h"
 #include "DeferredDisplayList.h"
 #include "RenderProperties.h"
+#include "DisplayListLogBuffer.h"
 
 class SkBitmap;
 class SkPaint;
@@ -91,7 +97,13 @@ class DeferStateStruct : public PlaybackStateStruct {
 public:
     DeferStateStruct(DeferredDisplayList& deferredList, OpenGLRenderer& renderer, int replayFlags)
             : PlaybackStateStruct(renderer, replayFlags, &(deferredList.mAllocator)),
-            mDeferredList(deferredList) {}
+            mDeferredList(deferredList) {
+        /// M: ops may use current renderer to output more info
+        DisplayListLogBuffer::getInstance().currentRenderer = &renderer;
+    }
+    ~DeferStateStruct() {
+        DisplayListLogBuffer::getInstance().currentRenderer = NULL;
+    }
 
     DeferredDisplayList& mDeferredList;
 };

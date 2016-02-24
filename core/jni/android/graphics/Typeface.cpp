@@ -67,6 +67,16 @@ static void Typeface_setDefault(JNIEnv *env, jobject, jlong faceHandle) {
     return TypefaceImpl_setDefault(face);
 }
 
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:17:17 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+static void Typeface_updateLovelyfonts(JNIEnv *env, jlong faceHandle) {
+#ifdef VANZO_FEATURE_LOVELYFONTS_SUPPORT
+    TypefaceImpl* face = reinterpret_cast<TypefaceImpl*>(faceHandle);
+    return TypefaceImpl_updateLovelyfonts(face);
+#endif
+}
+// End of Vanzo:zhangjingzhi
 ///////////////////////////////////////////////////////////////////////////////
 
 static JNINativeMethod gTypefaceMethods[] = {
@@ -77,6 +87,11 @@ static JNINativeMethod gTypefaceMethods[] = {
     { "nativeCreateFromArray",    "([J)J",
                                            (void*)Typeface_createFromArray },
     { "nativeSetDefault",         "(J)V",   (void*)Typeface_setDefault },
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:17:33 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+    { "nativeUpdateLovelyfonts", "(J)V",   (void*)Typeface_updateLovelyfonts },
+// End of Vanzo:zhangjingzhi
 };
 
 int register_android_graphics_Typeface(JNIEnv* env)

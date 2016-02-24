@@ -32,6 +32,32 @@
         android:layout_width="match_parent" 
         android:layout_height="match_parent"
         android:focusable="true" />
+<!-- Vanzo:yinjun on: Mon, 07 Jul 2014 18:29:39 +0800
+recent task clear
+-->
+    <ImageView
+        android:id="@+id/funui_clear_task"
+        android:layout_width="51dp"
+        android:layout_height="51dp"
+        android:layout_marginBottom="20dp"
+        android:layout_marginLeft="20dp"
+        android:layout_gravity="bottom|left"
+        android:scaleType="centerCrop"
+        android:focusable="true"
+        android:src="@drawable/funui_taskclear_btn"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/funui_running_apps"
+        android:layout_width="51dp"
+        android:layout_height="51dp"
+        android:layout_marginBottom="20dp"
+        android:layout_marginRight="20dp"
+        android:layout_gravity="bottom|right"
+        android:scaleType="centerCrop"
+        android:focusable="true"
+        android:src="@drawable/funui_runningapps_btn"
+        android:visibility="gone" />
+<!-- End of Vanzo: yinjun -->
 
     <!-- Empty View -->
     <ViewStub android:id="@+id/empty_view_stub"

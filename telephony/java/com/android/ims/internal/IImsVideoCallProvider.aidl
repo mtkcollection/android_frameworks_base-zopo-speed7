@@ -24,7 +24,7 @@ import com.android.ims.internal.IImsVideoCallCallback;
 /**
  * Internal remote interface for IMS's video call provider.
  *
- * At least initially, this aidl mirrors telecomm's {@link IVideoCallProvider}. We created a
+ * At least initially, this aidl mirrors telecom's {@link IVideoCallProvider}. We created a
  * separate aidl interface even though the methods and parameters are same because the
  * {@link IVideoCallProvider} was specifically created as a binder for inter-process communication
  * between Telecomm and Telephony.

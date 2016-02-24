@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +44,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.List;
+import com.mediatek.xlog.Xlog;
 
 /**
  * The download manager is a system service that handles long-running HTTP downloads. Clients may
@@ -58,6 +64,8 @@ import java.util.List;
  * permission to use this class.
  */
 public class DownloadManager {
+
+    private static final String XLOGTAG = "DownloadManager/Framework";
 
     /**
      * An identifier for a particular download, unique across the system.  Clients use this ID to
@@ -152,6 +160,15 @@ public class DownloadManager {
     public static final String COLUMN_MEDIAPROVIDER_URI = Downloads.Impl.COLUMN_MEDIAPROVIDER_URI;
 
     /**
+     * The column that is used to remember whether the media scanner was invoked
+     * It must be same as Constants.MEDIA_SCANNED in DownloadProvider.
+     *
+     * @hide
+     * @internal
+     */
+    public static final String COLUMN_MEDIA_SCANNED = "scanned";
+
+    /**
      * @hide
      */
     public final static String COLUMN_ALLOW_WRITE = Downloads.Impl.COLUMN_ALLOW_WRITE;
@@ -180,6 +197,22 @@ public class DownloadManager {
      * Value of {@link #COLUMN_STATUS} when the download has failed (and will not be retried).
      */
     public final static int STATUS_FAILED = 1 << 4;
+    /**
+     * Value of {@link #COLUMN_STATUS} when the download has failed because of insufficient memory
+     * This is only used to OMA download
+     *
+     * @hide
+     */
+    public final static int STATUS_FAILED_INSUFFICIENT_MEMORY = 1 << 5;
+
+    /**
+     * Value of {@link #COLUMN_STATUS} when the download has failed because of invalid descriptor
+     * This is only used to OMA Download
+     *
+     * @hide
+     */
+    public final static int STATUS_FAILED_INVALID_DESCRIPTOR = 1 << 6;
+
 
     /**
      * Value of COLUMN_ERROR_CODE when the download has completed with an error that doesn't fit
@@ -244,6 +277,14 @@ public class DownloadManager {
     public final static int ERROR_BLOCKED = 1010;
 
     /**
+     * Value of {@link #COLUMN_STATUS} when the download has failed because of invalid descriptor
+     * This is only used to OMA Download
+     *
+     * @hide
+     */
+    public final static int ERROR_INVALID_DESCRIPTOR = 1011;
+
+    /**
      * Value of {@link #COLUMN_REASON} when the download is paused because some network error
      * occurred and the download manager is waiting before retrying the request.
      */
@@ -265,6 +306,14 @@ public class DownloadManager {
      * Value of {@link #COLUMN_REASON} when the download is paused for some other reason.
      */
     public final static int PAUSED_UNKNOWN = 4;
+    /**
+     * Value of {@link #COLUMN_REASON} when the download is paused for paused by app.
+     * This flag is used to Resume download
+     *
+     * @internal
+     * @hide
+     */
+    public final static int PAUSED_BY_APP = 5;
 
     /**
      * Broadcast intent action sent by the download manager when a download completes.
@@ -374,6 +423,7 @@ public class DownloadManager {
         private boolean mIsVisibleInDownloadsUi = true;
         private boolean mScannable = false;
         private boolean mUseSystemCache = false;
+        private String mUserAgent;
         /** if a file is designated as a MediaScanner scannable file, the following value is
          * stored in the database column {@link Downloads.Impl#COLUMN_MEDIA_SCANNED}.
          */
@@ -450,6 +500,8 @@ public class DownloadManager {
          */
         public Request setDestinationUri(Uri uri) {
             mDestinationUri = uri;
+            Xlog.v(XLOGTAG, "setDestinationUri: mDestinationUri " +
+                    mDestinationUri);
             return this;
         }
 
@@ -526,6 +578,11 @@ public class DownloadManager {
          */
         public Request setDestinationInExternalPublicDir(String dirType, String subPath) {
             File file = Environment.getExternalStoragePublicDirectory(dirType);
+
+            Xlog.v(XLOGTAG, "setExternalPublicDir: dirType " +
+                    dirType + " subPath " + subPath +
+                    "file" + file);
+
             if (file == null) {
                 throw new IllegalStateException("Failed to get external storage public directory");
             } else if (file.exists()) {
@@ -548,6 +605,9 @@ public class DownloadManager {
                 throw new NullPointerException("subPath cannot be null");
             }
             mDestinationUri = Uri.withAppendedPath(Uri.fromFile(base), subPath);
+
+            Xlog.v(XLOGTAG, "setDestinationFromBase: mDestinationUri " +
+                    mDestinationUri);
         }
 
         /**
@@ -702,6 +762,20 @@ public class DownloadManager {
         }
 
         /**
+         *  @param userAgent the userAgent string which will to be set
+         *  @return this object
+         *
+         *  @hide
+         *  @internal
+         */
+        public Request setUserAgent(String userAgent) {
+            mUserAgent = userAgent;
+            Xlog.v(XLOGTAG, "setUserAgent: userAgent is: " +
+                    userAgent);
+            return this;
+        }
+
+        /**
          * @return ContentValues to be passed to DownloadProvider.insert()
          */
         ContentValues toContentValues(String packageName) {
@@ -737,6 +811,10 @@ public class DownloadManager {
             values.put(Downloads.Impl.COLUMN_ALLOW_ROAMING, mRoamingAllowed);
             values.put(Downloads.Impl.COLUMN_ALLOW_METERED, mMeteredAllowed);
             values.put(Downloads.Impl.COLUMN_IS_VISIBLE_IN_DOWNLOADS_UI, mIsVisibleInDownloadsUi);
+
+            if (null != mUserAgent) {
+                values.put(Downloads.Impl.COLUMN_USER_AGENT, mUserAgent);
+            }
 
             return values;
         }
@@ -944,8 +1022,11 @@ public class DownloadManager {
     public long enqueue(Request request) {
         ContentValues values = request.toContentValues(mPackageName);
         Uri downloadUri = mResolver.insert(Downloads.Impl.CONTENT_URI, values);
+        if (downloadUri != null) {
         long id = Long.parseLong(downloadUri.getLastPathSegment());
         return id;
+    }
+        return -1;
     }
 
     /**
@@ -1117,6 +1198,7 @@ public class DownloadManager {
         values.putNull(Downloads.Impl._DATA);
         values.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_PENDING);
         values.put(Downloads.Impl.COLUMN_FAILED_CONNECTIONS, 0);
+        values.put(COLUMN_MEDIA_SCANNED, 0);
         mResolver.update(mBaseUri, values, getWhereClauseForIds(ids), getWhereArgsForIds(ids));
     }
 
@@ -1356,6 +1438,10 @@ public class DownloadManager {
                 case Downloads.Impl.STATUS_QUEUED_FOR_WIFI:
                     return PAUSED_QUEUED_FOR_WIFI;
 
+                // Add to support resume download
+                case Downloads.Impl.STATUS_PAUSED_BY_APP:
+                    return PAUSED_BY_APP;
+
                 default:
                     return PAUSED_UNKNOWN;
             }
@@ -1393,6 +1479,9 @@ public class DownloadManager {
 
                 case Downloads.Impl.STATUS_FILE_ALREADY_EXISTS_ERROR:
                     return ERROR_FILE_ALREADY_EXISTS;
+
+                case Downloads.Impl.STATUS_BLOCKED:
+                    return ERROR_BLOCKED;
 
                 default:
                     return ERROR_UNKNOWN;

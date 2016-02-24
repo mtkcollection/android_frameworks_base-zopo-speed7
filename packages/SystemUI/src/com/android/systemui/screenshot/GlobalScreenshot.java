@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,8 +62,10 @@ import android.view.animation.Interpolator;
 import android.widget.ImageView;
 
 import com.android.systemui.R;
+import com.mediatek.xlog.Xlog;
 
 import java.io.File;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -252,13 +259,27 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
                              PendingIntent.FLAG_CANCEL_CURRENT));
 
             OutputStream out = resolver.openOutputStream(uri);
-            image.compress(Bitmap.CompressFormat.PNG, 100, out);
+            boolean bCompressOK = image.compress(Bitmap.CompressFormat.PNG, 100, out);
             out.flush();
             out.close();
+            /// M: [ALPS00800619] Handle Compress Fail Case.
+            if (!bCompressOK) {
+                resolver.delete(uri, null, null);
+                params[0].result = 1;
+                return params[0];
+            }
 
             // update file size in the database
             values.clear();
-            values.put(MediaStore.Images.ImageColumns.SIZE, new File(mImageFilePath).length());
+            /// M: FOR ALPS00266037 & ALPS00289039 pic taken by phone shown wrong on cumputer. @{
+            InputStream inputStream = resolver.openInputStream(uri);
+            int size = inputStream.available();
+            inputStream.close();
+            values.put(MediaStore.Images.ImageColumns.SIZE, size);
+
+            // values.put(MediaStore.Images.ImageColumns.SIZE, new File(mImageFilePath).length());
+            uri = uri.buildUpon().appendQueryParameter("notifyMtp", "1").build();
+            /// M: FOR ALPS00266037 & ALPS00289039. @}
             resolver.update(uri, values, null, null);
 
             params[0].imageUri = uri;
@@ -490,7 +511,16 @@ class GlobalScreenshot {
         // only in the natural orientation of the device :!)
         mDisplay.getRealMetrics(mDisplayMetrics);
         float[] dims = {mDisplayMetrics.widthPixels, mDisplayMetrics.heightPixels};
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        boolean isPlugIn =
+            com.mediatek.systemui.statusbar.util.SIMHelper.isSmartBookPluggedIn(mContext);
+        if (isPlugIn) {
+            dims[0] = mDisplayMetrics.heightPixels;
+            dims[1] = mDisplayMetrics.widthPixels;
+        }
+        /// @}
         float degrees = getDegreesForRotation(mDisplay.getRotation());
+        Xlog.d("takeScreenshot", "dims = " + dims[0] + "," + dims[1] + " of " + degrees);
         boolean requiresRotation = (degrees > 0);
         if (requiresRotation) {
             // Get the dimensions of the device in its native orientation
@@ -499,11 +529,22 @@ class GlobalScreenshot {
             mDisplayMatrix.mapPoints(dims);
             dims[0] = Math.abs(dims[0]);
             dims[1] = Math.abs(dims[1]);
+            Xlog.d("takeScreenshot", "reqRotate, dims = " + dims[0] + "," + dims[1]);
         }
 
         // Take the screenshot
-        mScreenBitmap = SurfaceControl.screenshot((int) dims[0], (int) dims[1]);
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        if (isPlugIn) {
+            mScreenBitmap = SurfaceControl.screenshot((int) dims[0], (int) dims[1],
+                            SurfaceControl.BUILT_IN_DISPLAY_ID_HDMI);
+            degrees = 270f - degrees;
+        }
+        /// @}
+         else {
+            mScreenBitmap = SurfaceControl.screenshot((int) dims[0], (int) dims[1]);
+        }
         if (mScreenBitmap == null) {
+            Xlog.d("takeScreenshot", "mScreenBitmap == null, " + dims[0] + "," + dims[1]);
             notifyScreenshotError(mContext, mNotificationManager);
             finisher.run();
             return;
@@ -570,6 +611,11 @@ class GlobalScreenshot {
         mScreenshotLayout.post(new Runnable() {
             @Override
             public void run() {
+                /// M: [ALPS01233166] Check if this view is currently attached to a window.
+                if (!mScreenshotView.isAttachedToWindow()) {
+                    Xlog.d(TAG, "this view is currently not attached to a window");
+                    return;
+                }
                 // Play the shutter sound to notify that we've taken a screenshot
                 mCameraSound.play(MediaActionSound.SHUTTER_CLICK);
 

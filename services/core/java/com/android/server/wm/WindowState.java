@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +70,8 @@ import android.view.WindowManagerPolicy;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 class WindowList extends ArrayList<WindowState> {
 }
@@ -725,7 +732,11 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         WindowState ws = this;
         WindowList windows = getWindowList();
         while (true) {
-            if (ws.mAttrs.needsMenuKey != WindowManager.LayoutParams.NEEDS_MENU_UNSET) {
+            /// M: [ALPS00402543] There is a menu icon in the lower right corner when pull down status bar @{
+            /// M: [ALPS00410241] There is a menu icon in the lower right corner when pull down status bar in Sougou Input edit screen
+            if (ws.canReceiveKeys() &&
+            /// @}
+                    ws.mAttrs.needsMenuKey != WindowManager.LayoutParams.NEEDS_MENU_UNSET) {
                 return ws.mAttrs.needsMenuKey == WindowManager.LayoutParams.NEEDS_MENU_SET_TRUE;
             }
             // If we reached the bottom of the range of windows we are considering,
@@ -1074,7 +1085,8 @@ final class WindowState implements WindowManagerPolicy.WindowState {
 
     boolean isFullscreen(int screenWidth, int screenHeight) {
         return mFrame.left <= 0 && mFrame.top <= 0 &&
-                mFrame.right >= screenWidth && mFrame.bottom >= screenHeight;
+                mFrame.right >= screenWidth && mFrame.bottom >= screenHeight
+                 && !isFloatingWindow(); /// M: BMW.
     }
 
     boolean isConfigChanged() {
@@ -1186,9 +1198,9 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             // Already showing.
             return false;
         }
-        if (DEBUG_VISIBILITY) Slog.v(TAG, "Policy visibility true: " + this);
+        if (WindowManagerService.DEBUG_VISIBILITY) Slog.v(TAG, "Policy visibility true: " + this);
         if (doAnimation) {
-            if (DEBUG_VISIBILITY) Slog.v(TAG, "doAnimation: mPolicyVisibility="
+            if (WindowManagerService.DEBUG_VISIBILITY) Slog.v(TAG, "doAnimation: mPolicyVisibility="
                     + mPolicyVisibility + " mAnimation=" + mWinAnimator.mAnimation);
             if (!mService.okToDisplay()) {
                 doAnimation = false;
@@ -1236,7 +1248,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         if (doAnimation) {
             mPolicyVisibilityAfterAnim = false;
         } else {
-            if (DEBUG_VISIBILITY) Slog.v(TAG, "Policy visibility false: " + this);
+            if (WindowManagerService.DEBUG_VISIBILITY) Slog.v(TAG, "Policy visibility false: " + this);
             mPolicyVisibilityAfterAnim = false;
             mPolicyVisibility = false;
             // Window is no longer visible -- make sure if we were waiting
@@ -1648,4 +1660,99 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         }
         return mStringNameCache;
     }
+
+    /// M: BMW. Check whether the window is belong to floating window @{
+    @Override
+    public boolean isFloatingWindow(){
+        TaskStack stack = getStack();
+        if (mAppToken == null || stack == null) {
+            return false;
+        }
+
+        if (MultiWindowProxy.getInstance() == null)
+            return false;
+        
+        return MultiWindowProxy.getInstance().isFloatingStack(stack.mStackId);
+    }
+    /// @}
+
+    /// M: BMW. Get window rect @{
+    @Override
+    public Rect getFloatingRect(int rotation, int displayWidth, int displayHeight){
+        /// if not a floating window, return null
+        if (!isFloatingWindow()) {
+            return null;
+        }
+
+        return getStack().getStackBounds(rotation, displayWidth, displayHeight);
+
+    }
+    /// @}
+
+    /// M: BMW. Check whether the stack is focused @{
+    @Override
+    public boolean isFocusStack() {
+        TaskStack stack = getStack();
+
+        Slog.d(TAG, "isFocusStack stack = " + stack);
+        
+        if (mService.mCurrentFocus != null && stack != null
+            && mService.mCurrentFocus.getStack().mStackId == stack.mStackId) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// M: BMW. Check whether the stack is sticked @{
+    public boolean isStickStack(){
+        /// if not a floating window, return false
+        if (!isFloatingWindow() || MultiWindowProxy.getInstance() == null) {
+            return false;
+        }
+
+        return MultiWindowProxy.getInstance().isStickStack(getStack().mStackId);
+    }
+    /// @}
+
+
+
+    /// M: BMW.  adjust floating window rect @{
+    @Override
+    public void adjustFloatingRect(int xOffset, int yOffset){
+        if (isFloatingWindow()) {
+            getStack().adjustFloatingRect(xOffset, yOffset);
+        }
+    }
+    /// @}
+
+    /// M: BMW.  Check whether the window is full float window @{
+    @Override
+    public boolean isFullFloatWindow() {
+        TaskStack stack = getStack();
+        if (mAppToken == null || stack == null) {
+            return false;
+        }
+
+        if (isFloatingWindow() && mAttrs.x == 0 && mAttrs.y == 0
+                && mAttrs.width == WindowManager.LayoutParams.MATCH_PARENT
+                && mAttrs.height == WindowManager.LayoutParams.MATCH_PARENT) {
+            Slog.d(TAG, "Full Float Window: " + this);
+            return true;
+        }
+
+        return false;
+    }
+
+
+    /// M: BMW. Get stack dffsets @{
+    void getStackOffsets(int[] offsets) {
+        offsets[0] = offsets[1] = 0;
+        if (getStack() != null) {
+            getStack().getStackOffsets(offsets);
+        }
+    }
+
+    //boolean isMiniMax = false;
+    /// @}
 }

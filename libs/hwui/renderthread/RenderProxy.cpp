@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +30,9 @@
 #include "../LayerRenderer.h"
 #include "../Rect.h"
 
+/// M: ANR monitor
+#include "DisplayListLogBuffer.h"
+
 namespace android {
 namespace uirenderer {
 namespace renderthread {
@@ -49,7 +57,7 @@ namespace renderthread {
     LOG_ALWAYS_FATAL_IF( METHOD_INVOKE_PAYLOAD_SIZE < sizeof(ARGS(method)), \
         "METHOD_INVOKE_PAYLOAD_SIZE %zu is smaller than sizeof(" #method "Args) %zu", \
                 METHOD_INVOKE_PAYLOAD_SIZE, sizeof(ARGS(method))); \
-    MethodInvokeRenderTask* task = new MethodInvokeRenderTask((RunnableMethod) Bridge_ ## method); \
+    MethodInvokeRenderTask* task = new MethodInvokeRenderTask((RunnableMethod) Bridge_ ## method, "" #method ""); \
     ARGS(method) *args = (ARGS(method) *) task->payload()
 
 CREATE_BRIDGE4(createContext, RenderThread* thread, bool translucent,
@@ -140,7 +148,10 @@ bool RenderProxy::initialize(const sp<ANativeWindow>& window) {
     SETUP_TASK(initialize);
     args->context = mContext;
     args->window = window.get();
-    return (bool) postAndWait(task);
+    /// M: we are doing non-blocking initialization, so just post but not wait
+    bool ret = mContext->mCanvas == NULL;
+    post(task);
+    return ret;
 }
 
 CREATE_BRIDGE2(updateSurface, CanvasContext* context, ANativeWindow* window) {
@@ -201,6 +212,7 @@ void RenderProxy::setOpaque(bool opaque) {
 
 int RenderProxy::syncAndDrawFrame(nsecs_t frameTimeNanos, nsecs_t recordDurationNanos,
         float density) {
+    DisplayListLogBuffer::getInstance().checkIsAllFinished("syncAndDrawFrame", 16000000);
     mDrawFrameTask.setDensity(density);
     return mDrawFrameTask.drawFrame(frameTimeNanos, recordDurationNanos);
 }
@@ -323,7 +335,7 @@ void RenderProxy::destroyHardwareResources() {
     post(task);
 }
 
-CREATE_BRIDGE2(timMemory, RenderThread* thread, int level) {
+CREATE_BRIDGE2(trimMemory, RenderThread* thread, int level) {
     CanvasContext::trimMemory(*args->thread, args->level);
     return NULL;
 }
@@ -332,7 +344,7 @@ void RenderProxy::trimMemory(int level) {
     // Avoid creating a RenderThread to do a trimMemory.
     if (RenderThread::hasInstance()) {
         RenderThread& thread = RenderThread::getInstance();
-        SETUP_TASK(timMemory);
+        SETUP_TASK(trimMemory);
         args->thread = &thread;
         args->level = level;
         thread.queue(task);
@@ -347,6 +359,11 @@ CREATE_BRIDGE0(fence) {
 void RenderProxy::fence() {
     SETUP_TASK(fence);
     postAndWait(task);
+}
+
+void RenderProxy::staticFence() {
+    SETUP_TASK(fence);
+    staticPostAndWait(task);
 }
 
 CREATE_BRIDGE1(stopDrawing, CanvasContext* context) {
@@ -415,6 +432,7 @@ void RenderProxy::post(RenderTask* task) {
 }
 
 void* RenderProxy::postAndWait(MethodInvokeRenderTask* task) {
+    DisplayListLogBuffer::getInstance().checkIsAllFinished(task->name());
     void* retval;
     task->setReturnPtr(&retval);
     SignalingRenderTask syncTask(task, &mSyncMutex, &mSyncCondition);

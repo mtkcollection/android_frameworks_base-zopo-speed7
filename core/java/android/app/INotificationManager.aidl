@@ -55,12 +55,11 @@ interface INotificationManager
     // INotificationListener method.
     StatusBarNotification[] getActiveNotifications(String callingPkg);
     StatusBarNotification[] getHistoricalNotifications(String callingPkg, int count);
-
     void registerListener(in INotificationListener listener, in ComponentName component, int userid);
     void unregisterListener(in INotificationListener listener, int userid);
-
-    void cancelNotificationFromListener(in INotificationListener token, String pkg, String tag, int id);
+    void removeAllNotifications(String pkg, int userId);
     void cancelNotificationsFromListener(in INotificationListener token, in String[] keys);
+    void cancelNotificationFromListener(in INotificationListener token, String pkg, String tag, int id);
 
     ParceledListSlice getActiveNotificationsFromListener(in INotificationListener token, in String[] keys, int trim);
     void requestHintsFromListener(in INotificationListener token, int hints);

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,8 +30,8 @@ namespace android {
 namespace uirenderer {
 
 #if DEBUG_STENCIL
-#define STENCIL_WRITE_VALUE 0xff
-#define STENCIL_MASK_VALUE 0xff
+#define STENCIL_WRITE_VALUE (g_HWUI_debug_stencil ? 0xff : 0x1)
+#define STENCIL_MASK_VALUE (g_HWUI_debug_stencil ? 0xff : 0x1)
 #else
 #define STENCIL_WRITE_VALUE 0x1
 #define STENCIL_MASK_VALUE 0x1
@@ -46,6 +51,15 @@ GLenum Stencil::getSmallestStencilFormat() {
         return GL_STENCIL_INDEX1_OES;
     } else if (extensions.has4BitStencil()) {
         return GL_STENCIL_INDEX4_OES;
+    }
+#else
+    if (!g_HWUI_debug_stencil) {
+        const Extensions& extensions = Extensions::getInstance();
+        if (extensions.has1BitStencil()) {
+            return GL_STENCIL_INDEX1_OES;
+        } else if (extensions.has4BitStencil()) {
+            return GL_STENCIL_INDEX4_OES;
+        }
     }
 #endif
     return GL_STENCIL_INDEX8;

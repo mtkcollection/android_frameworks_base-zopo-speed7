@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,6 +136,7 @@ public class NetworkUtils {
      * @return 0 on success or negative errno on failure.
      */
     public native static int bindSocketToNetwork(int socketfd, int netId);
+    public native static int getRaFlags(String interfaceName);
 
     /**
      * Protect {@code socketfd} from VPN connections.  After protecting, data sent through
@@ -365,4 +371,56 @@ public class NetworkUtils {
         result = builder.toString();
         return result;
     }
+
+    // M:
+    public native static int runPPPOE(String interfaceName, int timeout, String username, String password, int interval, int failure, int mtu, int mru, int mss, DhcpResults ipInfo);
+    public native static boolean stopPPPOE(String interfaceName);
+    public native static String getPPPOEError();
+
+    /**
+    add dhcp Inform corresponding java declaration.create them for SIP option
+    */
+    public native static boolean doSipDhcpRequest(String interfaceName);
+    public native static boolean stopSipDhcpRequest(String interfaceName);
+
+    /**
+    add dhcpv6 Inform corresponding java declaration.create them for SIP option
+    */
+    public native static boolean doSipDhcpv6Request(String interfaceName);
+    public native static boolean stopSipDhcpv6Request(String interfaceName);
+
+    /**
+        add dhcpv6 corresponding java declaration, just like dhcpv4.
+     */
+    public native static boolean runDhcpv6(String interfaceName, DhcpResults dhcpResults);
+    public native static boolean runDhcpv6Renew(String interfaceName, DhcpResults dhcpResults);
+    public native static boolean stopDhcpv6(String interfaceName);
+    public native static String getDhcpv6Error();
+
+
+    /**
+        add PD corresponding java declaration.
+     */
+    public native static boolean runDhcpv6PD(String interfaceName, DhcpResults dhcpResults);
+    public native static boolean runDhcpv6PDRenew(String interfaceName, DhcpResults dhcpResults);
+    public native static boolean stopDhcpv6PD(String interfaceName);
+    public native static String getDhcpv6PDError();
+
+    /// M: utility function - reset the socket connection of the process by uid
+    /**
+     * Reset the socket connection of the process by uid
+     * @param uid the uid of the process
+     * @hide
+     */
+    public native static int resetConnectionByUid(int uid);
+
+    /// M: utility function - reset the socket connection of the process by uid with special error number
+    /**
+     * Reset the socket connection of the process by uid with special error number
+     * @param uid the uid of the process
+     * @param error number which is expected.
+     * @hide
+     */
+    public native static int resetConnectionByUidErrNum(int uid, int err);
+
 }

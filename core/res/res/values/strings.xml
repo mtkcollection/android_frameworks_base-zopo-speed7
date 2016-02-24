@@ -2688,7 +2688,7 @@
                                           --> <skip />
 
     <!-- On the keyguard screen, it shows the carrier the phone is connected to.  This is displayed if the phone is not connected to a carrier.-->
-    <string name="lockscreen_carrier_default">No service.</string>
+    <string name="lockscreen_carrier_default">No service</string>
 
     <!-- Shown in the lock screen to tell the user that the screen is locked. -->
     <string name="lockscreen_screen_locked">Screen locked.</string>
@@ -2986,7 +2986,7 @@
 
     <!-- Do not translate.  WebView User Agent string -->
     <string name="web_user_agent" translatable="false">Mozilla/5.0 (Linux; U; <xliff:g id="x">Android %s</xliff:g>)
-        AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 <xliff:g id="mobile">%s</xliff:g>Safari/534.30</string>
+        AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 <xliff:g id="mobile">%s</xliff:g>Safari/537.36</string>
     <!-- Do not translate.  WebView User Agent targeted content -->
     <string name="web_user_agent_target_content" translatable="false">"Mobile "</string>
 
@@ -4463,6 +4463,17 @@
 
     <!-- Storage description for USB storage. [CHAR LIMIT=NONE] -->
     <string name="storage_usb">USB storage</string>
+
+    <!-- Storage description for Phone storage. [CHAR LIMIT=NONE] -->
+    <string name="storage_phone">Phone storage</string>
+
+    <!-- Storage description for External USB storage. [CHAR LIMIT=NONE] -->
+    <string name="storage_external_usb">External USB storage</string>
+
+    <!-- Storage description for IC-USB storage1. [CHAR LIMIT=NONE] -->
+    <string name="storage_ic_usb1">External IC-USB storage1</string>
+    <!-- Storage description for IC-USB storage2. [CHAR LIMIT=NONE] -->
+    <string name="storage_ic_usb2">External IC-USB storage2</string>
 
     <!-- Button text for the edit menu in input method extract mode. [CHAR LIMIT=16] -->
     <string name="extract_edit_menu_button">Edit</string>

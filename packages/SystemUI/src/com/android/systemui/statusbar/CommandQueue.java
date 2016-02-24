@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,11 +24,12 @@ package com.android.systemui.statusbar;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
+import android.view.KeyEvent;
 
 import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.statusbar.StatusBarIconList;
-
+import android.util.Log;
 /**
  * This class takes the functions from IStatusBar that come in on
  * binder pool threads and posts messages to get them onto the main
@@ -57,6 +63,13 @@ public class CommandQueue extends IStatusBar.Stub {
     private static final int MSG_NOTIFICATION_LIGHT_OFF     = 16 << MSG_SHIFT;
     private static final int MSG_NOTIFICATION_LIGHT_PULSE   = 17 << MSG_SHIFT;
     private static final int MSG_SHOW_SCREEN_PIN_REQUEST    = 18 << MSG_SHIFT;
+    /// M: [SystemUI] Support "SIM indicator". @{
+    private static final int MSG_SHOW_SIM_INDICATOR = 19 << MSG_SHIFT;
+    private static final int MSG_HIDE_SIM_INDICATOR = 20 << MSG_SHIFT;
+    /// @}
+    /// M: [SystemUI]Show application guide for App. @{
+    private static final int MSG_SHOW_APPLICATION_GUIDE = 21 << MSG_SHIFT;
+    /// @}
 
     public static final int FLAG_EXCLUDE_NONE = 0;
     public static final int FLAG_EXCLUDE_SEARCH_PANEL = 1 << 0;
@@ -99,6 +112,15 @@ public class CommandQueue extends IStatusBar.Stub {
         public void notificationLightOff();
         public void notificationLightPulse(int argb, int onMillis, int offMillis);
         public void showScreenPinningRequest();
+        /// M: [SystemUI] Support "SIM indicator". @{
+        public void showSimIndicator(String businessType);
+        public void hideSimIndicator();
+        /// @}
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        public void dispatchStatusBarKeyEvent(KeyEvent event);
+        /// @}
+        ///M:BMW
+        public void showRestoreButton(boolean flag);
     }
 
     public CommandQueue(Callbacks callbacks, StatusBarIconList list) {
@@ -328,8 +350,45 @@ public class CommandQueue extends IStatusBar.Stub {
                 case MSG_SHOW_SCREEN_PIN_REQUEST:
                     mCallbacks.showScreenPinningRequest();
                     break;
+                /// M: [SystemUI] Support "SIM indicator". @{
+                case MSG_SHOW_SIM_INDICATOR:
+                    mCallbacks.showSimIndicator((String) msg.obj);
+                    break;
+                case MSG_HIDE_SIM_INDICATOR:
+                    mCallbacks.hideSimIndicator();
+                    break;
+                /// @}
             }
         }
     }
+
+    /// M: [SystemUI] Support "SIM indicator" @{
+    public void showSimIndicator(String businessType) {
+        synchronized (mList) {
+            mHandler.obtainMessage(MSG_SHOW_SIM_INDICATOR, 0, 0, businessType).sendToTarget();
+        }
+    }
+
+    public void hideSimIndicator() {
+        synchronized (mList) {
+            mHandler.obtainMessage(MSG_HIDE_SIM_INDICATOR, 0, 0, null).sendToTarget();
+        }
+    }
+    /// @}
+
+    /// M: [SystemUI] Support Smartbook Feature. @{
+    public void dispatchStatusBarKeyEvent(KeyEvent event) {
+        synchronized (mList) {
+            mCallbacks.dispatchStatusBarKeyEvent(event);
+        }
+    }
+    /// @}
+    /// M: add for restore button in multi-window @{   
+    public void showRestoreButton(boolean flag) {
+      Log.w("CommandQueue ", " CommandQueue flag =  " + flag);
+    //   PhoneStatusBar.showRestoreButton(flag);
+      mCallbacks.showRestoreButton(flag);
+    }
+    /// @}
 }
 

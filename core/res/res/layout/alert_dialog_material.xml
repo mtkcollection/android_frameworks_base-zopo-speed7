@@ -57,7 +57,7 @@
         android:layout_weight="1"
         android:minHeight="48dp">
         <View android:id="@+id/scrollIndicatorUp"
-            android:visibility="gone"
+            android:visibility="invisible"
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:layout_gravity="top"
@@ -84,7 +84,7 @@
             </LinearLayout>
         </ScrollView>
         <View android:id="@+id/scrollIndicatorDown"
-            android:visibility="gone"
+            android:visibility="invisible"
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:layout_gravity="bottom"

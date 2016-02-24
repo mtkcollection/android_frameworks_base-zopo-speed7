@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,11 +64,38 @@ public:
         SkDELETE(fDecoder);
     }
 
+#if 0
     bool decodeRegion(SkBitmap* bitmap, const SkIRect& rect,
                       SkColorType pref, int sampleSize) {
         fDecoder->setSampleSize(sampleSize);
+    #ifdef MTK_SKIA_MULTI_THREAD_JPEG_REGION     
+        return fDecoder->decodeSubset(bitmap, rect, pref, sampleSize);
+    #else
         return fDecoder->decodeSubset(bitmap, rect, pref);
+    #endif
     }
+#endif
+
+    bool decodeRegion(SkBitmap* bitmap, const SkIRect& rect,
+                      SkColorType pref, int sampleSize, void* dc) {
+        fDecoder->setSampleSize(sampleSize);
+#ifdef MTK_SKIA_MULTI_THREAD_JPEG_REGION
+    #ifdef MTK_IMAGE_DC_SUPPORT 
+        if (fDecoder->getFormat() == SkImageDecoder::kJPEG_Format)
+            return fDecoder->decodeSubset(bitmap, rect, pref, sampleSize, dc);
+        else
+            return fDecoder->decodeSubset(bitmap, rect, pref);
+    #else
+        if (fDecoder->getFormat() == SkImageDecoder::kJPEG_Format)
+            return fDecoder->decodeSubset(bitmap, rect, pref, sampleSize, NULL);
+        else
+            return fDecoder->decodeSubset(bitmap, rect, pref);
+    #endif
+#else
+        return fDecoder->decodeSubset(bitmap, rect, pref);
+    #endif
+    }
+
 
     SkImageDecoder* getDecoder() const { return fDecoder; }
     int getWidth() const { return fWidth; }
@@ -169,16 +201,33 @@ static jobject nativeNewInstanceFromAsset(JNIEnv* env, jobject clazz,
  * purgeable not supported
  * reportSizeToVM not supported
  */
+
+#define MTK_BRD_MULTI_THREAD 
 static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
                                 jint start_x, jint start_y, jint width, jint height, jobject options) {
     SkBitmapRegionDecoder *brd = reinterpret_cast<SkBitmapRegionDecoder*>(brdHandle);
     jobject tileBitmap = NULL;
     SkImageDecoder *decoder = brd->getDecoder();
     int sampleSize = 1;
+    int postproc = 0;
+    int postprocflag = 0;
+#ifdef MTK_IMAGE_DC_SUPPORT
+	void* dc = NULL;
+	bool dcflag = false;
+	jint* pdynamicCon = NULL;
+	jintArray dynamicCon;
+	jsize size = 0;
+#endif
+
     SkColorType prefColorType = kUnknown_SkColorType;
     bool doDither = true;
     bool preferQualityOverSpeed = false;
     bool requireUnpremultiplied = false;
+
+#ifdef MTK_BRD_MULTI_THREAD
+    jobject ret = NULL;    
+    decoder->regionDecodeLock();
+#endif
 
     if (NULL != options) {
         sampleSize = env->GetIntField(options, gOptions_sampleSizeFieldID);
@@ -190,12 +239,48 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
         jobject jconfig = env->GetObjectField(options, gOptions_configFieldID);
         prefColorType = GraphicsJNI::getNativeBitmapColorType(env, jconfig);
         doDither = env->GetBooleanField(options, gOptions_ditherFieldID);
+        postproc = env->GetBooleanField(options, gOptions_postprocFieldID);
+        postprocflag = env->GetIntField(options, gOptions_postprocflagFieldID);
+
+#ifdef MTK_IMAGE_DC_SUPPORT
+        dcflag = env->GetBooleanField(options, gOptions_dynamicConflagFieldID);
+		dynamicCon = (jintArray)env->GetObjectField(options, gOptions_dynamicConFieldID);
+        pdynamicCon = env->GetIntArrayElements(dynamicCon, NULL);
+		size = env->GetArrayLength(dynamicCon);
+	    //for (int i=0; i<size; i++)
+		//{
+		    //ALOGD("BitmapRegionDecoder pdynamicCon[%d]=%d", i, pdynamicCon[i]);
+		//}
+		//ALOGD("BitmapRegionDecoder.cpp dcflag=%d", dcflag);
+		//ALOGD("BitmapRegionDecoder.cpp dynamicCon=%p", dynamicCon);
+		//ALOGD("BitmapRegionDecoder.cpp size=%d", size);
+#endif
+
         preferQualityOverSpeed = env->GetBooleanField(options,
                 gOptions_preferQualityOverSpeedFieldID);
         // Get the bitmap for re-use if it exists.
         tileBitmap = env->GetObjectField(options, gOptions_bitmapFieldID);
         requireUnpremultiplied = !env->GetBooleanField(options, gOptions_premultipliedFieldID);
     }
+#ifdef MTK_BRD_MULTI_THREAD
+    if(tileBitmap != NULL && decoder->isAllowMultiThreadRegionDecode()){
+      decoder->regionDecodeUnlock();
+    }	
+    SkDebugf("nativeDecodeRegion: options %x, tileBitmap %x!!\n", options, tileBitmap);
+#endif    
+    decoder->setPostProcFlag((postproc | (postprocflag << 4)));
+
+#ifdef MTK_IMAGE_DC_SUPPORT
+    if (dcflag == true) {
+	    dc = (void*)pdynamicCon;
+        int len = (int)size;
+        decoder->setDynamicCon(dc, len);
+    } else {
+        dc = NULL;
+        decoder->setDynamicCon(dc, 0);
+    }
+    ALOGD("nativeDecodeRegion dcflag %d, dc %p", dcflag, dc);
+#endif
 
     decoder->setDitherImage(doDither);
     decoder->setPreferQualityOverSpeed(preferQualityOverSpeed);
@@ -206,7 +291,10 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
     // happens earlier than AutoDecoderCancel object is added
     // to the gAutoDecoderCancelMutex linked list.
     if (NULL != options && env->GetBooleanField(options, gOptions_mCancelID)) {
-        return nullObjectReturn("gOptions_mCancelID");;
+      #ifdef MTK_BRD_MULTI_THREAD
+        decoder->regionDecodeUnlock();
+      #endif
+      return nullObjectReturn("gOptions_mCancelID");;
     }
 
     SkIRect region;
@@ -225,10 +313,27 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
         bitmap = new SkBitmap;
         adb.reset(bitmap);
     }
-
-    if (!brd->decodeRegion(bitmap, region, prefColorType, sampleSize)) {
-        return nullObjectReturn("decoder->decodeRegion returned false");
+    
+    #ifdef MTK_IMAGE_DC_SUPPORT
+    if (!brd->decodeRegion(bitmap, region, prefColorType, sampleSize, dc)) 
+    #else
+    if (!brd->decodeRegion(bitmap, region, prefColorType, sampleSize, NULL)) 
+    #endif
+    {
+      #ifdef MTK_BRD_MULTI_THREAD
+        decoder->regionDecodeUnlock();
+      #endif
+      return nullObjectReturn("decoder->decodeRegion returned false");
     }
+
+#if 0
+    if (!brd->decodeRegion(bitmap, region, prefColorType, sampleSize)) {
+      #ifdef MTK_BRD_MULTI_THREAD
+        decoder->regionDecodeUnlock();
+      #endif
+      return nullObjectReturn("decoder->decodeRegion returned false");
+    }
+#endif
 
     // update options (if any)
     if (NULL != options) {
@@ -242,8 +347,11 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
     }
 
     if (tileBitmap != NULL) {
-        bitmap->notifyPixelsChanged();
-        return tileBitmap;
+      #ifdef MTK_BRD_MULTI_THREAD
+        decoder->regionDecodeUnlock();
+      #endif
+	  bitmap->notifyPixelsChanged();
+      return tileBitmap;
     }
 
     // detach bitmap from its autodeleter, since we want to own it now
@@ -254,7 +362,14 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, jlong brdHandle,
 
     int bitmapCreateFlags = 0;
     if (!requireUnpremultiplied) bitmapCreateFlags |= GraphicsJNI::kBitmapCreateFlag_Premultiplied;
+
+#ifdef MTK_BRD_MULTI_THREAD
+    ret =  GraphicsJNI::createBitmap(env, bitmap, buff, bitmapCreateFlags, NULL, NULL, -1);
+    decoder->regionDecodeUnlock();
+    return ret ;
+#else	
     return GraphicsJNI::createBitmap(env, bitmap, buff, bitmapCreateFlags, NULL, NULL, -1);
+#endif      
 }
 
 static jint nativeGetHeight(JNIEnv* env, jobject, jlong brdHandle) {

@@ -26,4 +26,6 @@
 
     <!-- Skeleton string format for displaying the time in 24-hour format. -->
     <string name="clock_24hr_format">Hm</string>
+
+    <string name="lockscreen_battery_short"><xliff:g id="number">%d</xliff:g><xliff:g id="percent">%%</xliff:g></string>
 </resources>

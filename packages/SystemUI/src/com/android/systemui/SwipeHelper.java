@@ -287,6 +287,11 @@ public class SwipeHelper implements Gefingerpoken {
                 if (captured) return true;
                 break;
         }
+        if (mDragging || mLongPressSent) {
+            Log.d(TAG, "onInterceptTouchEvent mDragging=" + mDragging
+                + " mLongPressSent=" + mLongPressSent
+                + " action=" + action);
+        }
         return mDragging || mLongPressSent;
     }
 

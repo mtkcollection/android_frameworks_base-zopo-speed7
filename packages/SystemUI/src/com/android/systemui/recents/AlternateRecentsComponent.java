@@ -52,6 +52,7 @@ import com.android.systemui.recents.views.TaskStackView;
 import com.android.systemui.recents.views.TaskStackViewLayoutAlgorithm;
 import com.android.systemui.recents.views.TaskViewHeader;
 import com.android.systemui.recents.views.TaskViewTransform;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -70,6 +71,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** A proxy implementation for the recents component */
 public class AlternateRecentsComponent implements ActivityOptions.OnAnimationStartedListener {
+    /// M: For Debug
+    static final String TAG = "recents.AlternateRecentsComponent";
+    static final boolean DEBUG = true;
 
     final public static String EXTRA_TRIGGERED_FROM_ALT_TAB = "triggeredFromAltTab";
     final public static String EXTRA_TRIGGERED_FROM_HOME_KEY = "triggeredFromHomeKey";
@@ -335,13 +339,24 @@ public class AlternateRecentsComponent implements ActivityOptions.OnAnimationSta
         TaskStack stack = plan.getTaskStack();
 
         // Return early if there are no tasks
-        if (stack.getTaskCount() == 0) return;
+        if (stack.getTaskCount() == 0) {
+            Xlog.w(TAG, "showRelativeAffiliatedTask : Task Count = 0");
+            return;
+        }
 
         ActivityManager.RunningTaskInfo runningTask = mSystemServicesProxy.getTopMostTask();
         // Return early if there is no running task (can't determine affiliated tasks in this case)
-        if (runningTask == null) return;
+        /// M: [ALPS01814359] JE
+        if (runningTask == null) {
+            Xlog.w(TAG, "showRelativeAffiliatedTask : There is no runningTask");
+            return;
+        }
+
         // Return early if the running task is in the home stack (optimization)
-        if (mSystemServicesProxy.isInHomeStack(runningTask.id)) return;
+        if (mSystemServicesProxy.isInHomeStack(runningTask.id)) {
+            Xlog.w(TAG, "showRelativeAffiliatedTask : is Not InHomeStack");
+            return;
+        }
 
         // Find the task in the recents list
         ArrayList<Task> tasks = stack.getTasks();
@@ -375,6 +390,7 @@ public class AlternateRecentsComponent implements ActivityOptions.OnAnimationSta
 
         // Return early if there is no next task
         if (toTask == null) {
+            Xlog.w(TAG, "showRelativeAffiliatedTask : toTask is null");
             if (numAffiliatedTasks > 1) {
                 if (showNextTask) {
                     mSystemServicesProxy.startInPlaceAnimationOnFrontMostApplication(
@@ -410,6 +426,10 @@ public class AlternateRecentsComponent implements ActivityOptions.OnAnimationSta
     /** Updates on configuration change. */
     @ProxyFromPrimaryToCurrentUser
     public void onConfigurationChanged(Configuration newConfig) {
+        if (DEBUG) {
+            Xlog.w(TAG, "AlternateRecentsComponent: onConfigurationChanged");
+        }
+
         if (mSystemServicesProxy.isForegroundUserOwner()) {
             configurationChanged();
         } else {
@@ -735,6 +755,8 @@ public class AlternateRecentsComponent implements ActivityOptions.OnAnimationSta
     static void visibilityChanged(boolean visible) {
         if (sRecentsComponentCallbacks != null) {
             sRecentsComponentCallbacks.onVisibilityChanged(visible);
+        } else {
+            Xlog.w(TAG, "notifyVisibilityChanged : callback is null");
         }
     }
 

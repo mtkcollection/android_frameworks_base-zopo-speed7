@@ -46,7 +46,6 @@ ifeq ($(USE_OPENGL_RENDERER),true)
 		ProgramCache.cpp \
 		RenderBufferCache.cpp \
 		RenderNode.cpp \
-		RenderProperties.cpp \
 		RenderState.cpp \
 		ResourceCache.cpp \
 		ShadowTessellator.cpp \
@@ -73,12 +72,44 @@ ifeq ($(USE_OPENGL_RENDERER),true)
 	intermediates := $(call intermediates-dir-for,STATIC_LIBRARIES,libRS,TARGET,)
 
 	LOCAL_C_INCLUDES += \
-		external/skia/src/core
+		external/skia/src/core \
+		$(MTK_PATH_SOURCE)/external/perfservicenative
+
+# --- MediaTek ---------------------------------------------------------------
+
+    LOCAL_SRC_FILES += \
+            MTKDebug.cpp \
+            MTKProgramAtlas.cpp
+
+    LOCAL_C_INCLUDES += \
+      external/skia/include/core \
+      $(LOCAL_PATH)/ProgramBinary
+
+    LOCAL_STATIC_LIBRARIES := libprogrambinary
+
+ifeq ($(strip $(MTK_GMO_RAM_OPTIMIZE)), yes)
+    LOCAL_SRC_FILES += MTKRenderProperties.cpp
+    LOCAL_CFLAGS += -DMTK_HWUI_RAM_OPTIMIZE
+else
+    LOCAL_SRC_FILES += RenderProperties.cpp
+endif
+
+ifeq ($(strip $(TARGET_BUILD_VARIANT)), user)
+    LOCAL_CFLAGS += -DMTK_USER_BUILD
+else
+    ifeq ($(strip $(TARGET_BUILD_VARIANT)), eng)
+        LOCAL_CFLAGS += -DMTK_DEBUG_RENDERER -DMTK_ENG_BUILD
+    else
+        LOCAL_CFLAGS += -DMTK_DEBUG_RENDERER
+    endif
+endif
+
+# ----------------------------------------------------------------------------
 
 	LOCAL_CFLAGS += -DUSE_OPENGL_RENDERER -DEGL_EGLEXT_PROTOTYPES -DGL_GLEXT_PROTOTYPES
 	LOCAL_CFLAGS += -Wno-unused-parameter
 	LOCAL_MODULE_CLASS := SHARED_LIBRARIES
-	LOCAL_SHARED_LIBRARIES := liblog libcutils libutils libEGL libGLESv2 libskia libui libgui
+	LOCAL_SHARED_LIBRARIES := liblog libcutils libutils libEGL libGLESv2 libskia libui libgui libdl libbinder
 	LOCAL_MODULE := libhwui
 	LOCAL_MODULE_TAGS := optional
 

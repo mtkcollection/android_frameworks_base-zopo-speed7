@@ -60,4 +60,31 @@ oneway interface IInCallAdapter {
     void turnOnProximitySensor();
 
     void turnOffProximitySensor(boolean screenOnImmediately);
+
+    void startVoiceRecording();
+
+    void stopVoiceRecording();
+
+    void setSortedBackgroudCallList(in List<String> list);
+
+    void setSortedIncomingCallList(in List<String> list);
+
+    void explicitCallTransfer(String callId);
+
+    void hangupAll();
+
+    void hangupAllHoldCalls();
+
+    void hangupActiveAndAnswerWaiting();
+
+    void updatePowerForSmartBook(boolean onOff);
+
+    /// M: For VoLTE @{
+    void inviteConferenceParticipants(String conferenceCallId, in List<String> numbers);
+    /// @}
+/* Vanzo:yuecaili on: Tue, 16 Jun 2015 11:06:06 +0800
+ * implement #111577: modify incall ring delay
+ */
+    void playIncomingCallRingtone();
+// End of Vanzo:yuecaili
 }

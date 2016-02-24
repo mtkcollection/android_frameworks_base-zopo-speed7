@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -417,6 +422,7 @@ public class AlarmManager
      * {@link #setInexactRepeating(int, long, long, PendingIntent)}
      * when running on Android prior to API 19.
      */
+
     public static final long INTERVAL_FIFTEEN_MINUTES = 15 * 60 * 1000;
 
     /**
@@ -424,6 +430,7 @@ public class AlarmManager
      * {@link #setInexactRepeating(int, long, long, PendingIntent)}
      * when running on Android prior to API 19.
      */
+
     public static final long INTERVAL_HALF_HOUR = 2*INTERVAL_FIFTEEN_MINUTES;
 
     /**
@@ -431,6 +438,7 @@ public class AlarmManager
      * {@link #setInexactRepeating(int, long, long, PendingIntent)}
      * when running on Android prior to API 19.
      */
+
     public static final long INTERVAL_HOUR = 2*INTERVAL_HALF_HOUR;
 
     /**
@@ -438,6 +446,8 @@ public class AlarmManager
      * {@link #setInexactRepeating(int, long, long, PendingIntent)}
      * when running on Android prior to API 19.
      */
+
+
     public static final long INTERVAL_HALF_DAY = 12*INTERVAL_HOUR;
 
     /**
@@ -445,6 +455,8 @@ public class AlarmManager
      * {@link #setInexactRepeating(int, long, long, PendingIntent)}
      * when running on Android prior to API 19.
      */
+
+
     public static final long INTERVAL_DAY = 2*INTERVAL_HALF_DAY;
 
     /**
@@ -552,6 +564,19 @@ public class AlarmManager
         } catch (RemoteException ex) {
         }
     }
+
+    /**
+     *for cancel the powerOffAlarm
+     *@hide
+     *@internal
+     */
+    public void cancelPoweroffAlarm(String name) {
+        try {
+            mService.cancelPoweroffAlarm(name);
+        } catch (RemoteException ex) {
+        }
+    }
+
 
     /**
      * Gets information about the next alarm clock currently scheduled.

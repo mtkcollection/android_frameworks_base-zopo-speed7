@@ -19,6 +19,7 @@ package com.android.systemui.statusbar.policy;
 import com.android.systemui.R;
 
 class WifiIcons {
+/*
     static final int[][] WIFI_SIGNAL_STRENGTH = {
             { R.drawable.stat_sys_wifi_signal_0,
               R.drawable.stat_sys_wifi_signal_1,
@@ -44,9 +45,90 @@ class WifiIcons {
               R.drawable.ic_qs_wifi_full_3,
               R.drawable.ic_qs_wifi_full_4 }
         };
+*/
+    /// M: Wifi activity icon @{
+    static final int[][] WIFI_SIGNAL_STRENGTH_INOUT = {
+        { R.drawable.stat_sys_wifi_signal_0_fully,
+          R.drawable.stat_sys_wifi_signal_0_fully,
+          R.drawable.stat_sys_wifi_signal_0_fully,
+          R.drawable.stat_sys_wifi_signal_0_fully },
+
+        { R.drawable.stat_sys_wifi_signal_1_fully,
+          R.drawable.stat_sys_wifi_signal_1_fully_in,
+          R.drawable.stat_sys_wifi_signal_1_fully_out,
+          R.drawable.stat_sys_wifi_signal_1_fully_inout },
+
+        { R.drawable.stat_sys_wifi_signal_2_fully,
+          R.drawable.stat_sys_wifi_signal_2_fully_in,
+          R.drawable.stat_sys_wifi_signal_2_fully_out,
+          R.drawable.stat_sys_wifi_signal_2_fully_inout },
+
+        { R.drawable.stat_sys_wifi_signal_3_fully,
+          R.drawable.stat_sys_wifi_signal_3_fully_in,
+          R.drawable.stat_sys_wifi_signal_3_fully_out,
+          R.drawable.stat_sys_wifi_signal_3_fully_inout },
+
+        { R.drawable.stat_sys_wifi_signal_4_fully,
+          R.drawable.stat_sys_wifi_signal_4_fully_in,
+          R.drawable.stat_sys_wifi_signal_4_fully_out,
+          R.drawable.stat_sys_wifi_signal_4_fully_inout }
+    };
+    /// M: Wifi activity icon @}
+
+    /// M: config for show the ! icon or not . @{
+    static final int[] WIFI_SIGNAL_STRENGTH_EXCLAMATION = {
+          R.drawable.stat_sys_wifi_signal_0,
+          R.drawable.stat_sys_wifi_signal_1,
+          R.drawable.stat_sys_wifi_signal_2,
+          R.drawable.stat_sys_wifi_signal_3,
+          R.drawable.stat_sys_wifi_signal_4,
+    };
+
+    static final int[] WIFI_SIGNAL_STRENGTH_FULL = {
+          R.drawable.stat_sys_wifi_signal_0_fully,
+          R.drawable.stat_sys_wifi_signal_1_fully,
+          R.drawable.stat_sys_wifi_signal_2_fully,
+          R.drawable.stat_sys_wifi_signal_3_fully,
+          R.drawable.stat_sys_wifi_signal_4_fully,
+    };
+
+    static final int[] QS_WIFI_SIGNAL_STRENGTH_EXCLAMATION = {
+          R.drawable.ic_qs_wifi_0,
+          R.drawable.ic_qs_wifi_1,
+          R.drawable.ic_qs_wifi_2,
+          R.drawable.ic_qs_wifi_3,
+          R.drawable.ic_qs_wifi_4,
+    };
+
+    static final int[] QS_WIFI_SIGNAL_STRENGTH_FULL = {
+          R.drawable.ic_qs_wifi_full_0,
+          R.drawable.ic_qs_wifi_full_1,
+          R.drawable.ic_qs_wifi_full_2,
+          R.drawable.ic_qs_wifi_full_3,
+          R.drawable.ic_qs_wifi_full_4,
+    };
+
+    static final int WIFI_LEVEL_COUNT = WIFI_SIGNAL_STRENGTH_FULL.length;
+    static int[][] WIFI_SIGNAL_STRENGTH = new int[2][WIFI_LEVEL_COUNT];
+    static int[][] QS_WIFI_SIGNAL_STRENGTH = new int[2][WIFI_LEVEL_COUNT];
+
+    static void initWifiIcon() {
+        if (NetworkControllerImpl.mShowNormalIcon) {
+            WIFI_SIGNAL_STRENGTH[0] = WIFI_SIGNAL_STRENGTH_FULL;
+            WIFI_SIGNAL_STRENGTH[1] = WIFI_SIGNAL_STRENGTH_FULL;
+            QS_WIFI_SIGNAL_STRENGTH[0] = QS_WIFI_SIGNAL_STRENGTH_FULL;
+            QS_WIFI_SIGNAL_STRENGTH[1] = QS_WIFI_SIGNAL_STRENGTH_FULL;
+        } else {
+            WIFI_SIGNAL_STRENGTH[0] = WIFI_SIGNAL_STRENGTH_EXCLAMATION;
+            WIFI_SIGNAL_STRENGTH[1] = WIFI_SIGNAL_STRENGTH_FULL;
+            QS_WIFI_SIGNAL_STRENGTH[0] = QS_WIFI_SIGNAL_STRENGTH_EXCLAMATION;
+            QS_WIFI_SIGNAL_STRENGTH[1] = QS_WIFI_SIGNAL_STRENGTH_FULL;
+        }
+    }
+    /// M: config for show the ! icon or not . @}
 
     static final int QS_WIFI_NO_NETWORK = R.drawable.ic_qs_wifi_no_network;
     static final int WIFI_NO_NETWORK = R.drawable.stat_sys_wifi_signal_null;
 
-    static final int WIFI_LEVEL_COUNT = WIFI_SIGNAL_STRENGTH[0].length;
+    //static final int WIFI_LEVEL_COUNT = WIFI_SIGNAL_STRENGTH[0].length;
 }

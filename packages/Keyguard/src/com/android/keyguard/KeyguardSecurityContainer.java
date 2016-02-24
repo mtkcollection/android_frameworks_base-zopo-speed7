@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,15 +31,27 @@ import android.util.Log;
 import android.util.Slog;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:09:48 +0800
+ */
+import android.os.Handler;
+// End of Vanzo:hanshengpeng
 
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
+import com.android.keyguard.KeyguardHostView.OnDismissAction;
+
+import com.mediatek.keyguard.ext.ILockScreenExt;
+import com.mediatek.keyguard.ext.KeyguardPluginFactory;
+import com.mediatek.keyguard.AntiTheft.AntiTheftManager ;
+import com.mediatek.keyguard.Telephony.KeyguardSimPinPukMeView ;
+import com.mediatek.keyguard.VoiceWakeup.VoiceWakeupManager ;
 
 public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSecurityView {
     private static final boolean DEBUG = KeyguardConstants.DEBUG;
-    private static final String TAG = "KeyguardSecurityView";
+    private static final String TAG = "KeyguardSecurityContainer";
 
     private static final int USER_TYPE_PRIMARY = 1;
     private static final int USER_TYPE_WORK_PROFILE = 2;
@@ -52,12 +69,18 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
 
     private final KeyguardUpdateMonitor mUpdateMonitor;
 
+    // M: add for LockScreen Ext
+    ILockScreenExt mLockScreenExt = null;
+
     // Used to notify the container when something interesting happens.
     public interface SecurityCallback {
         public boolean dismiss(boolean authenticated);
         public void userActivity();
         public void onSecurityModeChanged(SecurityMode securityMode, boolean needsInput);
         public void finish();
+        public void setOnDismissAction(OnDismissAction action);
+        public boolean hasOnDismissAction() ;
+        public void updateNavbarStatus() ;
     }
 
     public KeyguardSecurityContainer(Context context, AttributeSet attrs) {
@@ -73,6 +96,15 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
         mSecurityModel = new KeyguardSecurityModel(context);
         mLockPatternUtils = new LockPatternUtils(context);
         mUpdateMonitor = KeyguardUpdateMonitor.getInstance(mContext);
+
+        /// M: init LockScreen plugin
+        try {
+            mLockScreenExt = KeyguardPluginFactory.getLockScreenExt(mContext);
+
+            Log.d(TAG , "lock screen instance created in keyguard " + mLockScreenExt);
+        } catch (Exception e) {
+            Log.e(TAG , "exception: ", e);
+        }
     }
 
     public void setSecurityCallback(SecurityCallback callback) {
@@ -81,6 +113,7 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
 
     @Override
     public void onResume(int reason) {
+        if (DEBUG) Log.d(TAG, "onResume(reason = " + reason + ")") ;
         if (mCurrentSecuritySelection != SecurityMode.None) {
             getSecurityView(mCurrentSecuritySelection).onResume(reason);
         }
@@ -88,6 +121,7 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
 
     @Override
     public void onPause() {
+        if (DEBUG) Log.d(TAG, "onPause()") ;
         if (mCurrentSecuritySelection != SecurityMode.None) {
             getSecurityView(mCurrentSecuritySelection).onPause();
         }
@@ -144,9 +178,23 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             final LayoutInflater inflater = LayoutInflater.from(mContext);
             if (DEBUG) Log.v(TAG, "inflating id = " + layoutId);
             View v = inflater.inflate(layoutId, mSecurityViewFlipper, false);
+            view = (KeyguardSecurityView)v;
+            /// M: Use KeygaurdSimPinPukView for pin/puk, so set sim Id for it
+            if (view instanceof KeyguardSimPinPukMeView) {
+                KeyguardSimPinPukMeView pinPukView = (KeyguardSimPinPukMeView) view;
+                final int phoneId = mSecurityModel.getPhoneIdUsingSecurityMode(securityMode);
+                pinPukView.setPhoneId(phoneId);
+            }
             mSecurityViewFlipper.addView(v);
             updateSecurityView(v, mIsBouncing);
-            view = (KeyguardSecurityView)v;
+        }
+        ///M: mediatek add only for PIN1 and PIN2, in this case, we needn't recreate from the same layout file
+        else if (view != null && (view instanceof KeyguardSimPinPukMeView)
+                  && (securityMode != mCurrentSecuritySelection)) {
+             Log.i(TAG, "getSecurityView, here, we will refresh the layout");
+             KeyguardSimPinPukMeView pinPukView = (KeyguardSimPinPukMeView) view;
+             final int phoneId = mSecurityModel.getPhoneIdUsingSecurityMode(securityMode);
+             pinPukView.setPhoneId(phoneId);
         }
 
         return view;
@@ -210,8 +258,10 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             case Biometric:
             case Invalid:
             case None:
-            case SimPin:
-            case SimPuk:
+            case SimPinPukMe1:
+            case SimPinPukMe2:
+            case SimPinPukMe3:
+            case SimPinPukMe4:
                 break;
         }
 
@@ -269,6 +319,26 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
                 count, LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT, timeoutInSeconds);
         showDialog(null, message);
     }
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:09:54 +0800
+ * fingerprint add by sileadinc
+ */
+    public void showAutoDismissDialog(String message, int timeout) {
+        final AlertDialog dialog = new AlertDialog.Builder(mContext)
+            .setMessage(message).create();
+        if (!(mContext instanceof Activity)) {
+            dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+        }
+        dialog.show();
+        Handler handler = new Handler();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run () {
+                Log.d(TAG, "before dialog dismiss ");
+                dialog.dismiss();
+            }
+        },timeout);
+    }
+// End of Vanzo:hanshengpeng
 
     private void reportFailedUnlockAttempt() {
         final KeyguardUpdateMonitor monitor = KeyguardUpdateMonitor.getInstance(mContext);
@@ -347,6 +417,32 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             // We'll reload it when the device comes back on.
             securityMode = mSecurityModel.getAlternateFor(securityMode);
         }
+
+        ///M: fix ALPS01856335, we should always update phone id
+        ///   when current SimPinPukMe mode is not secured.
+        if (mSecurityModel.isSimPinPukSecurityMode(mCurrentSecuritySelection)) {
+            Log.d(TAG, "showPrimarySecurityScreen() - current is " +
+                       mCurrentSecuritySelection) ;
+
+            int phoneId = mSecurityModel.getPhoneIdUsingSecurityMode(
+                mCurrentSecuritySelection) ;
+            Log.d(TAG, "showPrimarySecurityScreen() - phoneId of currentView is " +
+                       phoneId) ;
+
+            boolean isCurrentModeSimPinSecure = mUpdateMonitor.isSimPinSecure(phoneId) ;
+            Log.d(TAG, "showPrimarySecurityScreen() - isCurrentModeSimPinSecure = " +
+                       isCurrentModeSimPinSecure) ;
+
+            if (isCurrentModeSimPinSecure) {
+                Log.d(TAG, "Skip show security because it already shows SimPinPukMeView");
+                return;
+            } else {
+                Log.d(TAG, "showPrimarySecurityScreen() - since current simpinview not secured," +
+                           " we should call showSecurityScreen() to set correct " +
+                           "PhoneId for next view.") ;
+            }
+        }
+
         showSecurityScreen(securityMode);
     }
 
@@ -369,48 +465,76 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
      */
     boolean showNextSecurityScreenOrFinish(boolean authenticated) {
         if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish(" + authenticated + ")");
+        Log.d(TAG, "showNext.. mCurrentSecuritySelection = " + mCurrentSecuritySelection) ;
         boolean finish = false;
         if (mUpdateMonitor.getUserHasTrust(mLockPatternUtils.getCurrentUser())) {
+            if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish() - getUserHasTrust() is True, just finish.") ;
             finish = true;
         } else if (SecurityMode.None == mCurrentSecuritySelection) {
             SecurityMode securityMode = mSecurityModel.getSecurityMode();
             // Allow an alternate, such as biometric unlock
             securityMode = mSecurityModel.getAlternateFor(securityMode);
             if (SecurityMode.None == securityMode) {
+                if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish() - securityMode is None, just finish.") ;
                 finish = true; // no security required
             } else {
+                if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish() - switch to the alternate security view for None mode.") ;
                 showSecurityScreen(securityMode); // switch to the alternate security view
             }
         } else if (authenticated) {
+            if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish() - authenticated is True, and mCurrentSecuritySelection = " + mCurrentSecuritySelection) ;
             switch (mCurrentSecuritySelection) {
                 case Pattern:
                 case Password:
                 case PIN:
                 case Account:
                 case Biometric:
+                case Voice: //add for voice unlock
                     finish = true;
                     break;
 
-                case SimPin:
-                case SimPuk:
+                case SimPinPukMe1:
+                case SimPinPukMe2:
+                case SimPinPukMe3:
+                case SimPinPukMe4:
                     // Shortcut for SIM PIN/PUK to go to directly to user's security screen or home
                     SecurityMode securityMode = mSecurityModel.getSecurityMode();
+                    if (DEBUG) {
+                        Log.v(TAG, "securityMode = " + securityMode);
+                    }
+
                     if (securityMode != SecurityMode.None) {
                         showSecurityScreen(securityMode);
                     } else {
                         finish = true;
                     }
                     break;
-
+                ///M: ALPS01772213 for handling antitheft mode.
+                case AntiTheft:
+                    SecurityMode nextMode = mSecurityModel.getSecurityMode();
+                    if (DEBUG) {
+                        Log.v(TAG, "now is Antitheft, next securityMode = " + nextMode);
+                    }
+                    if (nextMode != SecurityMode.None) {
+                        showSecurityScreen(nextMode);
+                    } else {
+                        finish = true;
+                    }
+                    break;
                 default:
                     Log.v(TAG, "Bad security screen " + mCurrentSecuritySelection + ", fail safe");
                     showPrimarySecurityScreen(false);
                     break;
             }
         }
+
+        mSecurityCallback.updateNavbarStatus();
+
         if (finish) {
             mSecurityCallback.finish();
         }
+
+        if (DEBUG) Log.d(TAG, "showNextSecurityScreenOrFinish() - return finish = " + finish) ;
         return finish;
     }
 
@@ -423,19 +547,36 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
     private void showSecurityScreen(SecurityMode securityMode) {
         if (DEBUG) Log.d(TAG, "showSecurityScreen(" + securityMode + ")");
 
-        if (securityMode == mCurrentSecuritySelection) return;
+        ///M: Though we only have one "AntiTheft" mode, it in fact covers multiple different scenarios.
+        ///   Ex: DM Lock, PPL Lock, etc. They may appear consecutively.
+        ///   Ex: After dismissing DM Lock, the next security mode is PPL Lock.
+        ///   They share same lock view file and same SecurityMode.AntiTheft,
+        ///   but 2nd antitheft view cannot show except the 1st view since we will just end showing if  "securityMode == mCurrentSecuritySelection".
+        ///   Add a new condition for AntiTheft mode to avoid the above mentioned case.
+        if ((securityMode == mCurrentSecuritySelection)
+                && (securityMode != SecurityMode.AntiTheft)) {
+            return;
+        }
+        VoiceWakeupManager.getInstance().notifySecurityModeChange(mCurrentSecuritySelection, securityMode) ;
 
+        Log.d(TAG, "showSecurityScreen() - get oldview for" + mCurrentSecuritySelection) ;
         KeyguardSecurityView oldView = getSecurityView(mCurrentSecuritySelection);
+        Log.d(TAG, "showSecurityScreen() - get newview for" + securityMode) ;
         KeyguardSecurityView newView = getSecurityView(securityMode);
 
         // Emulate Activity life cycle
         if (oldView != null) {
             oldView.onPause();
+            Log.d(TAG, "showSecurityScreen() - oldview.setKeyguardCallback(mNullCallback)") ;
             oldView.setKeyguardCallback(mNullCallback); // ignore requests from old view
         }
+
         if (securityMode != SecurityMode.None) {
-            newView.onResume(KeyguardSecurityView.VIEW_REVEALED);
+            /// M: fix ALPS01832185,
+            ///    KeyguardAntiTheftView needs the latest mCallback before onResume.
             newView.setKeyguardCallback(mCallback);
+            Log.d(TAG, "showSecurityScreen() - newview.setKeyguardCallback(mCallback)") ;
+            newView.onResume(KeyguardSecurityView.VIEW_REVEALED);
         }
 
         // Find and show this child.
@@ -449,7 +590,9 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             }
         }
 
+        Log.d(TAG, "Before update, mCurrentSecuritySelection = " + mCurrentSecuritySelection) ;
         mCurrentSecuritySelection = securityMode;
+        Log.d(TAG, "After update, mCurrentSecuritySelection = " + mCurrentSecuritySelection) ;
         mSecurityCallback.onSecurityModeChanged(securityMode,
                 securityMode != SecurityMode.None && newView.needsInput());
     }
@@ -499,8 +642,16 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             if (success) {
                 monitor.clearFailedUnlockAttempts();
                 mLockPatternUtils.reportSuccessfulPasswordAttempt();
+
+                /// M: init DiglLayer unlock screen
+                if (mLockScreenExt != null) {
+                    //notify operator about screen successful unlock
+                    mLockScreenExt.notifyUnlockedScreen();
+                }
             } else {
-                if (mCurrentSecuritySelection == SecurityMode.Biometric) {
+                ///M: add for voice unlock
+                if (mCurrentSecuritySelection == SecurityMode.Biometric
+                    || mCurrentSecuritySelection == SecurityMode.Voice) {
                     monitor.reportFailedBiometricUnlockAttempt();
                 } else {
                     KeyguardSecurityContainer.this.reportFailedUnlockAttempt();
@@ -513,6 +664,15 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             KeyguardSecurityContainer.this.showBackupSecurityScreen();
         }
 
+        @Override
+        public boolean hasOnDismissAction() {
+            return mSecurityCallback.hasOnDismissAction();
+        }
+
+        @Override
+        public void setOnDismissAction(OnDismissAction action) {
+            mSecurityCallback.setOnDismissAction(action);
+        }
     };
 
     // The following is used to ignore callbacks from SecurityViews that are no longer current
@@ -529,6 +689,12 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
         public boolean isVerifyUnlockOnly() { return false; }
         @Override
         public void dismiss(boolean securityVerified) { }
+
+        @Override
+        public void setOnDismissAction(OnDismissAction action) {
+        }
+        @Override
+        public boolean hasOnDismissAction() { return false ; }
     };
 
     private int getSecurityViewIdForMode(SecurityMode securityMode) {
@@ -538,8 +704,20 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             case Password: return R.id.keyguard_password_view;
             case Biometric: return R.id.keyguard_face_unlock_view;
             case Account: return R.id.keyguard_account_view;
-            case SimPin: return R.id.keyguard_sim_pin_view;
-            case SimPuk: return R.id.keyguard_sim_puk_view;
+            //case SimPin: return R.id.keyguard_sim_pin_view;
+            //case SimPuk: return R.id.keyguard_sim_puk_view;
+            case SimPinPukMe1:
+            case SimPinPukMe2:
+            case SimPinPukMe3:
+            case SimPinPukMe4:
+                return R.id.keyguard_sim_pin_puk_me_view ;
+            /// M: power-off alarm @{
+            case AlarmBoot: return R.id.power_off_alarm_view;
+            /// @}
+            ///M: add voice unlock view id
+            case Voice: return R.id.voice_unlock_view;
+            ///M: add anti-theft view id
+            case AntiTheft: return AntiTheftManager.getAntiTheftViewId();
         }
         return 0;
     }
@@ -551,8 +729,20 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
             case Password: return R.layout.keyguard_password_view;
             case Biometric: return R.layout.keyguard_face_unlock_view;
             case Account: return R.layout.keyguard_account_view;
-            case SimPin: return R.layout.keyguard_sim_pin_view;
-            case SimPuk: return R.layout.keyguard_sim_puk_view;
+            //case SimPin: return R.layout.keyguard_sim_pin_view;
+            //case SimPuk: return R.layout.keyguard_sim_puk_view;
+            case SimPinPukMe1:
+            case SimPinPukMe2:
+            case SimPinPukMe3:
+            case SimPinPukMe4:
+                return R.layout.mtk_keyguard_sim_pin_puk_me_view ;
+            /// M: power-off alarm @{
+            case AlarmBoot: return R.layout.mtk_power_off_alarm_view;
+            /// @}
+            ///M: add voice unlock view layout
+            case Voice: return R.layout.mtk_voice_unlock_view;
+            ///M: add dmlock view layout
+            case AntiTheft: return AntiTheftManager.getAntiTheftLayoutId() ;
             default:
                 return 0;
         }
@@ -603,5 +793,31 @@ public class KeyguardSecurityContainer extends FrameLayout implements KeyguardSe
         mSecurityViewFlipper.showUsabilityHint();
     }
 
+    /// M: Added for plug in feature
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+
+        /// M: init Digl layout plugin
+        if (mLockScreenExt != null) {
+            //add operator lockscreen layout
+            mLockScreenExt.initDgilLayout(mSecurityModel.getSecurityMode().ordinal(), SecurityMode.Pattern.ordinal(), mNotificatonPanelView);
+        }
+    }
+    /// @}
+
+    ///M: added for DiglLayout
+    private ViewGroup mNotificatonPanelView ;
+    public void setNotificationPanelView(ViewGroup notificationPanelView) {
+        mNotificatonPanelView = notificationPanelView ;
+    }
+
+    /**
+       * M: It's called when screen turned off.
+       */
+    public void onScreenTurnedOff() {
+        if (DEBUG) {
+            Log.d(TAG, "onScreenTurnedOff");
+        }
+    }
 }
 

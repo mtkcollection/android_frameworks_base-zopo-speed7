@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,13 @@
 #include <sqlite3_android.h>
 
 #include "android_database_SQLiteCommon.h"
+
+/// M: dialer search support @{
+#ifdef MTK_DIALER_SEARCH_SUPPORT
+#include <sqlite3_android_ex.h>
+#include <sqlite3_android_custom.h>
+#endif
+/// @}
 
 // Set to 1 to use UTF16 storage for localized indexes.
 #define UTF16_STORAGE 0
@@ -157,6 +169,20 @@ static jlong nativeOpen(JNIEnv* env, jclass clazz, jstring pathStr, jint openFla
         sqlite3_close(db);
         return 0;
     }
+
+    /// M: dialer search support @{
+    #ifdef MTK_DIALER_SEARCH_SUPPORT
+		    err = register_dialer_search_custom_functions(db);
+		    if (err) {
+			    err = register_dialer_search_android_functions(db);
+			    if (err) {
+				    throw_sqlite3_exception(env, db, "Could not register dialer search functions.");
+                    sqlite3_close(db);
+				    return 0;
+			    }
+		    }
+    #endif
+    /// @}
 
     // Create wrapper object.
     SQLiteConnection* connection = new SQLiteConnection(db, openFlags, path, label);

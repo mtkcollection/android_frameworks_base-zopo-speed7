@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,7 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -91,6 +97,8 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
             mTitleView.setTextAppearance(mTextAppearanceContext,
                                          mTextAppearance);
         }
+        Log.i(TAG, "onFinishInflate: mTitleView = " + mTitleView +
+                   ", mTextAppearance = " + mTextAppearance);
         
         mShortcutView = (TextView) findViewById(com.android.internal.R.id.shortcut);
     }
@@ -100,6 +108,7 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
         mMenuType = menuType;
 
         setVisibility(itemData.isVisible() ? View.VISIBLE : View.GONE);
+        Log.i(TAG, "initialize: itemData.isVisible() = " + itemData.isVisible());
         
         setTitle(itemData.getTitleForItemView(this));
         setCheckable(itemData.isCheckable());
@@ -116,8 +125,10 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
         if (title != null) {
             mTitleView.setText(title);
             
+            Log.i(TAG, "setTitle: title = " + title);
             if (mTitleView.getVisibility() != VISIBLE) mTitleView.setVisibility(VISIBLE);
         } else {
+            Log.i(TAG, "setTitle: title = null");
             if (mTitleView.getVisibility() != GONE) mTitleView.setVisibility(GONE);
         }
     }
@@ -234,6 +245,8 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
                 iconLp.width = lp.height;
             }
         }
+        Log.i(TAG, "onMeasure: widthMeasureSpec = " + widthMeasureSpec +
+                   ", heightMeasureSpec = " + heightMeasureSpec);
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
 

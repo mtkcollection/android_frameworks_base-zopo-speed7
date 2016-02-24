@@ -171,4 +171,23 @@ interface ISub {
      */
     int getSimStateForSubscriber(int subId);
 
+    /**
+     * Get the SubscriptionInfo with the subId key
+     * @param subId The unique SubscriptionInfo key in database
+     * @return SubscriptionInfo, maybe null if not found
+     */
+    SubscriptionInfo getSubscriptionInfo(int subId);
+
+    /**
+     * Get the SubscriptionInfo associated with the iccId
+     * @param iccId the IccId of SIM card
+     * @return SubscriptionInfo, maybe null if not found
+     */
+    SubscriptionInfo getSubscriptionInfoForIccId(String iccId);
+
+    int[] getSubIdUsingSlotId(int slotId);
+
+    int getSubIdUsingPhoneId(int phoneId);
+
+    void setDefaultFallbackSubId(int subId);
 }

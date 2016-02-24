@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,8 @@ package android.media;
 
 import android.app.ActivityThread;
 import android.hardware.Camera;
+import android.hardware.Camera.Parameters;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -28,6 +35,9 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.ref.WeakReference;
+
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.mom.SubPermissions;
 
 /**
  * Used to record audio and video. The recording control is based on a
@@ -91,6 +101,8 @@ public class MediaRecorder
     private EventHandler mEventHandler;
     private OnErrorListener mOnErrorListener;
     private OnInfoListener mOnInfoListener;
+    /// M: Add to mark the current recording whether camera record for CTA
+    private boolean mIsVideoRecord = false;
 
     /**
      * Default constructor.
@@ -222,6 +234,16 @@ public class MediaRecorder
         public static final int REMOTE_SUBMIX = 8;
 
         /**
+         * {@hide}
+         */
+        public static final int MATV = 98;
+
+        /**
+         * {@hide}
+         */
+        public static final int FM = 99;
+
+        /**
          * Audio source for FM, which is used to capture current FM tuner output by FMRadio app.
          * There are two use cases, one is for record FM stream for later listening, another is
          * for FM indirect mode(the routing except FM to headset(headphone) device routing).
@@ -315,6 +337,11 @@ public class MediaRecorder
 
         /** VP8/VORBIS data in a WEBM container */
         public static final int WEBM = 9;
+        /**@hide WAVE file format */
+        public static final int OUTPUT_FORMAT_WAV = 101;
+
+        /** @hide OGG */
+        public static final int OUTPUT_FORMAT_OGG = 102;
     };
 
     /**
@@ -339,6 +366,10 @@ public class MediaRecorder
         public static final int AAC_ELD = 5;
         /** Ogg Vorbis audio codec */
         public static final int VORBIS = 6;
+    /** @hide PCM encode audio codec*/
+    public static final int PCM = 101;
+    /** @hide ADPCM encode audio codec */
+        public static final int ADPCM = 102;
     }
 
     /**
@@ -388,8 +419,16 @@ public class MediaRecorder
      * @throws IllegalStateException if it is called after setOutputFormat()
      * @see android.media.MediaRecorder.VideoSource
      */
-    public native void setVideoSource(int video_source)
-            throws IllegalStateException;
+    /// M: Add to mark the current recording whether camera record for CTA @{
+    public void setVideoSource(int video_source) throws IllegalStateException {
+        mIsVideoRecord = true;
+        Log.d(TAG, "setVideoSource");
+        _setVideoSource(video_source);
+    }
+
+    private native void _setVideoSource(int video_source) throws IllegalStateException;
+
+    /// @}
 
     /**
      * Uses the settings from a CamcorderProfile object for recording. This method should
@@ -407,7 +446,7 @@ public class MediaRecorder
         setVideoEncodingBitRate(profile.videoBitRate);
         setVideoEncoder(profile.videoCodec);
         if (profile.quality >= CamcorderProfile.QUALITY_TIME_LAPSE_LOW &&
-             profile.quality <= CamcorderProfile.QUALITY_TIME_LAPSE_QVGA) {
+                profile.quality <= CamcorderProfile.QUALITY_TIME_LAPSE_QVGA) {
             // Nothing needs to be done. Call to setCaptureRate() enables
             // time lapse video recording.
         } else {
@@ -665,6 +704,7 @@ public class MediaRecorder
         if (bitRate <= 0) {
             throw new IllegalArgumentException("Video encoding bit rate is not positive");
         }
+        mIsVideoRecord = true;
         setParameter("video-param-encoding-bitrate=" + bitRate);
     }
 
@@ -734,6 +774,20 @@ public class MediaRecorder
      */
     public void prepare() throws IllegalStateException, IOException
     {
+        /// M: Check audio record permission to user for CTA(video record permission check has move
+        /// to open camera). {@
+        if (MobileManagerUtils.isSupported()) {
+            Log.d(TAG, "prepare>>>: check permission");
+            int uid = Binder.getCallingUid();
+            String permission = mIsVideoRecord ? SubPermissions.OPEN_CAMERA : SubPermissions.RECORD_MIC;
+            if (!MobileManagerUtils.checkPermission(permission, uid)) {
+                Log.d(TAG, "prepare<<<: user denied permission " + permission + " for uid " + uid);
+                throw new IOException();
+            }
+            Log.d(TAG, "prepare<<<: user granted permission " + permission + " for uid " + uid);
+        }
+        /// @}
+
         if (mPath != null) {
             RandomAccessFile file = new RandomAccessFile(mPath, "rws");
             try {
@@ -929,9 +983,13 @@ public class MediaRecorder
     public static final int MEDIA_RECORDER_TRACK_INFO_DATA_KBYTES       = 1009;
     /**
      * {@hide}
+     * @internal
+     */
+    public static final int MEDIA_RECORDER_INFO_CAMERA_RELEASE          = 1999;
+    /**
+     * {@hide}
      */
     public static final int MEDIA_RECORDER_TRACK_INFO_LIST_END          = 2000;
-
 
     /**
      * Interface definition for a callback to be invoked when an error
@@ -988,7 +1046,6 @@ public class MediaRecorder
         private static final int MEDIA_RECORDER_TRACK_EVENT_INFO       = 101;
         private static final int MEDIA_RECORDER_TRACK_EVENT_LIST_END   = 1000;
 
-
         @Override
         public void handleMessage(Message msg) {
             if (mMediaRecorder.mNativeContext == 0) {
@@ -1018,6 +1075,11 @@ public class MediaRecorder
     }
 
     /**
+     * M: Special case for camera release notify.
+     */
+    private static final int MEDIA_RECORDER_EVENT_INFO = 2;
+
+    /**
      * Called from native code when an interesting event happens.  This method
      * just uses the EventHandler system to post the event back to the main app thread.
      * We use a weak reference to the original MediaRecorder object so that the native
@@ -1033,6 +1095,15 @@ public class MediaRecorder
         }
 
         if (mr.mEventHandler != null) {
+            if (what == MEDIA_RECORDER_EVENT_INFO &&
+                    arg1 == MEDIA_RECORDER_INFO_CAMERA_RELEASE) {
+                Log.v(TAG, "MediaRecorder MEDIA_RECORDER_INFO_CAMERA_RELEASE");
+                if (mr.mOnCameraReleasedListener != null) {
+                    /// M: call notify in binder thread, video camera can go on its job.
+                    mr.mOnCameraReleasedListener.onInfo(mr, MEDIA_RECORDER_INFO_CAMERA_RELEASE, 0);
+                }
+                return;
+            }
             Message m = mr.mEventHandler.obtainMessage(what, arg1, arg2, obj);
             mr.mEventHandler.sendMessage(m);
         }
@@ -1066,7 +1137,28 @@ public class MediaRecorder
     private native final void native_finalize();
 
     private native void setParameter(String nameValuePair);
+    /**
+     * @hide
+     */
+    public native void setParametersExtra(String nameValuePair);
 
     @Override
     protected void finalize() { native_finalize(); }
+
+    /**
+     * {@hide}
+     */
+    protected OnInfoListener mOnCameraReleasedListener;
+
+    /**
+     * M: Register a callback to invoked when release job has been done while recording.
+     *
+     * @param listener the callback that will be run
+     *
+     * {@hide}
+     * @internal
+     */
+    public void setOnCameraReleasedListener(OnInfoListener listener) {
+        mOnCameraReleasedListener = listener;
+    }
 }

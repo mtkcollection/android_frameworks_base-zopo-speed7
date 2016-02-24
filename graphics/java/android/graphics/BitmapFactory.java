@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +38,7 @@ import java.io.InputStream;
  * and byte-arrays.
  */
 public class BitmapFactory {
-    private static final int DECODE_BUFFER_SIZE = 16 * 1024;
+    private static final int DECODE_BUFFER_SIZE = 64 * 1024;
 
     public static class Options {
         /**
@@ -44,6 +49,11 @@ public class BitmapFactory {
             inDither = false;
             inScaled = true;
             inPremultiplied = true;
+            inPreferSize = 0;
+            inPostProc = false;
+            inPostProcFlag = 0;
+	    inDynmicConFlag = false;
+	    inDynamicCon = new int[10];
         }
 
         /**
@@ -125,6 +135,38 @@ public class BitmapFactory {
          * be rounded down to the nearest power of 2.
          */
         public int inSampleSize;
+
+        /**
+         * The prefered size for dimension, if source dimension > prefersize, 
+         * than scaled to the prefer size.
+         * @hide
+         */
+        public int inPreferSize;
+
+        /**
+         * Request for post process, if true, decoded image will be post processed to enhance sharpness and color.
+         * @hide
+         * @internal
+         */
+        public boolean inPostProc;
+
+        /**
+         * Post process flag , 0 means applying post process on opaque images only , 1 means apply to all.
+         * @hide
+         */
+        public int inPostProcFlag;
+
+	/**
+         * Dynamic contrast histogram information.
+         * @hide
+         */
+        public int[] inDynamicCon;
+
+       /**
+         * Dynamic contrast flag.
+         * @hide
+         */
+	public boolean inDynmicConFlag;
 
         /**
          * If this is non-null, the decoder will try to decode into this

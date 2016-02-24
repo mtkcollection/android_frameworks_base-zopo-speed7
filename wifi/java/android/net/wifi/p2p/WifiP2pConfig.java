@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +59,11 @@ public class WifiP2pConfig implements Parcelable {
     /** @hide */
     public int netId = WifiP2pGroup.PERSISTENT_NET_ID;
 
+    /** M: enhance frequency conflict @{ */
+    /** @hide */
+    private int preferOperFreq = -1;   
+    /** @} */
+
     public WifiP2pConfig() {
         //set defaults
         wps = new WpsInfo();
@@ -104,6 +114,18 @@ public class WifiP2pConfig implements Parcelable {
             }
         }
     }
+
+    /** M: enhance frequency conflict @{ */
+    /** @hide */
+    public void setPreferOperFreq(int freq) {
+       preferOperFreq = freq;
+    }
+
+    /** @hide */
+    public int getPreferOperFreq() {
+       return preferOperFreq;
+    }
+    /** @} */
 
     public String toString() {
         StringBuffer sbuf = new StringBuffer();

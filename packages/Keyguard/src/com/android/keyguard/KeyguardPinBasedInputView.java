@@ -19,6 +19,7 @@ package com.android.keyguard;
 import android.content.Context;
 import android.graphics.Rect;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 
@@ -27,6 +28,7 @@ import android.view.View;
  */
 public abstract class KeyguardPinBasedInputView extends KeyguardAbsKeyInputView
         implements View.OnKeyListener {
+    private static final String TAG = "KeyguardPinBasedInputView" ;
 
     protected PasswordTextView mPasswordEntry;
     private View mOkButton;
@@ -159,6 +161,8 @@ public abstract class KeyguardPinBasedInputView extends KeyguardAbsKeyInputView
                 public void onClick(View v) {
                     doHapticKeyClick();
                     if (mPasswordEntry.isEnabled()) {
+                        Log.d(TAG, "mOkButton.onClick() is called, set PwEntry false.") ;
+                        setPasswordEntryEnabled(false);
                         verifyPasswordAndUnlock();
                     }
                 }

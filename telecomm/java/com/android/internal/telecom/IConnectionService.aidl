@@ -70,5 +70,31 @@ oneway interface IConnectionService {
 
     void swapConference(String conferenceCallId);
 
+    /* M: call control part start */
+    void swapWithBackgroundCall(String callId);
+
+    /// M: CC078: For DSDS/DSDA Two-action operation @{
+    void holdWithPendingCallAction(String callId, String pendingCallAction);
+
+    void disconnectWithPendingCallAction(String callId, String pendingCallAction);
+    /// @}
+
+    void rejectWithCause(String callId, int cause);
+
+    void hangupAll(String callId);
+    /* M: call control part end */
+
     void onPostDialContinue(String callId, boolean proceed);
+
+    void explicitCallTransfer(String callId);
+
+    /// M: For VoLTE @{
+    void inviteConferenceParticipants(String conferenceCallId, in List<String> numbers);
+    void createConference(
+            in PhoneAccountHandle connectionManagerPhoneAccount,
+            String conferenceCallId,
+            in ConnectionRequest request,
+            in List<String> numbers,
+            boolean isIncoming);
+    /// @}
 }

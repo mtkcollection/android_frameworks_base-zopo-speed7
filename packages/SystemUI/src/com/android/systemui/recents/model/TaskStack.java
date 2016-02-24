@@ -221,10 +221,20 @@ public class TaskStack {
             mTaskList.remove(t);
             // Remove it from the group as well, and if it is empty, remove the group
             TaskGrouping group = t.group;
+/* Vanzo:yujianpeng on: Wed, 15 Apr 2015 21:47:03 +0800
+ * implement #107040 reboot NullPointerException
             group.removeTask(t);
             if (group.getTaskCount() == 0) {
                 removeGroup(group);
             }
+ */
+            if (group!=null) {
+                group.removeTask(t);
+                if (group.getTaskCount() == 0) {
+                    removeGroup(group);
+                }
+            }
+// End of Vanzo:yujianpeng
             // Update the lock-to-app state
             t.lockToThisTask = false;
             Task newFrontMostTask = getFrontMostTask();
@@ -248,10 +258,20 @@ public class TaskStack {
             mTaskList.remove(t);
             // Remove it from the group as well, and if it is empty, remove the group
             TaskGrouping group = t.group;
+/* Vanzo:yujianpeng on: Thu, 16 Apr 2015 17:40:07 +0800
+ * implement #107040 reboot NullPointerException
             group.removeTask(t);
             if (group.getTaskCount() == 0) {
                 removeGroup(group);
             }
+ */
+            if(group !=null){
+                group.removeTask(t);
+                if (group.getTaskCount() == 0) {
+                    removeGroup(group);
+                }
+            }
+// End of Vanzo:yujianpeng
             // Update the lock-to-app state
             t.lockToThisTask = false;
             if (mCb != null) {

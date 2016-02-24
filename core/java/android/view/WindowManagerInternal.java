@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -189,4 +194,15 @@ public abstract class WindowManagerInternal {
      * @param removeWindows Whether to also remove the windows associated with the token.
      */
     public abstract void removeWindowToken(android.os.IBinder token, boolean removeWindows);
+
+    /**
+     * M:[Smartbook] Request that the window manager to refresh the smartbook display device.
+     */
+    public abstract void requestExtraDisplayRefreshFromDisplayManager(int width, int height, int density);
+
+    /**.
+     * M:[ALPS01809241]Ask the display status of window manager
+     * @return Whether display is enabled
+     */
+    public abstract boolean isDisplayEnabled();
 }

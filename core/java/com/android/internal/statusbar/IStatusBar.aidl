@@ -16,6 +16,7 @@
  
 package com.android.internal.statusbar;
 
+import android.view.KeyEvent;
 import com.android.internal.statusbar.StatusBarIcon;
 import android.service.notification.StatusBarNotification;
 
@@ -43,5 +44,13 @@ oneway interface IStatusBar
     void preloadRecentApps();
     void cancelPreloadRecentApps();
     void showScreenPinningRequest();
+
+    /** M: Support "SystemUI SIM indicator" feature. @{ */
+    void showSimIndicator(String businessType);
+    void hideSimIndicator();
+    /** }@ */
+    /** M: [SystemUI] Support Smartbook Feature. @{ */
+    void dispatchStatusBarKeyEvent(in KeyEvent event);
+    /** }@ */
 }
 

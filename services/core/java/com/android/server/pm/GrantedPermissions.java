@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,8 @@ import android.util.ArraySet;
 
 class GrantedPermissions {
     int pkgFlags;
+    /// M: [FlagExt] Flags for MTK internal use
+    int pkgFlagsEx;
 
     ArraySet<String> grantedPermissions = new ArraySet<String>();
 
@@ -30,9 +37,17 @@ class GrantedPermissions {
         setFlags(pkgFlags);
     }
 
+    /// M: [FlagExt] Additional constructor for MTK flags
+    GrantedPermissions(int pkgFlags, int pkgFlagsEx) {
+        setFlags(pkgFlags);
+        setFlagsEx(pkgFlagsEx);
+    }
+
     @SuppressWarnings("unchecked")
     GrantedPermissions(GrantedPermissions base) {
         pkgFlags = base.pkgFlags;
+        /// M: [FlagExt] copy mtkFlags
+        pkgFlagsEx = base.pkgFlagsEx;
         grantedPermissions = new ArraySet<>(base.grantedPermissions);
 
         if (base.gids != null) {
@@ -41,10 +56,12 @@ class GrantedPermissions {
     }
 
     void setFlags(int pkgFlags) {
-        this.pkgFlags = pkgFlags
-                & (ApplicationInfo.FLAG_SYSTEM
-                        | ApplicationInfo.FLAG_PRIVILEGED
-                        | ApplicationInfo.FLAG_FORWARD_LOCK
-                        | ApplicationInfo.FLAG_EXTERNAL_STORAGE);
+        /// M: Directly set pkgFlags with the parameter
+        this.pkgFlags = pkgFlags;
+    }
+
+    /// M: [FlagExt] mtkFlags set up function
+    void setFlagsEx(int pkgFlagsEx) {
+        this.pkgFlagsEx = pkgFlagsEx;
     }
 }

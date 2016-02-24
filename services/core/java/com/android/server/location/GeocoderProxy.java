@@ -63,6 +63,14 @@ public class GeocoderProxy {
         return mServiceWatcher.start();
     }
 
+    //MTK add start
+    public void unbind() {
+        if (mServiceWatcher != null) {
+            mServiceWatcher.stop();
+        }
+    }
+    //MTK add end
+    
     private IGeocodeProvider getService() {
         return IGeocodeProvider.Stub.asInterface(mServiceWatcher.getBinder());
     }

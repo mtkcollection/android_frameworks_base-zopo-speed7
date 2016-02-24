@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +51,11 @@ import java.io.PrintWriter;
  */
 public abstract class WindowOrientationListener {
     private static final String TAG = "WindowOrientationListener";
-    private static final boolean LOG = SystemProperties.getBoolean(
+    //{@MTK modification for auto debug setting by MTK81126
+    private static boolean LOG = SystemProperties.getBoolean(
             "debug.orientation.log", false);
+    //@}
+
 
     private static final boolean USE_GRAVITY_SENSOR = false;
 
@@ -100,6 +108,9 @@ public abstract class WindowOrientationListener {
      * {@link #onProposedRotationChanged(int)} when the device orientation changes.
      */
     public void enable() {
+    //{@ MTK debug feature
+	LOG = SystemProperties.getBoolean("debug.orientation.log", false);
+	//@}
         synchronized (mLock) {
             if (mSensor == null) {
                 Log.w(TAG, "Cannot detect sensors. Not enabled");
@@ -120,6 +131,10 @@ public abstract class WindowOrientationListener {
      * Disables the WindowOrientationListener.
      */
     public void disable() {
+	//{@ MTK debug feature
+	LOG = SystemProperties.getBoolean("debug.orientation.log", false);
+	//@}
+
         synchronized (mLock) {
             if (mSensor == null) {
                 Log.w(TAG, "Cannot detect sensors. Invalid disable");

@@ -99,12 +99,13 @@ public:
 
     virtual void onExit(int code)
     {
-        if (mClassName.isEmpty()) {
+        //M: 2015/04/22 when process exits, force to close the binder driver
+        //if (mClassName.isEmpty()) {  
             // if zygote
             IPCThreadState::self()->stopProcess();
-        }
+        //}
 
-        AndroidRuntime::onExit(code);
+        //AndroidRuntime::onExit(code);
     }
 
 
@@ -304,9 +305,9 @@ int main(int argc, char* const argv[])
     }
 
     if (zygote) {
-        runtime.start("com.android.internal.os.ZygoteInit", args, zygote);
+        runtime.start("com.android.internal.os.ZygoteInit", args);
     } else if (className) {
-        runtime.start("com.android.internal.os.RuntimeInit", args, zygote);
+        runtime.start("com.android.internal.os.RuntimeInit", args);
     } else {
         fprintf(stderr, "Error: no class name or --zygote supplied.\n");
         app_usage();

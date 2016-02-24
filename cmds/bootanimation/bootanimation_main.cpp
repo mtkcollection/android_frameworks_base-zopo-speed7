@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,17 +50,61 @@ int main(int argc, char** argv)
     char value[PROPERTY_VALUE_MAX];
     property_get("debug.sf.nobootanimation", value, "0");
     int noBootAnimation = atoi(value);
+    if(noBootAnimation != 0) {
     ALOGI_IF(noBootAnimation,  "boot animation disabled");
+    }
+    XLOGD("[BootAnimation %s %d]noBootAnimation=%d",__FUNCTION__,__LINE__,noBootAnimation); 
     if (!noBootAnimation) {
 
         sp<ProcessState> proc(ProcessState::self());
         ProcessState::self()->startThreadPool();
 
         // create the boot animation object
-        sp<BootAnimation> boot = new BootAnimation();
+        bool setBoot = true;
+		bool setRotated = false;
+		bool sePaly = true;
+		if(argc > 1){
+           if(!strcmp(argv[1],"shut"))
+		   	setBoot = false;
+		}
+		
+		if(argc > 2){
+			if(!strcmp(argv[2],"nomp3"))
+		   	sePaly = false;
+		}
+		
+		if(argc > 3){
+			if(!strcmp(argv[3],"rotate"))
+		   	setRotated = true;
+		}
+		XLOGD("[BootAnimation %s %d]setBoot=%d,sePaly=%d,setRotated=%d",__FUNCTION__,__LINE__,setBoot,sePaly,setRotated); 
 
+/* Vanzo:zhangjingzhi on: Fri, 04 Jul 2014 17:45:46 +0800
+ * add power on sound prop
+ */
+                char bootVolume[PROPERTY_VALUE_MAX];
+                property_get("persist.sys.boot_ringtone", bootVolume, "1");
+                int nBootVolume =1;
+                nBootVolume= atoi(bootVolume);
+                sePaly = (nBootVolume == 1) ? true : false;
+// End of Vanzo:zhangjingzhi
+		char volume[PROPERTY_VALUE_MAX];
+        property_get("persist.sys.mute.state", volume, "-1");
+	    int nVolume = -1;
+		nVolume = atoi(volume);
+		XLOGD("[BootAnimation %s %d]nVolume=%d",__FUNCTION__,__LINE__,nVolume); 
+		if(nVolume == 0 || nVolume == 1 ){
+			sePaly = false;
+		}
+        XLOGD("before new BootAnimation..."); 
+    	XLOGD("[BootAnimation %s %d]before new BootAnimation...",__FUNCTION__,__LINE__);
+        sp<BootAnimation> boot = new BootAnimation(setBoot,sePaly,setRotated);
+        XLOGD("joinThreadPool..."); 
+    	XLOGD("[BootAnimation %s %d]before joinThreadPool...",__FUNCTION__,__LINE__);
         IPCThreadState::self()->joinThreadPool();
-
+        XLOGD("exit boot animation..."); 
+    	XLOGD("[BootAnimation %s %d]after joinThreadPool...",__FUNCTION__,__LINE__);
     }
+	XLOGD("[BootAnimation %s %s %d]end",__FILE__,__FUNCTION__,__LINE__);
     return 0;
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,8 +151,19 @@ public interface IApplicationThread extends IInterface {
     void updateTimePrefs(boolean is24Hour) throws RemoteException;
     void scheduleCancelVisibleBehind(IBinder token) throws RemoteException;
     void scheduleBackgroundVisibleBehindChanged(IBinder token, boolean enabled) throws RemoteException;
+
     void scheduleEnterAnimationComplete(IBinder token) throws RemoteException;
 
+    void enableLooperLog() throws RemoteException;      /// M: ActivityThread looper log enhancement
+    void dumpMessageHistory() throws RemoteException;   /// M: ALPS00270724 message history mechanism
+    /// M: MSG HISTORY mechanism for SystemServer @{
+    void dumpAllMessageHistory() throws RemoteException;
+    /// @}
+    /// M: BMW. New Intentface to max/mini the activity @{
+    void scheduleRestoreActivity(IBinder token, List<ResultInfo> pendingResults,
+            List<ReferrerIntent> pendingNewIntents, int configChanges,
+            boolean notResumed, Configuration config, boolean toMax) throws RemoteException;
+    /// @}
     String descriptor = "android.app.IApplicationThread";
 
     int SCHEDULE_PAUSE_ACTIVITY_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION;
@@ -204,4 +220,13 @@ public interface IApplicationThread extends IInterface {
     int CANCEL_VISIBLE_BEHIND_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION+52;
     int BACKGROUND_VISIBLE_BEHIND_CHANGED_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION+53;
     int ENTER_ANIMATION_COMPLETE_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION+54;
+    int DUMP_MESSAGE_HISTORY_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 55;     /// M: ALPS00270724 message history mechanism
+    int ENABLE_LOOPER_LOG = IBinder.FIRST_CALL_TRANSACTION + 56;                    /// M: ActivityThread looper log enhancement
+    int SET_TRIM_MEMORY_FLAG_EX = IBinder.FIRST_CALL_TRANSACTION + 57;      /// M: ALPS00497111 [Volunteer free] LCA Memory Optimized
+    int RESET_SL_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 58;                   /// M: ALPS00497111 [Volunteer free] LCA Memory Optimized
+/// M: MSG HISTORY mechanism for SystemServer @{
+    int DUMP_ALL_MESSAGE_HISTORY_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 59;
+///@}
+    int SCHEDULE_RESTORE_ACTIVITY_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 60;    /// M: BMW
+
 }

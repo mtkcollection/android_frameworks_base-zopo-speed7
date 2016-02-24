@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -161,6 +166,9 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
     private static final String ATTR_PERMISSION_PROVIDER = "permission-provider";
     private static final String ATTR_SETUP_COMPLETE = "setup-complete";
 
+    /// M: [ALPS01254902] Add IPO Boot Intent for CTS CA Cert Notification on Boot test
+    protected static final String ACTION_BOOT_IPO = "android.intent.action.ACTION_BOOT_IPO";
+
     private static final Set<String> DEVICE_OWNER_USER_RESTRICTIONS;
     static {
         DEVICE_OWNER_USER_RESTRICTIONS = new HashSet();
@@ -289,6 +297,8 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
             final int userHandle = intent.getIntExtra(Intent.EXTRA_USER_HANDLE,
                     getSendingUserId());
             if (Intent.ACTION_BOOT_COMPLETED.equals(action)
+                    /// M: [ALPS01254902] Add IPO Boot Intent for CTS CA Cert Notification on Boot test
+                    || ACTION_BOOT_IPO.equals(action)
                     || ACTION_EXPIRED_PASSWORD_NOTIFICATION.equals(action)) {
                 if (DBG) Slog.v(LOG_TAG, "Sending password expiration notifications for action "
                         + action + " for user " + userHandle);
@@ -299,6 +309,8 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
                 });
             }
             if (Intent.ACTION_BOOT_COMPLETED.equals(action)
+                    /// M: [ALPS01254902] Add IPO Boot Intent for CTS CA Cert Notification on Boot test
+                    || ACTION_BOOT_IPO.equals(action)
                     || KeyChain.ACTION_STORAGE_CHANGED.equals(action)) {
                 new MonitoringCertNotificationTask().execute(intent);
             }
@@ -956,6 +968,8 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
         }
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_BOOT_COMPLETED);
+        /// M: [ALPS01254902] Add IPO Boot Intent for CTS CA Cert Notification on Boot test
+        filter.addAction(ACTION_BOOT_IPO);
         filter.addAction(ACTION_EXPIRED_PASSWORD_NOTIFICATION);
         filter.addAction(Intent.ACTION_USER_REMOVED);
         filter.addAction(Intent.ACTION_USER_STARTED);
@@ -1450,7 +1464,15 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
                         if (dai != null) {
                             ActiveAdmin ap = new ActiveAdmin(dai);
                             ap.readFromXml(parser);
-                            policy.mAdminMap.put(ap.info.getComponent(), ap);
+                            /// M: [ALPS01316360] update for detail check the ActiveAdmins are Repeated @{
+                            if (policy.mAdminMap.get(ap.info.getComponent()) != null) {
+                                Slog.e(LOG_TAG, "This ActiveAdmin:" + ap.info.getComponent() +
+                                        " already exist on user " + userHandle + ", ignore it. callstack: " +
+                                        Log.getStackTraceString(new Throwable()));
+                            } else {
+                                policy.mAdminMap.put(ap.info.getComponent(), ap);
+                            }
+                            /// @}
                         }
                     } catch (RuntimeException e) {
                         Slog.w(LOG_TAG, "Failed loading admin " + name, e);
@@ -1542,6 +1564,7 @@ public class DevicePolicyManagerService extends IDevicePolicyManager.Stub {
         switch (quality) {
             case DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED:
             case DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK:
+            case DevicePolicyManager.PASSWORD_QUALITY_VOICE_WEAK: /// M: VoiceUnlock
             case DevicePolicyManager.PASSWORD_QUALITY_SOMETHING:
             case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC:
             case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX:

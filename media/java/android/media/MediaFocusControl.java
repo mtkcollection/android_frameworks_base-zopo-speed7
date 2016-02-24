@@ -832,6 +832,17 @@ public class MediaFocusControl implements OnFinished {
         }
     }
 
+    // DOLBY_DAP
+    protected boolean isAppInFocus(String name) {
+        boolean isInFocus = false;
+        synchronized (mAudioFocusLock) {
+            if (!mFocusStack.empty()) {
+                isInFocus = mFocusStack.peek().hasSamePackage(name);
+            }
+        }
+        return isInFocus;
+    }
+    // DOLBY_END
 
     //==========================================================================================
     // RemoteControl

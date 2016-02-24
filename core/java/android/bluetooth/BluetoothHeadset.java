@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +52,7 @@ import java.util.List;
 public final class BluetoothHeadset implements BluetoothProfile {
     private static final String TAG = "BluetoothHeadset";
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
 
     /**
      * Intent used to broadcast the change in connection state of the Headset
@@ -263,6 +268,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         IBluetoothManager mgr = mAdapter.getBluetoothManager();
         if (mgr != null) {
             try {
+                if (VDBG) Log.d(TAG, "Register mBluetoothStateChangeCallback = " + mBluetoothStateChangeCallback);
                 mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
             } catch (RemoteException e) {
                 Log.e(TAG,"",e);
@@ -307,6 +313,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
         IBluetoothManager mgr = mAdapter.getBluetoothManager();
         if (mgr != null) {
             try {
+                if (VDBG) Log.d(TAG, "Unregister mBluetoothStateChangeCallback = " + mBluetoothStateChangeCallback);
                 mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
             } catch (Exception e) {
                 Log.e(TAG,"",e);
@@ -717,6 +724,10 @@ public final class BluetoothHeadset implements BluetoothProfile {
      * @hide
      */
     public boolean connectAudio() {
+        if (DBG) {
+            log("connectAudio()");
+        }
+
         if (mService != null && isEnabled()) {
             try {
                 return mService.connectAudio();
@@ -740,6 +751,10 @@ public final class BluetoothHeadset implements BluetoothProfile {
      * @hide
      */
     public boolean disconnectAudio() {
+        if (DBG) {
+            log("disconnectAudio()");
+        }
+
         if (mService != null && isEnabled()) {
             try {
                 return mService.disconnectAudio();
@@ -931,14 +946,18 @@ public final class BluetoothHeadset implements BluetoothProfile {
             = new IBluetoothProfileServiceConnection.Stub()  {
         @Override
         public void onServiceConnected(ComponentName className, IBinder service) {
-            if (DBG) Log.d(TAG, "Proxy object connected");
+            if (DBG) {
+                Log.d(TAG, "Proxy object connected");
+            }
             mService = IBluetoothHeadset.Stub.asInterface(service);
             mHandler.sendMessage(mHandler.obtainMessage(
                     MESSAGE_HEADSET_SERVICE_CONNECTED));
         }
         @Override
         public void onServiceDisconnected(ComponentName className) {
-            if (DBG) Log.d(TAG, "Proxy object disconnected");
+            if (DBG) {
+                Log.d(TAG, "Proxy object disconnected");
+            }
             mService = null;
             mHandler.sendMessage(mHandler.obtainMessage(
                     MESSAGE_HEADSET_SERVICE_DISCONNECTED));

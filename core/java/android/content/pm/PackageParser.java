@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +42,7 @@ import android.content.res.XmlResourceParser;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PatternMatcher;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.ArrayMap;
@@ -81,6 +87,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.StrictJarFile;
 import java.util.zip.ZipEntry;
 
+/** M: Multi-Threading for collectCertificates() @{ */
+
+
+import java.lang.ref.WeakReference;
+
+/** @} */
+
 /**
  * Parser for package files (APKs) on disk. This supports apps packaged either
  * as a single "monolithic" APK, or apps packaged as a "cluster" of multiple
@@ -103,6 +116,8 @@ public class PackageParser {
     private static final boolean DEBUG_JAR = false;
     private static final boolean DEBUG_PARSER = false;
     private static final boolean DEBUG_BACKUP = false;
+    //switch force HardwareAccelerate for special packages
+    private static final boolean IsForceHardwareAccelerated = false;
 
     // TODO: switch outError users to PackageParserException
     // TODO: refactor "codePath" to "apkPath"
@@ -115,7 +130,7 @@ public class PackageParser {
         public final String name;
         public final int sdkVersion;
         public final int fileVersion;
-        
+
         public NewPermissionInfo(String name, int sdkVersion, int fileVersion) {
             this.name = name;
             this.sdkVersion = sdkVersion;
@@ -190,6 +205,9 @@ public class PackageParser {
 
     private int mParseError = PackageManager.INSTALL_SUCCEEDED;
 
+    private static final Object mSync = new Object();
+    private static WeakReference<byte[]> mReadBuffer;
+
     private static boolean sCompatibilityModeEnabled = true;
     private static final int PARSE_DEFAULT_INSTALL_LOCATION =
             PackageInfo.INSTALL_LOCATION_UNSPECIFIED;
@@ -205,7 +223,7 @@ public class PackageParser {
         
         String tag;
         TypedArray sa;
-        
+
         ParsePackageItemArgs(Package _owner, String[] _outError,
                 int _nameRes, int _labelRes, int _iconRes, int _logoRes, int _bannerRes) {
             owner = _owner;
@@ -217,14 +235,14 @@ public class PackageParser {
             bannerRes = _bannerRes;
         }
     }
-    
+
     static class ParseComponentArgs extends ParsePackageItemArgs {
         final String[] sepProcesses;
         final int processRes;
         final int descriptionRes;
         final int enabledRes;
         int flags;
-        
+
         ParseComponentArgs(Package _owner, String[] _outError,
                 int _nameRes, int _labelRes, int _iconRes, int _logoRes, int _bannerRes,
                 String[] _sepProcesses, int _processRes,
@@ -331,7 +349,7 @@ public class PackageParser {
     private ParseComponentArgs mParseActivityAliasArgs;
     private ParseComponentArgs mParseServiceArgs;
     private ParseComponentArgs mParseProviderArgs;
-    
+
     /** If set to true, we will only allow package files that exactly match
      *  the DTD.  Otherwise, we try to get as much from the package as we
      *  can without failing.  This should normally be set to false, to
@@ -614,6 +632,9 @@ public class PackageParser {
     public final static int PARSE_IS_PRIVILEGED = 1<<7;
     public final static int PARSE_COLLECT_CERTIFICATES = 1<<8;
     public final static int PARSE_TRUSTED_OVERLAY = 1<<9;
+
+    /// M: [ALPS00338366] Add PARSE_IS_OPERATOR for operator apps
+    public final static int PARSE_IS_OPERATOR = 1 << 10;
 
     private static final Comparator<String> sSplitNameComparator = new SplitNameComparator();
 
@@ -1046,6 +1067,15 @@ public class PackageParser {
         pkg.mSignatures = null;
         pkg.mSigningKeys = null;
 
+        /** M: Multi-Threading for collectCertificates() @{ */
+        /** TODO: [ALPS01655835][L.AOSP.EARLY.DEV] Bring-up build error on frameworks/base @{
+        int processorsNum = Runtime.getRuntime().availableProcessors();
+        if (processorsNum > 2) {
+            return collectCertificates(pkg, flags, processorsNum-1);
+        }
+        @} **/
+        /** @} */
+
         collectCertificates(pkg, new File(pkg.baseCodePath), flags);
 
         if (!ArrayUtils.isEmpty(pkg.splitCodePaths)) {
@@ -1061,7 +1091,9 @@ public class PackageParser {
 
         StrictJarFile jarFile = null;
         try {
+            /// TODO: [ALPS01655835][L.AOSP.EARLY.DEV] Bring-up build error on frameworks/base @{
             jarFile = new StrictJarFile(apkPath);
+            /// @}
 
             // Always verify manifest, regardless of source
             final ZipEntry manifestEntry = jarFile.findEntry(ANDROID_MANIFEST_FILENAME);
@@ -1309,12 +1341,83 @@ public class PackageParser {
                         break;
                     }
                 }
+                /** M: Overwrite the default install location from PREFER_INTERNAL to PREFER_EXTERNAL
+                      *    Related files:
+                      *    frameworks\base\packages\DefaultContainerService\src\com\android\defcontainer\DefaultContainerService.java
+                      *    frameworks\base\core\java\android\content\pm\PackageParser.java
+                      *
+                      @{ */
+                if (isGmoROM()) {
+                    switch (installLocation) {
+                        //case PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY:
+                        //case PackageInfo.INSTALL_LOCATION_PREFER_EXTERNAL:
+                        //case PackageInfo.INSTALL_LOCATION_AUTO:
+                        case PackageInfo.INSTALL_LOCATION_UNSPECIFIED:
+                            if (checkDeviceAdmin(parser, attrs)) {
+                                installLocation = PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY;
+                            }
+                            break;
+                    }
+                }
+                /** @} */
             }
+
+            /** M: [ALPS00417120][Rose][Auto Test][APPIOT][My Paper Plane 2][JE]happen JE on power on "android" logo screen
+                *    [ALPS00417275][Side Effect][Rose][6577JB][CTS][JE]The JE about system_server pops up continually when CTS is running.
+                *    [ALPS00412894][Rose][6577JB][JE][CTS Verifier 4.1_r2]The JE and "CTS Verifier has stopped" pops up when you tap "Force Lock"(Always) @{
+                **/
+            /*
+                if (isGmoROM()) {
+                    if ("uses-permission".equals(parser.getName())) {
+                        String permission = attrs.getAttributeValue(ANDROID_RESOURCES, "name");
+                        switch (installLocation) {
+                            //case PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY:
+                            //case PackageInfo.INSTALL_LOCATION_PREFER_EXTERNAL:
+                            //case PackageInfo.INSTALL_LOCATION_AUTO:
+                            case PackageInfo.INSTALL_LOCATION_UNSPECIFIED:
+                                if (permission.equals("android.permission.AUTHENTICATE_ACCOUNTS") ||
+                                    permission.equals("android.permission.RECEIVE_BOOT_COMPLETED")) {
+                                    installLocation = PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY;
+                                }
+                                break;
+                        }
+                    }
+                }
+                */
         }
 
         return new ApkLite(codePath, packageSplit.first, packageSplit.second, versionCode,
                 revisionCode, installLocation, verifiers, signatures, coreApp, multiArch);
     }
+
+    /** M: [ALPS00417120][Rose][Auto Test][APPIOT][My Paper Plane 2][JE]happen JE on power on "android" logo screen
+      *    [ALPS00417275][Side Effect][Rose][6577JB][CTS][JE]The JE about system_server pops up continually when CTS is running.
+      *    [ALPS00412894][Rose][6577JB][JE][CTS Verifier 4.1_r2]The JE and "CTS Verifier has stopped" pops up when you tap "Force Lock"(Always) @{
+      **/
+    static private boolean checkDeviceAdmin(XmlPullParser parser, AttributeSet attrs) throws IOException, XmlPullParserException {
+        boolean ret = false;
+        int type;
+        final int searchDepth = parser.getDepth() + 1;
+        while ((type = parser.next()) != XmlPullParser.END_DOCUMENT &&
+               (type != XmlPullParser.END_TAG || parser.getDepth() >= searchDepth)) {
+            if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+                continue;
+            }
+
+            if (parser.getDepth() == searchDepth && "receiver".equals(parser.getName())) {
+                String permission = attrs.getAttributeValue(ANDROID_RESOURCES, "permission");
+                if (permission == null || permission.length() == 0) {
+                    continue;
+                }
+                if (permission.equals("android.permission.BIND_DEVICE_ADMIN")) {
+                     ret = true;
+                     break;
+                }
+            }
+        }
+        return ret;
+    }
+    /** @} 2012-12-07 **/
 
     /**
      * Temporary.
@@ -1419,7 +1522,7 @@ public class PackageParser {
         int supportsXLargeScreens = 1;
         int resizeable = 1;
         int anyDensity = 1;
-        
+
         int outerDepth = parser.getDepth();
         while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
                 && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
@@ -1570,7 +1673,7 @@ public class PackageParser {
                     String minCode = null;
                     int targetVers = 0;
                     String targetCode = null;
-                    
+
                     TypedValue val = sa.peekValue(
                             com.android.internal.R.styleable.AndroidManifestUsesSdk_minSdkVersion);
                     if (val != null) {
@@ -1581,7 +1684,7 @@ public class PackageParser {
                             targetVers = minVers = val.data;
                         }
                     }
-                    
+
                     val = sa.peekValue(
                             com.android.internal.R.styleable.AndroidManifestUsesSdk_targetSdkVersion);
                     if (val != null) {
@@ -1592,7 +1695,7 @@ public class PackageParser {
                             targetVers = val.data;
                         }
                     }
-                    
+
                     sa.recycle();
 
                     if (minCode != null) {
@@ -1621,7 +1724,7 @@ public class PackageParser {
                         mParseError = PackageManager.INSTALL_FAILED_OLDER_SDK;
                         return null;
                     }
-                    
+
                     if (targetCode != null) {
                         boolean allowedCodename = false;
                         for (String codename : SDK_CODENAMES) {
@@ -1688,9 +1791,9 @@ public class PackageParser {
                         anyDensity);
 
                 sa.recycle();
-                
+
                 XmlUtils.skipCurrentTag(parser);
-                
+
             } else if (tagName.equals("protected-broadcast")) {
                 sa = res.obtainAttributes(attrs,
                         com.android.internal.R.styleable.AndroidManifestProtectedBroadcast);
@@ -1712,12 +1815,12 @@ public class PackageParser {
                 }
 
                 XmlUtils.skipCurrentTag(parser);
-                
+
             } else if (tagName.equals("instrumentation")) {
                 if (parseInstrumentation(pkg, res, parser, attrs, outError) == null) {
                     return null;
                 }
-                
+
             } else if (tagName.equals("original-package")) {
                 sa = res.obtainAttributes(attrs,
                         com.android.internal.R.styleable.AndroidManifestOriginalPackage);
@@ -1735,7 +1838,7 @@ public class PackageParser {
                 sa.recycle();
 
                 XmlUtils.skipCurrentTag(parser);
-                
+
             } else if (tagName.equals("adopt-permissions")) {
                 sa = res.obtainAttributes(attrs,
                         com.android.internal.R.styleable.AndroidManifestOriginalPackage);
@@ -1753,12 +1856,12 @@ public class PackageParser {
                 }
 
                 XmlUtils.skipCurrentTag(parser);
-                
+
             } else if (tagName.equals("uses-gl-texture")) {
                 // Just skip this tag
                 XmlUtils.skipCurrentTag(parser);
                 continue;
-                
+
             } else if (tagName.equals("compatible-screens")) {
                 // Just skip this tag
                 XmlUtils.skipCurrentTag(parser);
@@ -1766,12 +1869,12 @@ public class PackageParser {
             } else if (tagName.equals("supports-input")) {
                 XmlUtils.skipCurrentTag(parser);
                 continue;
-                
+
             } else if (tagName.equals("eat-comment")) {
                 // Just skip this tag
                 XmlUtils.skipCurrentTag(parser);
                 continue;
-                
+
             } else if (RIGID_PARSER) {
                 outError[0] = "Bad element under <manifest>: "
                     + parser.getName();
@@ -1997,7 +2100,7 @@ public class PackageParser {
         }
         return proc.intern();
     }
-    
+
     private static String buildProcessName(String pkg, String defProc,
             CharSequence procSeq, int flags, String[] separateProcesses,
             String[] outError) {
@@ -2199,7 +2302,7 @@ public class PackageParser {
         }
 
         sa.recycle();
-        
+
         if (!parseAllMetaData(res, parser, attrs, "<permission-group>", perm,
                 outError)) {
             mParseError = PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MALFORMED;
@@ -2238,7 +2341,7 @@ public class PackageParser {
         if (perm.info.group != null) {
             perm.info.group = perm.info.group.intern();
         }
-        
+
         perm.info.descriptionRes = sa.getResourceId(
                 com.android.internal.R.styleable.AndroidManifestPermission_description,
                 0);
@@ -2269,7 +2372,7 @@ public class PackageParser {
                 return null;
             }
         }
-        
+
         if (!parseAllMetaData(res, parser, attrs, "<permission>", perm,
                 outError)) {
             mParseError = PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MALFORMED;
@@ -2302,7 +2405,7 @@ public class PackageParser {
         }
 
         sa.recycle();
-        
+
         int index = perm.info.name.indexOf('.');
         if (index > 0) {
             index = perm.info.name.indexOf('.', index+1);
@@ -2344,9 +2447,9 @@ public class PackageParser {
                     com.android.internal.R.styleable.AndroidManifestInstrumentation_banner);
             mParseInstrumentationArgs.tag = "<instrumentation>";
         }
-        
+
         mParseInstrumentationArgs.sa = sa;
-        
+
         Instrumentation a = new Instrumentation(mParseInstrumentationArgs,
                 new InstrumentationInfo());
         if (outError[0] != null) {
@@ -2518,6 +2621,51 @@ public class PackageParser {
                 com.android.internal.R.styleable.AndroidManifestApplication_hardwareAccelerated,
                 owner.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.ICE_CREAM_SANDWICH);
 
+        /** M: Software render support @{
+         *  In order to save the use of memory, disable HardwareAcceleration for those applications which do not declare android:hardwareAccelerated="true".
+         *  1. Exclude whitelist packages: android, com.android.vending, com.android.facelock, com.android.chrome and google.
+         *  2. Disable HardwareAcceleration for only system application.
+         */
+        if (isDefaultSWRender()) {
+            Slog.i(TAG, "[swRender] " + pkgName + ", hwui-ori" + owner.baseHardwareAccelerated + ", sdk-check: " + (owner.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.ICE_CREAM_SANDWICH));
+            if (owner.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+                do {
+                    if (pkgName.equals("android") ||
+                        pkgName.equals("com.android.vending") ||
+                        pkgName.equals("com.android.facelock") ||
+                        pkgName.contains("chrome") ||
+                        pkgName.contains("google")) {
+                        Slog.i(TAG, "[swRender] " + pkgName + "skip, hwui-ori: " + owner.baseHardwareAccelerated);
+                        break;
+                    }
+
+                    if (!pkgName.contains("android") &&
+                        !pkgName.contains("mediatek") &&
+                        !pkgName.contains(".mtk.")) {
+                        break;
+                    }
+
+                    if ((flags & PARSE_IS_SYSTEM) != 0) {
+                        owner.baseHardwareAccelerated = sa.getBoolean(com.android.internal.R.styleable.AndroidManifestApplication_hardwareAccelerated, false);
+                    }
+                } while (false);
+            }
+            Slog.i(TAG, "[swRender] " + pkgName + ", system-app: " + ((flags & PARSE_IS_SYSTEM) != 0) + ", hwui-res: " + owner.baseHardwareAccelerated);
+        }
+        /** @} 2013-03-21 */
+
+    /** M: Software HardwareAcceleration Support @{
+         *  Enable HardwareAcceleration for special application in whitelist packages.
+         */
+        if (IsForceHardwareAccelerated) {
+            if (PackageHardwareAccelerationPolicy.match(pkgName)) {
+            owner.baseHardwareAccelerated = true;
+            Slog.i(TAG, "[HardwareAccelerated] " + pkgName +
+            ", hwui-res: " + owner.baseHardwareAccelerated);
+            }
+        }
+    /** @} 2014-12-02 */
+
         if (sa.getBoolean(
                 com.android.internal.R.styleable.AndroidManifestApplication_hasCode,
                 true)) {
@@ -2594,10 +2742,9 @@ public class PackageParser {
             }
             ai.processName = buildProcessName(ai.packageName, null, pname,
                     flags, mSeparateProcesses, outError);
-    
+
             ai.enabled = sa.getBoolean(
                     com.android.internal.R.styleable.AndroidManifestApplication_enabled, true);
-            
             if (sa.getBoolean(
                     com.android.internal.R.styleable.AndroidManifestApplication_isGame, false)) {
                 ai.flags |= ApplicationInfo.FLAG_IS_GAME;
@@ -2921,7 +3068,7 @@ public class PackageParser {
             outInfo.icon = iconVal;
             outInfo.nonLocalizedLabel = null;
         }
-        
+
         int logoVal = sa.getResourceId(logoRes, 0);
         if (logoVal != 0) {
             outInfo.logo = logoVal;
@@ -2961,11 +3108,11 @@ public class PackageParser {
                     com.android.internal.R.styleable.AndroidManifestActivity_description,
                     com.android.internal.R.styleable.AndroidManifestActivity_enabled);
         }
-        
+
         mParseActivityArgs.tag = receiver ? "<receiver>" : "<activity>";
         mParseActivityArgs.sa = sa;
         mParseActivityArgs.flags = flags;
-        
+
         Activity a = new Activity(mParseActivityArgs, new ActivityInfo());
         if (outError[0] != null) {
             sa.recycle();
@@ -3088,6 +3235,12 @@ public class PackageParser {
                     hardwareAccelerated)) {
                 a.info.flags |= ActivityInfo.FLAG_HARDWARE_ACCELERATED;
             }
+            /** M: Software render support @{ */
+            if (isDefaultSWRender()) {
+                boolean hwuiRes = (a.info.flags & ActivityInfo.FLAG_HARDWARE_ACCELERATED) != 0;
+                Slog.i(TAG, "[swRender] " + a.info.name + ", app:" + hardwareAccelerated + " act: " + hwuiRes);
+            }
+            /** @} 2013-03-21 */
 
             a.info.launchMode = sa.getInt(
                     com.android.internal.R.styleable.AndroidManifestActivity_launchMode,
@@ -3169,7 +3322,7 @@ public class PackageParser {
                 outError[0] = "Heavy-weight applications can not have receivers in main process";
             }
         }
-        
+
         if (outError[0] != null) {
             return null;
         }
@@ -3282,10 +3435,10 @@ public class PackageParser {
                     com.android.internal.R.styleable.AndroidManifestActivityAlias_enabled);
             mParseActivityAliasArgs.tag = "<activity-alias>";
         }
-        
+
         mParseActivityAliasArgs.sa = sa;
         mParseActivityAliasArgs.flags = flags;
-        
+
         Activity target = null;
 
         final int NA = owner.activities.size();
@@ -3432,10 +3585,10 @@ public class PackageParser {
                     com.android.internal.R.styleable.AndroidManifestProvider_enabled);
             mParseProviderArgs.tag = "<provider>";
         }
-        
+
         mParseProviderArgs.sa = sa;
         mParseProviderArgs.flags = flags;
-        
+
         Provider p = new Provider(mParseProviderArgs, new ProviderInfo());
         if (outError[0] != null) {
             sa.recycle();
@@ -3523,7 +3676,7 @@ public class PackageParser {
                 return null;
             }
         }
-        
+
         if (cpname == null) {
             outError[0] = "<provider> does not include authorities attribute";
             return null;
@@ -3566,7 +3719,7 @@ public class PackageParser {
                         outInfo.metaData, outError)) == null) {
                     return false;
                 }
-                
+
             } else if (parser.getName().equals("grant-uri-permission")) {
                 TypedArray sa = res.obtainAttributes(attrs,
                         com.android.internal.R.styleable.AndroidManifestGrantUriPermission);
@@ -3590,7 +3743,7 @@ public class PackageParser {
                 if (str != null) {
                     pa = new PatternMatcher(str, PatternMatcher.PATTERN_SIMPLE_GLOB);
                 }
-                
+
                 sa.recycle();
 
                 if (pa != null) {
@@ -3637,7 +3790,7 @@ public class PackageParser {
                 if (writePermission == null) {
                     writePermission = permission;
                 }
-                
+
                 boolean havePerm = false;
                 if (readPermission != null) {
                     readPermission = readPermission.intern();
@@ -3660,7 +3813,7 @@ public class PackageParser {
                         return false;
                     }
                 }
-                
+
                 String path = sa.getNonConfigurationString(
                         com.android.internal.R.styleable.AndroidManifestPathPermission_path, 0);
                 if (path != null) {
@@ -3743,10 +3896,10 @@ public class PackageParser {
                     com.android.internal.R.styleable.AndroidManifestService_enabled);
             mParseServiceArgs.tag = "<service>";
         }
-        
+
         mParseServiceArgs.sa = sa;
         mParseServiceArgs.flags = flags;
-        
+
         Service s = new Service(mParseServiceArgs, new ServiceInfo());
         if (outError[0] != null) {
             sa.recycle();
@@ -3802,7 +3955,7 @@ public class PackageParser {
                 return null;
             }
         }
-        
+
         int outerDepth = parser.getDepth();
         int type;
         while ((type=parser.next()) != XmlPullParser.END_DOCUMENT
@@ -3900,7 +4053,7 @@ public class PackageParser {
         }
 
         name = name.intern();
-        
+
         TypedValue v = sa.peekValue(
                 com.android.internal.R.styleable.AndroidManifestMetaData_resource);
         if (v != null && v.resourceId != 0) {
@@ -4033,7 +4186,7 @@ public class PackageParser {
 
         outInfo.icon = sa.getResourceId(
                 com.android.internal.R.styleable.AndroidManifestIntentFilter_icon, 0);
-        
+
         outInfo.logo = sa.getResourceId(
                 com.android.internal.R.styleable.AndroidManifestIntentFilter_logo, 0);
 
@@ -4070,7 +4223,24 @@ public class PackageParser {
                 }
                 XmlUtils.skipCurrentTag(parser);
 
+/* Vanzo:tanglei on: Mon, 23 Mar 2015 14:43:14 +0800
+ * custom hide apps
                 outInfo.addCategory(value);
+ */
+                String[] hideApps = res.getStringArray(com.android.internal.R.array.hide_apps);
+                boolean skip = false;
+                if (hideApps.length > 0) {
+                    for (int i = 0; i < hideApps.length; i++) {
+                        if (outInfo.toString().contains(hideApps[i]) && value.contains("LAUNCHER")) {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if (!skip) {
+                    outInfo.addCategory(value);
+                }
+// End of Vanzo:tanglei
 
             } else if (nodeName.equals("data")) {
                 sa = res.obtainAttributes(attrs,
@@ -4240,7 +4410,7 @@ public class PackageParser {
         public ArrayList<String> mOriginalPackages = null;
         public String mRealPackage = null;
         public ArrayList<String> mAdoptPermissions = null;
-        
+
         // We store the application meta-data independently to avoid multiple unwanted references
         public Bundle mAppMetaData = null;
 
@@ -4249,7 +4419,7 @@ public class PackageParser {
 
         // The version name declared for this package.
         public String mVersionName;
-        
+
         // The shared user id that this package wants to use.
         public String mSharedUserId;
 
@@ -4435,7 +4605,7 @@ public class PackageParser {
 
         ComponentName componentName;
         String componentShortName;
-        
+
         public Component(Package _owner) {
             owner = _owner;
             intents = null;
@@ -4467,7 +4637,7 @@ public class PackageParser {
                 outInfo.icon = iconVal;
                 outInfo.nonLocalizedLabel = null;
             }
-            
+
             int logoVal = args.sa.getResourceId(args.logoRes, 0);
             if (logoVal != 0) {
                 outInfo.logo = logoVal;
@@ -4507,11 +4677,11 @@ public class PackageParser {
                         owner.applicationInfo.processName, pname,
                         args.flags, args.sepProcesses, args.outError);
             }
-            
+
             if (args.descriptionRes != 0) {
                 outInfo.descriptionRes = args.sa.getResourceId(args.descriptionRes, 0);
             }
-            
+
             outInfo.enabled = args.sa.getBoolean(args.enabledRes, true);
         }
 
@@ -4522,7 +4692,7 @@ public class PackageParser {
             componentName = clone.componentName;
             componentShortName = clone.componentShortName;
         }
-        
+
         public ComponentName getComponentName() {
             if (componentName != null) {
                 return componentName;
@@ -4547,7 +4717,7 @@ public class PackageParser {
             componentShortName = null;
         }
     }
-    
+
     public final static class Permission extends Component<IntentInfo> {
         public final PermissionInfo info;
         public boolean tree;
@@ -4562,7 +4732,7 @@ public class PackageParser {
             super(_owner);
             info = _info;
         }
-        
+
         public void setPackageName(String packageName) {
             super.setPackageName(packageName);
             info.packageName = packageName;
@@ -4755,7 +4925,7 @@ public class PackageParser {
             info = _info;
             info.applicationInfo = args.owner.applicationInfo;
         }
-        
+
         public void setPackageName(String packageName) {
             super.setPackageName(packageName);
             info.packageName = packageName;
@@ -4809,7 +4979,7 @@ public class PackageParser {
             info = _info;
             info.applicationInfo = args.owner.applicationInfo;
         }
-        
+
         public void setPackageName(String packageName) {
             super.setPackageName(packageName);
             info.packageName = packageName;
@@ -4852,7 +5022,7 @@ public class PackageParser {
             info.applicationInfo = args.owner.applicationInfo;
             syncable = false;
         }
-        
+
         public Provider(Provider existingProvider) {
             super(existingProvider);
             this.info = existingProvider.info;
@@ -4903,7 +5073,7 @@ public class PackageParser {
             super(args, _info);
             info = _info;
         }
-        
+
         public void setPackageName(String packageName) {
             super.setPackageName(packageName);
             info.packageName = packageName;
@@ -5002,6 +5172,329 @@ public class PackageParser {
         sCompatibilityModeEnabled = compatibilityModeEnabled;
     }
 
+    /** M: Multi-Threading for collectCertificates() @{ */
+    /** TODO: [ALPS01655835][L.AOSP.EARLY.DEV] Bring-up build error on frameworks/base @{
+    public boolean collectCertificates(Package pkg, int flags, int threadNum) {
+        // Error handling of paramater threadNum
+        if (threadNum < 1) {
+            threadNum = 1;
+        }
+
+        pkg.mSignatures = null;
+
+        WeakReference<byte[]> readBufferRef;
+        byte[] readBuffer = null;
+        synchronized (mSync) {
+            readBufferRef = mReadBuffer;
+            if (readBufferRef != null) {
+                mReadBuffer = null;
+                readBuffer = readBufferRef.get();
+            }
+            if (readBuffer == null) {
+                readBuffer = new byte[8192];
+                readBufferRef = new WeakReference<byte[]>(readBuffer);
+            }
+        }
+
+        try {
+            /// TODO: [ALPS01655835][L.AOSP.EARLY.DEV] Bring-up build error on frameworks/base @{
+            StrictJarFile jarFile = new StrictJarFile(mArchiveSourcePath);
+            /// @}
+
+            Certificate[] certs = null;
+
+            ThreadPoolExecutor executor=(ThreadPoolExecutor)Executors.newFixedThreadPool(threadNum);
+            List<Future<String>> resultList=new ArrayList<Future<String>>();
+            ReadBufferLruCache lruCache=new ReadBufferLruCache(8192*threadNum);
+            List<ZipEntry> jeList = null;
+            int maxJeNum = 10;
+
+            if ((flags&PARSE_IS_SYSTEM) != 0) {
+                // If this package comes from the system image, then we
+                // can trust it...  we'll just use the AndroidManifest.xml
+                // to retrieve its signatures, not validating all of the
+                // files.
+                ZipEntry jarEntry = jarFile.getJarEntry(ANDROID_MANIFEST_FILENAME);
+                certs = loadCertificates(jarFile, jarEntry, readBuffer);
+                if (certs == null) {
+                    Slog.e(TAG, "Package " + pkg.packageName
+                            + " has no certificates at entry "
+                            + jarEntry.getName() + "; ignoring!");
+                    jarFile.close();
+                    mParseError = PackageManager.INSTALL_PARSE_FAILED_NO_CERTIFICATES;
+                    return false;
+                }
+                if (DEBUG_JAR) {
+                    Slog.i(TAG, "File " + mArchiveSourcePath + ": entry=" + jarEntry
+                            + " certs=" + (certs != null ? certs.length : 0));
+                    if (certs != null) {
+                        final int N = certs.length;
+                        for (int i=0; i<N; i++) {
+                            Slog.i(TAG, "  Public key: "
+                                    + certs[i].getPublicKey().getEncoded()
+                                    + " " + certs[i].getPublicKey());
+                        }
+                    }
+                }
+            } else {
+                Enumeration<ZipEntry> entries = jarFile.entries();
+                while (entries.hasMoreElements()) {
+                    final ZipEntry je = entries.nextElement();
+                    if (je.isDirectory()) continue;
+
+                    final String name = je.getName();
+
+                    if (name.startsWith("META-INF/"))
+                        continue;
+
+                    if (ANDROID_MANIFEST_FILENAME.equals(name)) {
+                        pkg.manifestDigest =
+                                ManifestDigest.fromInputStream(jarFile.getInputStream(je));
+                    }
+
+                    if (certs == null) {
+                        final Certificate[] localCerts = loadCertificates(jarFile, je, readBuffer);
+                        if (DEBUG_JAR) {
+                            Slog.i(TAG, "File " + mArchiveSourcePath + " entry " + je.getName()
+                                    + ": certs=" + certs + " ("
+                                    + (certs != null ? certs.length : 0) + ")");
+                        }
+
+                        if (localCerts == null) {
+                            Slog.e(TAG, "Package " + pkg.packageName
+                                    + " has no certificates at entry "
+                                    + je.getName() + "; ignoring!");
+                            executor.shutdownNow(); // Shutdown the executor
+                            lruCache.evictAll();    // Evict lrucache
+                            jarFile.close();
+                            mParseError = PackageManager.INSTALL_PARSE_FAILED_NO_CERTIFICATES;
+                            return false;
+                        } else if (certs == null) {
+                            certs = localCerts;
+                        }
+                    } else {
+                        if(jeList==null) {
+                            jeList = new ArrayList<ZipEntry>();
+                        }
+                        jeList.add(je);
+                        if(jeList.size()>=maxJeNum) {
+                            CollectCertificatesTask task=new CollectCertificatesTask(jarFile, jeList, lruCache, certs);
+                            jeList=null;
+                            Future<String> result=executor.submit(task);
+                            resultList.add(result);
+                        }
+                    }
+                }
+            }
+
+            if(jeList!=null){
+                CollectCertificatesTask task=new CollectCertificatesTask(jarFile, jeList, lruCache, certs);
+                jeList=null;
+                Future<String> result=executor.submit(task);
+                resultList.add(result);
+            }
+
+            boolean executorResult = true;
+            for (int i=0; i<resultList.size(); i++) {
+                Future<String> result=resultList.get(i);
+                String str;
+                try {
+                    str=result.get();
+                    if (!str.equals("INSTALL_SUCCEEDED")) {
+                        if (str.equals("INSTALL_PARSE_FAILED_NO_CERTIFICATES")) {
+                            mParseError = PackageManager.INSTALL_PARSE_FAILED_NO_CERTIFICATES;
+                        }
+                        else {
+                            mParseError = PackageManager.INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES;
+                        }
+                        executorResult = false;
+                        break;
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    mParseError = PackageManager.INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION;
+                    executorResult = false;
+                    break;
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
+                    mParseError = PackageManager.INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION;
+                    executorResult = false;
+                    break;
+                }
+            }
+
+            executor.shutdownNow(); // Shutdown the executor
+            lruCache.evictAll();    // Evict lrucache
+            jarFile.close();
+
+            if (false == executorResult) {
+                return false;
+            }
+
+            synchronized (mSync) {
+                mReadBuffer = readBufferRef;
+            }
+
+            if (certs != null && certs.length > 0) {
+                final int N = certs.length;
+                pkg.mSignatures = new Signature[certs.length];
+                for (int i=0; i<N; i++) {
+                    pkg.mSignatures[i] = new Signature(
+                            certs[i].getEncoded());
+                }
+            } else {
+                Slog.e(TAG, "Package " + pkg.packageName
+                        + " has no certificates; ignoring!");
+                mParseError = PackageManager.INSTALL_PARSE_FAILED_NO_CERTIFICATES;
+                return false;
+            }
+
+            // Add the signing KeySet to the system
+            pkg.mSigningKeys = new HashSet<PublicKey>();
+            for (int i=0; i < certs.length; i++) {
+                pkg.mSigningKeys.add(certs[i].getPublicKey());
+            }
+
+        } catch (CertificateEncodingException e) {
+            Slog.w(TAG, "Exception reading " + mArchiveSourcePath, e);
+            mParseError = PackageManager.INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING;
+            return false;
+        } catch (IOException e) {
+            Slog.w(TAG, "Exception reading " + mArchiveSourcePath, e);
+            mParseError = PackageManager.INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING;
+            return false;
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Exception reading " + mArchiveSourcePath, e);
+            mParseError = PackageManager.INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION;
+            return false;
+        }
+
+        return true;
+    }
+
+    public final class CollectCertificatesTask implements Callable<String> {
+        StrictJarFile jarFile;
+        List<ZipEntry> jeList;
+        ReadBufferLruCache lruCache;
+        Certificate[] certs;
+        byte[] readBuffer;
+
+        public CollectCertificatesTask(StrictJarFile jarFile, List<ZipEntry> jeList, ReadBufferLruCache lruCache, Certificate[] certs){
+            this.jarFile=jarFile;
+            this.jeList=jeList;
+            this.lruCache=lruCache;
+            this.certs=certs;
+        }
+
+        @Override
+        public String call() throws Exception {
+            int mThreadID = android.os.Process.myTid();
+            String resultStr = null;
+
+            for (int jeIndex = 0; jeIndex < jeList.size(); jeIndex++) {
+
+                ZipEntry je = jeList.get(jeIndex);
+                readBuffer = lruCache.get(mThreadID);
+                if(readBuffer == null) {
+                    readBuffer = new byte[8192];
+                }
+
+                final Certificate[] localCerts = loadCertificates(jarFile, je, readBuffer, false);
+                lruCache.put(mThreadID, readBuffer);
+                if (DEBUG_JAR) {
+                    Slog.i(TAG, "File " + mArchiveSourcePath + " entry " + je.getName()
+                            + ": certs=" + certs + " ("
+                            + (certs != null ? certs.length : 0) + ")");
+                }
+
+                if (localCerts == null) {
+                    //Slog.e(TAG, "Package " + pkg.packageName
+                    //        + " has no certificates at entry "
+                    //        + je.getName() + "; ignoring!");
+                    //jarFile.close();
+                    resultStr = new String("INSTALL_PARSE_FAILED_NO_CERTIFICATES");
+                    break;
+                } else {
+                    // Ensure all certificates match.
+                    for (int i = 0; i < certs.length; i++) {
+                        boolean found = false;
+                        for (int j=0; j < localCerts.length; j++) {
+                            if (certs[i] != null &&
+                                    certs[i].equals(localCerts[j])) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found || certs.length != localCerts.length) {
+                            //Slog.e(TAG, "Package " + pkg.packageName
+                            //        + " has mismatched certificates at entry "
+                            //        + je.getName() + "; ignoring!");
+                            //jarFile.close();
+                            resultStr = new String("INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES");
+                            break;
+                        }
+                    }
+
+                    if (resultStr != null) {
+                        break;
+                    }
+                }
+            }
+
+            if (resultStr == null) {
+                resultStr = new String("INSTALL_SUCCEEDED");
+            }
+            return resultStr;
+        }
+    }
+
+    public final class ReadBufferLruCache extends LruCache<Integer, byte[]> {
+        public ReadBufferLruCache(int maxSize) {
+            super(maxSize);
+        }
+    }
+
+    private Certificate[] loadCertificates(StrictJarFile jarFile, ZipEntry je,
+            byte[] readBuffer, boolean withBufferInputStream) {
+        try {
+            // We must read the stream for the JarEntry to retrieve
+            // its certificates.
+            if (withBufferInputStream) {
+                InputStream is = new BufferedInputStream(jarFile.getInputStream(je));
+                while (is.read(readBuffer, 0, readBuffer.length) != -1) {
+                    // not using
+                }
+                is.close();
+            }
+            else {
+                InputStream is = jarFile.getInputStream(je);
+                if (null != is) {
+                    while (is.read(readBuffer, 0, readBuffer.length) != -1) {
+                        // not using
+                    }
+                    is.close();
+                }
+            }
+            return je != null ? je.getCertificates() : null;
+        } catch (IOException e) {
+            Slog.w(TAG, "Exception reading " + je.getName() + " in " + jarFile.getName(), e);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Exception reading " + je.getName() + " in " + jarFile.getName(), e);
+        }
+        return null;
+    }
+    @} */
+
+    /** M: [ALPS01507770][Need Patch][Volunteer Patch][Turnkey AOSP] Java feature option removal (MTK_GMO_RAM_OPTIMIZE & MTK_GMO_ROM_OPTIMIZE) @{ */
+    private static final String MTK_GMO_ROM_OPTIMIZE = "ro.mtk_gmo_rom_optimize";
+
+    public static boolean isGmoROM() {
+        boolean enabled = "1".equals(SystemProperties.get(MTK_GMO_ROM_OPTIMIZE));
+        Log.d(TAG, "isGmoROM() return " + enabled);
+        return enabled ;
+    }
+    /** @} */
+
     private static AtomicReference<byte[]> sBuffer = new AtomicReference<byte[]>();
 
     public static long readFullyIgnoringContents(InputStream in) throws IOException {
@@ -5042,4 +5535,14 @@ public class PackageParser {
             this.error = error;
         }
     }
+
+    /// M : DEFAULT_SW_RENDER @{
+    private static final String MTK_DEFAULT_SW_RENDER = "ro.default_software_render";
+
+    private boolean isDefaultSWRender() {
+        boolean enabled = "1".equals(SystemProperties.get(MTK_DEFAULT_SW_RENDER));
+        Log.d(TAG, "isDefaultSWRender return " + enabled);
+        return enabled ;
+    }
+    /// @}
 }

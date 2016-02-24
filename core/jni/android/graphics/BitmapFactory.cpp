@@ -26,6 +26,11 @@
 
 jfieldID gOptions_justBoundsFieldID;
 jfieldID gOptions_sampleSizeFieldID;
+jfieldID gOptions_preferSizeFieldID;
+jfieldID gOptions_postprocFieldID;
+jfieldID gOptions_postprocflagFieldID;
+jfieldID gOptions_dynamicConFieldID;
+jfieldID gOptions_dynamicConflagFieldID;
 jfieldID gOptions_configFieldID;
 jfieldID gOptions_premultipliedFieldID;
 jfieldID gOptions_mutableFieldID;
@@ -211,6 +216,16 @@ private:
 static jobject doDecode(JNIEnv* env, SkStreamRewindable* stream, jobject padding, jobject options) {
 
     int sampleSize = 1;
+    int preferSize = 0;
+    int postproc = 0;
+    int postprocflag = 0;
+#ifdef MTK_IMAGE_DC_SUPPORT
+	void* dc;
+	bool dcflag = false;
+	jint* pdynamicCon = NULL;
+	jintArray dynamicCon;
+	jsize size = 0;
+#endif
 
     SkImageDecoder::Mode decodeMode = SkImageDecoder::kDecodePixels_Mode;
     SkColorType prefColorType = kN32_SkColorType;
@@ -242,6 +257,25 @@ static jobject doDecode(JNIEnv* env, SkStreamRewindable* stream, jobject padding
                 gOptions_preferQualityOverSpeedFieldID);
         requireUnpremultiplied = !env->GetBooleanField(options, gOptions_premultipliedFieldID);
         javaBitmap = env->GetObjectField(options, gOptions_bitmapFieldID);
+        postproc = env->GetBooleanField(options, gOptions_postprocFieldID);
+        postprocflag = env->GetIntField(options, gOptions_postprocflagFieldID);
+
+#ifdef MTK_IMAGE_DC_SUPPORT
+		dcflag = env->GetBooleanField(options, gOptions_dynamicConflagFieldID);
+		dynamicCon = (jintArray)env->GetObjectField(options, gOptions_dynamicConFieldID);
+		//pdynamicCon = (unsigned int*)env->GetIntArrayElements(dynamicCon, 0);
+		pdynamicCon = env->GetIntArrayElements(dynamicCon, NULL);
+		size = env->GetArrayLength(dynamicCon);
+		//for (int i=0; i<size; i++)
+		//{
+		   //ALOGD("pdynamicCon[%d]=%d", i, pdynamicCon[i]);
+		//}
+
+		//ALOGD("BitmapFactory.cpp postproc=%d, postprocflag=%d", postproc, postprocflag);
+		//ALOGD("BitmapFactory.cpp dcflag=%d", dcflag);
+		//ALOGD("BitmapFactory.cpp dynamicCon=%p", dynamicCon);
+		//ALOGD("BitmapFactory.cpp size=%d", size);
+#endif
 
         if (env->GetBooleanField(options, gOptions_scaledFieldID)) {
             const int density = env->GetIntField(options, gOptions_densityFieldID);
@@ -264,6 +298,20 @@ static jobject doDecode(JNIEnv* env, SkStreamRewindable* stream, jobject padding
     decoder->setDitherImage(doDither);
     decoder->setPreferQualityOverSpeed(preferQualityOverSpeed);
     decoder->setRequireUnpremultipliedColors(requireUnpremultiplied);
+    decoder->setPreferSize(preferSize);
+    decoder->setPostProcFlag((postproc | (postprocflag << 4)));
+
+#ifdef MTK_IMAGE_DC_SUPPORT
+    if (dcflag == true) {
+	    dc= (void*)pdynamicCon;
+	    int len = (int)size;
+	    decoder->setDynamicCon(dc, len);
+    } else {
+        dc = NULL;
+        decoder->setDynamicCon(dc, 0);
+    }
+//	(env)->ReleaseIntArrayElements(dynamicCon, pdynamicCon, 0);
+#endif
 
     SkBitmap* outputBitmap = NULL;
     unsigned int existingBufferSize = 0;
@@ -599,6 +647,9 @@ int register_android_graphics_BitmapFactory(JNIEnv* env) {
             "Landroid/graphics/Bitmap;");
     gOptions_justBoundsFieldID = getFieldIDCheck(env, options_class, "inJustDecodeBounds", "Z");
     gOptions_sampleSizeFieldID = getFieldIDCheck(env, options_class, "inSampleSize", "I");
+    gOptions_preferSizeFieldID = getFieldIDCheck(env, options_class, "inPreferSize", "I");
+    gOptions_postprocFieldID = getFieldIDCheck(env, options_class, "inPostProc", "Z");
+    gOptions_postprocflagFieldID = getFieldIDCheck(env, options_class, "inPostProcFlag", "I");
     gOptions_configFieldID = getFieldIDCheck(env, options_class, "inPreferredConfig",
             "Landroid/graphics/Bitmap$Config;");
     gOptions_premultipliedFieldID = getFieldIDCheck(env, options_class, "inPremultiplied", "Z");
@@ -614,6 +665,9 @@ int register_android_graphics_BitmapFactory(JNIEnv* env) {
     gOptions_heightFieldID = getFieldIDCheck(env, options_class, "outHeight", "I");
     gOptions_mimeFieldID = getFieldIDCheck(env, options_class, "outMimeType", "Ljava/lang/String;");
     gOptions_mCancelID = getFieldIDCheck(env, options_class, "mCancel", "Z");
+
+	gOptions_dynamicConFieldID = getFieldIDCheck(env,options_class,"inDynamicCon","[I");
+	gOptions_dynamicConflagFieldID = getFieldIDCheck(env, options_class, "inDynmicConFlag", "Z");
 
     jclass bitmap_class = env->FindClass("android/graphics/Bitmap");
     SkASSERT(bitmap_class);

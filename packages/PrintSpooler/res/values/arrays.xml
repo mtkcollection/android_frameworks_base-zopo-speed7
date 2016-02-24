@@ -153,6 +153,9 @@
         <item>ISO_C8</item>
         <item>ISO_C9</item>
         <item>ISO_C10</item>
+        <item>NA_LETTER</item>
+        <item>PRC_9</item>
+        <item>JIS_B5</item>
     </string-array>
 
 </resources>

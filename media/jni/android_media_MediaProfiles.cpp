@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +30,10 @@
 #include "JNIHelp.h"
 #include "android_runtime/AndroidRuntime.h"
 #include <media/MediaProfiles.h>
+
+#ifndef ANDROID_DEFAULT_CODE
+#include <sys/sysconf.h>
+#endif
 
 using namespace android;
 
@@ -292,6 +301,88 @@ android_media_MediaProfiles_native_get_image_encoding_quality_level(JNIEnv *env,
     }
     return static_cast<jint>(levels[index]);
 }
+
+static jobject
+android_media_MediaProfiles_native_get_videoeditor_profile(JNIEnv *env, jobject thiz)
+{
+    ALOGV("native_get_videoeditor_profile");
+
+    int maxInputFrameWidth =
+            sProfiles->getVideoEditorCapParamByName("videoeditor.input.width.max");
+    int maxInputFrameHeight =
+            sProfiles->getVideoEditorCapParamByName("videoeditor.input.height.max");
+    int maxOutputFrameWidth =
+            sProfiles->getVideoEditorCapParamByName("videoeditor.output.width.max");
+    int maxOutputFrameHeight =
+            sProfiles->getVideoEditorCapParamByName("videoeditor.output.height.max");
+
+    // Check on the values retrieved
+    if (maxInputFrameWidth == -1 || maxInputFrameHeight == -1 ||
+        maxOutputFrameWidth == -1 || maxOutputFrameHeight == -1) {
+
+        jniThrowException(env, "java/lang/RuntimeException",\
+            "Error retrieving videoeditor profile params");
+        return NULL;
+    }
+    ALOGV("native_get_videoeditor_profile \
+        inWidth:%d inHeight:%d,outWidth:%d, outHeight:%d",\
+        maxInputFrameWidth,maxInputFrameHeight,\
+        maxOutputFrameWidth,maxOutputFrameHeight);
+
+#ifndef ANDROID_DEFAULT_CODE
+    int64_t memTotalBytes64 = (int64_t)(sysconf(_SC_PHYS_PAGES) * PAGE_SIZE);
+    ALOGD("native_get_videoeditor_profile: memTotalBytes64 %lld bytes", memTotalBytes64);
+
+    // Limit max import resolution to 1280x720, if phone's ram <= 512MB
+    if (memTotalBytes64 <= (512*1024*1024)) {
+        maxInputFrameWidth = (maxInputFrameWidth > 1280) ? 1280 : maxInputFrameWidth;
+        maxInputFrameHeight = (maxInputFrameHeight > 720) ? 720 : maxInputFrameHeight;
+    }
+#endif
+
+    jclass VideoEditorProfileClazz =
+        env->FindClass("android/media/videoeditor/VideoEditorProfile");
+    jmethodID VideoEditorProfileConstructorMethodID =
+        env->GetMethodID(VideoEditorProfileClazz, "<init>", "(IIII)V");
+    return env->NewObject(VideoEditorProfileClazz,
+                          VideoEditorProfileConstructorMethodID,
+                          maxInputFrameWidth,
+                          maxInputFrameHeight,
+                          maxOutputFrameWidth,
+                          maxOutputFrameHeight);
+}
+static jint
+android_media_MediaProfiles_native_get_videoeditor_export_profile(
+    JNIEnv *env, jobject thiz, jint codec)
+{
+    ALOGV("android_media_MediaProfiles_native_get_export_profile index ");
+    int profile =0;
+    profile = sProfiles->getVideoEditorExportParamByName("videoeditor.export.profile", codec);
+    // Check the values retrieved
+    if (profile == -1) {
+        jniThrowException(env, "java/lang/RuntimeException",\
+            "Error retrieving videoeditor export profile params");
+        return -1;
+    }
+    return static_cast<jint>(profile);
+}
+
+static jint
+android_media_MediaProfiles_native_get_videoeditor_export_level(
+    JNIEnv *env, jobject thiz, jint codec)
+{
+    ALOGV("android_media_MediaProfiles_native_get_export_level");
+    int level =0;
+    level = sProfiles->getVideoEditorExportParamByName("videoeditor.export.level", codec);
+    // Check the values retrieved
+    if (level == -1) {
+        jniThrowException(env, "java/lang/RuntimeException",\
+            "Error retrieving videoeditor export level params");
+        return -1;
+    }
+    return static_cast<jint>(level);
+}
+
 static JNINativeMethod gMethodsForEncoderCapabilitiesClass[] = {
     {"native_init",                            "()V",                    (void *)android_media_MediaProfiles_native_init},
     {"native_get_num_file_formats",            "()I",                    (void *)android_media_MediaProfiles_native_get_num_file_formats},

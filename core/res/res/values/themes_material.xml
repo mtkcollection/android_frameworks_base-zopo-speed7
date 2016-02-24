@@ -193,7 +193,12 @@ please see themes_device_defaults.xml.
         <item name="toastFrameBackground">@drawable/toast_frame</item>
 
         <!-- Panel attributes -->
+<!-- Vanzo:hanshengpeng on: Tue, 20 Jan 2015 23:02:07 +0800
+Bugfix #105832,fix menu style error
         <item name="panelBackground">?attr/colorBackground</item>
+-->
+        <item name="panelBackground">@drawable/menu_hardkey_panel_holo_dark</item>
+<!-- End of Vanzo:hanshengpeng -->
         <item name="panelFullBackground">@drawable/menu_background_fill_parent_width</item>
         <!-- These three attributes do not seems to be used by the framework. Declared public though -->
         <item name="panelColorBackground">#000</item>
@@ -545,7 +550,12 @@ please see themes_device_defaults.xml.
         <item name="toastFrameBackground">@drawable/toast_frame</item>
 
         <!-- Panel attributes -->
+<!-- Vanzo:hanshengpeng on: Tue, 20 Jan 2015 23:02:48 +0800
+Bugfix #105832,fix menu style error
         <item name="panelBackground">?attr/colorBackground</item>
+-->
+        <item name="panelBackground">@drawable/menu_hardkey_panel_holo_light</item>
+<!-- End of Vanzo:hanshengpeng -->
         <item name="panelFullBackground">@drawable/menu_background_fill_parent_width</item>
         <!-- These three attributes do not seems to be used by the framework. Declared public though -->
         <item name="panelColorBackground">#000</item>

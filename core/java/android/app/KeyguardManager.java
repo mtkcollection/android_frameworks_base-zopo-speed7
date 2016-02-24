@@ -289,4 +289,14 @@ public class KeyguardManager {
 
         }
     }
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:09:00 +0800
+ * fingerprint add by sileadinc
+ */
+    public void dismissKeyguard() {
+        try {
+            mWM.dismissKeyguard();
+        } catch (RemoteException ex) {
+        }
+    }
+// End of Vanzo:hanshengpeng
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +51,11 @@ class Caches;
 
 // Debug
 #if DEBUG_PATHS
-    #define PATH_LOGD(...) ALOGD(__VA_ARGS__)
+    #define PATH_LOGD(...) \
+    {                            \
+        if (g_HWUI_debug_paths) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define PATH_LOGD(...)
 #endif
@@ -310,6 +319,9 @@ private:
 
     Vector<path_pair_t> mGarbage;
     mutable Mutex mLock;
+
+    /// M: do not cache path if dirty in one DrawFrame
+    Vector<PathDescription> mNonCachePath;
 }; // class PathCache
 
 }; // namespace uirenderer

@@ -64,6 +64,9 @@ public:
     DrawModifiers mDrawModifiers;
     float mAlpha;
     const RoundRectClipState* mRoundRectClipState;
+
+    /// M: [ALPS01873597] we have to save previous ClipRect for complex clip region (StatefulBaseRenderer::clipPath)
+    Rect mPrevClipRect;
 };
 
 class OpStatePair {

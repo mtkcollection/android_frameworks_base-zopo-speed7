@@ -79,7 +79,8 @@ public class ImageWallpaper extends WallpaperService {
         //noinspection PointlessBooleanExpression,ConstantConditions
         if (FIXED_SIZED_SURFACE && USE_OPENGL) {
             if (!isEmulator()) {
-                mIsHwAccelerated = ActivityManager.isHighEndGfx();
+                ///M: Use GPU rendering even low RAM for improving UX
+                mIsHwAccelerated = ActivityManager.isHighEndGfx() || SystemProperties.getBoolean("ro.config.low_ram", true);
             }
         }
     }

@@ -505,7 +505,7 @@
     <string name="permdesc_readContacts" product="tablet" msgid="5294866856941149639">"Tillader, at appen kan læse data om de kontaktpersoner, der er gemt på din tablet, f.eks. hvor ofte du har ringet til, sendt e-mail til eller på anden måde kommunikeret med bestemte personer. Med denne tilladelse kan apps gemme dine kontaktdata, og skadelige apps kan dele kontaktdata uden din viden."</string>
     <string name="permdesc_readContacts" product="tv" msgid="1839238344654834087">"Giver appen lov til at læse data om dine kontaktpersoner, der er gemt på dit tv, herunder hvor ofte du har ringet, e-mailet eller på andre måder kommunikeret med bestemte personer. Denne tilladelse gør det muligt for apps at gemme dine kontaktoplysninger, og ondsindede apps kan dele kontaktoplysninger uden din viden."</string>
     <string name="permdesc_readContacts" product="default" msgid="8440654152457300662">"Tillader, at appen kan læse data om de kontaktpersoner, der er gemt på din telefon, f.eks. hvor ofte du har ringet til, sendt e-mail til eller på anden måde kommunikeret med bestemte personer. Med denne tilladelse kan apps gemme dine kontaktdata, og skadelige apps kan dele kontaktdata uden din viden."</string>
-    <string name="permlab_writeContacts" msgid="5107492086416793544">"ændre dine kontaktpersoner"</string>
+    <string name="permlab_writeContacts" msgid="5107492086416793544">"at ændre dine kontaktpersoner"</string>
     <string name="permdesc_writeContacts" product="tablet" msgid="897243932521953602">"Tillader, at appen kan ændre data om de kontaktpersoner, der er gemt på din tablet, f.eks. hvor ofte du har ringet til dem, sendt dem en e-mail eller på anden måde kommunikeret med bestemte kontaktpersoner. Med denne tilladelse kan apps slette kontaktoplysninger."</string>
     <string name="permdesc_writeContacts" product="tv" msgid="5438230957000018959">"Giver appen lov til at ændre data om dine kontaktpersoner, der er gemt på dit tv, herunder hvor ofte du har ringet, e-mailet eller på anden måde kommunikeret med bestemte kontaktpersoner. Denne tilladelse gør det muligt for apps at slette kontaktoplysninger."</string>
     <string name="permdesc_writeContacts" product="default" msgid="589869224625163558">"Tillader, at appen kan ændre data om de kontaktpersoner, der er gemt på din telefon, f.eks. hvor ofte du har ringet til dem, sendt en e-mail til dem eller på anden måde kommunikeret med bestemte kontaktpersoner. Med denne tilladelse kan apps slette kontaktoplysninger."</string>
@@ -1341,7 +1341,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"Log ind på Wi-Fi-netværket"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"Log ind på netværk"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <skip />
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"Kunne ikke oprette forbindelse til Wi-Fi"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" har en dårlig internetforbindelse."</string>
@@ -1601,6 +1601,8 @@
     <string name="storage_internal" msgid="4891916833657929263">"Internt lager"</string>
     <string name="storage_sd_card" msgid="3282948861378286745">"SD-kort"</string>
     <string name="storage_usb" msgid="3017954059538517278">"USB-lager"</string>
+    <string name="storage_phone">Telefonhukommelse</string>
+    <string name="storage_external_usb">Ekstern USB-hukommelse</string>
     <string name="extract_edit_menu_button" msgid="8940478730496610137">"Rediger"</string>
     <string name="data_usage_warning_title" msgid="1955638862122232342">"Advarsel om dataforbrug"</string>
     <string name="data_usage_warning_body" msgid="2814673551471969954">"Tryk for at se brug og indstill."</string>
@@ -1852,6 +1854,8 @@
     <item quantity="one" msgid="597194865053253679">"I én time (indtil <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
     <item quantity="other" msgid="2827214920627669898">"I %1$d timer (indtil <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
   </plurals>
+    <string name="storage_ic_usb1">Ekstern IC-USB lagerenhed1</string>
+    <string name="storage_ic_usb2">Ekstern IC-USB lagerenhed2</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"I ét minut"</item>
     <item quantity="other" msgid="6924190729213550991">"I %d minutter"</item>

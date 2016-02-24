@@ -282,6 +282,10 @@ private:
     // This is *NOT* thread-safe, and should therefore only be tracking
     // mDisplayListData, not mStagingDisplayListData.
     uint32_t mParentCount;
+
+    /// M: [ALPS01902992] Destroying mDisplayListData may be called from the GC thread, the finalizer thread,
+    /// or render thread, add lock to protect it
+    mutable Mutex mLock;
 }; // class RenderNode
 
 } /* namespace uirenderer */

@@ -446,6 +446,7 @@
   <java-symbol type="string" name="ColpMmi" />
   <java-symbol type="string" name="ColrMmi" />
   <java-symbol type="string" name="CwMmi" />
+  <java-symbol type="string" name="kg_text_message_separator" />
   <java-symbol type="string" name="Midnight" />
   <java-symbol type="string" name="Noon" />
   <java-symbol type="string" name="PinMmi" />
@@ -888,6 +889,7 @@
   <java-symbol type="string" name="user_switched" />
   <java-symbol type="string" name="user_switching_message" />
   <java-symbol type="string" name="volume_alarm" />
+  <java-symbol type="string" name="volume_unknown" />
   <java-symbol type="string" name="volume_icon_description_bluetooth" />
   <java-symbol type="string" name="volume_icon_description_incall" />
   <java-symbol type="string" name="volume_icon_description_media" />
@@ -1529,6 +1531,7 @@
   <java-symbol type="string" name="global_action_lockdown" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
+  <java-symbol type="string" name="lockscreen_missing_sim_message_short" />
   <java-symbol type="style" name="Animation.LockScreen" />
   <java-symbol type="style" name="Theme.Dialog.RecentApplications" />
   <java-symbol type="style" name="Theme.ExpandedMenu" />
@@ -1874,6 +1877,8 @@
   <java-symbol type="style" name="Animation.RecentApplications" />
   <java-symbol type="integer" name="dock_enter_exit_duration" />
 
+<java-symbol type="string" name="storage_external_usb" />
+
   <!-- ImfTest -->
   <java-symbol type="layout" name="auto_complete_list" />
 
@@ -1962,12 +1967,42 @@
   <java-symbol type="drawable" name="ic_media_video_poster" />
   <java-symbol type="string" name="config_webViewPackageName" />
 
+  <!-- From VoluemPanel -->
+  <java-symbol type="drawable" name="ic_volume_small" />
+  <java-symbol type="drawable" name="ic_volume_off_small" />
+
   <!-- From SubtitleView -->
   <java-symbol type="dimen" name="subtitle_corner_radius" />
   <java-symbol type="dimen" name="subtitle_shadow_radius" />
   <java-symbol type="dimen" name="subtitle_shadow_offset" />
   <java-symbol type="dimen" name="subtitle_outline_width" />
+  
+  <!-- From MountService -->
+  <java-symbol type="string" name="storage_internal" />
+  <java-symbol type="string" name="storage_sd_card" />
+  <java-symbol type="string" name="storage_phone" />
 
+<!-- Vanzo:tanglei on: Wed, 21 Jan 2015 11:47:03 +0800
+-->
+  <!-- For Power Reboot -->
+  <java-symbol type="drawable" name="ic_lock_reboot" />
+  <java-symbol type="string" name="global_action_reboot" />
+  <java-symbol type="string" name="reboot_confirm_question" />
+  <java-symbol type="string" name="reboot_confirm" />
+
+  <!-- For Smart Wake -->
+  <java-symbol type="drawable" name="smart_wake_up" />
+  <java-symbol type="drawable" name="smart_wake_c" />
+  <java-symbol type="drawable" name="smart_wake_e" />
+  <java-symbol type="drawable" name="smart_wake_m" />
+  <java-symbol type="drawable" name="smart_wake_o" />
+  <java-symbol type="drawable" name="smart_wake_reversal_o" />
+  <java-symbol type="drawable" name="smart_wake_w" />
+  <java-symbol type="array" name="smart_wake_file" />
+
+  <!-- For hide apps-->
+  <java-symbol type="array" name="hide_apps" />
+<!-- End of Vanzo:tanglei -->
   <java-symbol type="attr" name="nestedScrollingEnabled" />
 
   <java-symbol type="style" name="TextAppearance.Holo.TimePicker.TimeLabel" />
@@ -2157,4 +2192,23 @@
   <java-symbol type="bool" name="config_use_sim_language_file" />
   <java-symbol type="bool" name="config_LTE_eri_for_network_name" />
   <java-symbol type="bool" name="config_defaultInTouchMode" />
+<!-- Vanzo:yinjun on: Wed, 11 Mar 2015 17:54:52 +0800
+for screenshot
+-->
+  <java-symbol type="string" name="global_action_shotscreen" />
+  <java-symbol type="drawable" name="ic_lock_shotscreen" />
+  <!-- add for data connection -->
+  <java-symbol type="drawable" name="ic_qs_mobile_connection" />
+  <java-symbol type="drawable" name="ic_qs_mobile_conn_off" />
+  <java-symbol type="string" name="global_actions_toggle_dataconnection_mode" />
+  <java-symbol type="string" name="global_actions_dataconnection_mode_on_status" />
+  <java-symbol type="string" name="global_actions_dataconnection_mode_off_status" />
+  <java-symbol type="drawable" name="ic_qs_wifi_enable" />
+  <java-symbol type="drawable" name="ic_qs_wifi_off" />
+  <java-symbol type="string" name="global_actions_toggle_wifi_mode" />
+  <java-symbol type="string" name="global_actions_wifi_mode_on_status" />
+  <java-symbol type="string" name="global_actions_wifi_mode_off_status" />
+  <java-symbol type="string" name="global_actions_toggle_longclick_notice" />
+  <java-symbol type="raw" name="volumekey" />
+<!-- End of Vanzo: yinjun -->
 </resources>

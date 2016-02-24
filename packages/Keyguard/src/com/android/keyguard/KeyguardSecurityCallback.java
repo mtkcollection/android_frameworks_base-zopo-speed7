@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +19,8 @@
  * limitations under the License.
  */
 package com.android.keyguard;
+
+import com.android.keyguard.KeyguardHostView.OnDismissAction;
 
 public interface KeyguardSecurityCallback {
 
@@ -44,5 +51,18 @@ public interface KeyguardSecurityCallback {
      * Shows the backup security for the current method.  If none available, this call is a no-op.
      */
     void showBackupSecurity();
+
+
+    /**
+     * M: Mediatek add for voice unlock.
+     * @return whether has DismissAction
+     */
+    boolean hasOnDismissAction();
+
+    /**
+     * Sets an action to perform after the user successfully enters their credentials.
+     * @param action
+     */
+    void setOnDismissAction(OnDismissAction action);
 
 }

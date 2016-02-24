@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +38,13 @@
 #include "RenderThread.h"
 
 #define FUNCTOR_PROCESS_DELAY 4
+
+// Debug
+#if MTK_ENG_BUILD
+    #define CC_LOGD(...) ALOGD(__VA_ARGS__)
+#else
+    #define CC_LOGD(...)
+#endif
 
 namespace android {
 namespace uirenderer {
@@ -108,6 +120,7 @@ private:
     // TODO: Replace with something better for layer & other GL object
     // lifecycle tracking
     friend class android::uirenderer::RenderState;
+    friend class RenderProxy;
 
     void setSurface(ANativeWindow* window);
     void swapBuffers();

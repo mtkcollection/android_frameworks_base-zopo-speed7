@@ -3152,7 +3152,7 @@ public final class BatteryStatsImpl extends BatteryStats {
                 realElapsedRealtimeMs = timestampNs / (1000*1000);
                 long lastUpdateTimeMs = mMobileRadioActiveStartTime;
                 if (realElapsedRealtimeMs < lastUpdateTimeMs) {
-                    Slog.wtf(TAG, "Data connection inactive timestamp " + realElapsedRealtimeMs
+                    Slog.w(TAG, "Data connection inactive timestamp " + realElapsedRealtimeMs
                             + " is before start time " + lastUpdateTimeMs);
                     realElapsedRealtimeMs = elapsedRealtime;
                 } else if (realElapsedRealtimeMs < elapsedRealtime) {

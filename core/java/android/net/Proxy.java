@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,18 @@ import java.net.URI;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+///M: Support MoM checking @{
+import android.os.Binder;
+
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.mom.SubPermissions;
+
+import java.net.Socket;
+import java.net.SocketCheckHandler;
+import org.apache.http.client.HttpRequestCheckHandler;
+import org.apache.http.impl.client.AbstractHttpClient;
+///@}
 
 /**
  * A convenience class for accessing the user and default proxy
@@ -209,6 +226,10 @@ public final class Proxy {
     public static final HttpHost getPreferredHttpHost(Context context,
             String url) {
         java.net.Proxy prefProxy = getProxy(context, url);
+
+        /// M: debug logging
+        Log.d(TAG, "prefProxy:" + prefProxy);
+
         if (prefProxy.equals(java.net.Proxy.NO_PROXY)) {
             return null;
         } else {
@@ -275,6 +296,14 @@ public final class Proxy {
             pacFileUrl = p.getPacFileUrl();
         }
         setHttpProxySystemProperty(host, port, exclList, pacFileUrl);
+
+        ///M: Add by MTK @{
+        if (MobileManagerUtils.isSupported()) {
+            Log.d(TAG, "setHttpRequestCheckHandler");
+            AbstractHttpClient.setHttpRequestCheckHandler(new DefaultHttpRequestCheckHandler());
+            Socket.setSocketMomCheckHandler(new DefaultSocketMomCheckHandler());
+        }
+        ///@}
     }
 
     /** @hide */
@@ -309,4 +338,38 @@ public final class Proxy {
             ProxySelector.setDefault(sDefaultProxySelector);
         }
     }
+
+    ///M: Support MoM checking @{
+    private static class DefaultHttpRequestCheckHandler implements HttpRequestCheckHandler {
+
+        DefaultHttpRequestCheckHandler() {
+            super();
+        }
+
+        public boolean checkMmsSendRequest() {
+            Log.v(TAG, "checkCtaPermission");
+            return MobileManagerUtils.checkPermission(SubPermissions.SEND_MMS,
+                                                    Binder.getCallingUid());
+        }
+
+        public boolean checkEmailSendRequest() {
+            Log.v(TAG, "checkCtaPermission for email");
+            return MobileManagerUtils.checkPermission(SubPermissions.SEND_EMAIL,
+                                                    Binder.getCallingUid());
+        }
+
+    }
+
+    private static class DefaultSocketMomCheckHandler implements SocketCheckHandler {
+
+        DefaultSocketMomCheckHandler() {
+            super();
+        }
+
+        public boolean checkEmailSendRequest() {
+            return MobileManagerUtils.checkPermission(SubPermissions.SEND_EMAIL,
+                                                    Binder.getCallingUid());
+        }
+    }
+    ///@}
 }

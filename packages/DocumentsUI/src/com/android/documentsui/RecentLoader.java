@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +33,9 @@ import android.database.MatrixCursor;
 import android.database.MergeCursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsContract.Root;
@@ -51,6 +59,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+
+/// M: Add to support drm
+import com.mediatek.drm.OmaDrmStore;
 
 public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
     private static final boolean LOGD = true;
@@ -89,6 +100,19 @@ public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
     private volatile boolean mFirstPassDone;
 
     private DirectoryResult mResult;
+
+    /// M: add to support drm
+    private int mDrmLevel;
+
+    /// M: FOR ALPS01480274 @{
+    private static final int CONTENT_CHANGE = 1;
+    private Handler mUiHandler = new Handler(Looper.getMainLooper()) {
+        public void handleMessage(Message msg) {
+            Log.d(TAG, "onContentChanged");
+            onContentChanged();
+        }
+    };
+    /// @}
 
     // TODO: create better transfer of ownership around cursor to ensure its
     // closed in all edge cases.
@@ -141,9 +165,11 @@ public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
             set(mWithRoot);
 
             mFirstPassLatch.countDown();
-            if (mFirstPassDone) {
-                onContentChanged();
+            /// M: FOR ALPS01480274 @{
+            if (mFirstPassDone && !mUiHandler.hasMessages(CONTENT_CHANGE)) {
+                mUiHandler.sendEmptyMessage(CONTENT_CHANGE);
             }
+            /// @}
         }
 
         @Override
@@ -156,6 +182,9 @@ public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
         super(context);
         mRoots = roots;
         mState = state;
+
+        /// M: add to support drm
+        mDrmLevel = ((DocumentsActivity) context).getIntent().getIntExtra(OmaDrmStore.DrmExtra.EXTRA_DRM_LEVEL, -1);
 
         // Keep clients around on high-RAM devices, since we'd be spinning them
         // up moments later to fetch thumbnails anyway.
@@ -215,6 +244,11 @@ public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
                     throw new RuntimeException(e);
                 } catch (ExecutionException e) {
                     // We already logged on other side
+                } catch (IllegalStateException e) {
+                    /// M: cursor get from task may have been closed, this happen when recent loader have been
+                    /// reset(cursor will be closed now on main thread) but loader thread still loading(may access
+                    /// this have been closed cursor), so we need catch this type IllegalStateException.
+                    Log.w(TAG, "cursor may have been closed when recent loader reset", e);
                 }
             } else {
                 allDone = false;
@@ -242,7 +276,8 @@ public class RecentLoader extends AsyncTaskLoader<DirectoryResult> {
             merged = new MatrixCursor(new String[0]);
         }
 
-        final SortingCursorWrapper sorted = new SortingCursorWrapper(merged, result.sortOrder) {
+        /// M: add to support drm, only show these drm files match given drm level.
+        final SortingCursorWrapper sorted = new SortingCursorWrapper(merged, result.sortOrder, mDrmLevel) {
             @Override
             public Bundle getExtras() {
                 return extras;

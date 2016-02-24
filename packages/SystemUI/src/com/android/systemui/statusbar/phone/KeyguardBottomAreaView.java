@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +74,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         AccessibilityController.AccessibilityStateChangedCallback, View.OnLongClickListener {
 
     final static String TAG = "PhoneStatusBar/KeyguardBottomAreaView";
+    private final boolean DEBUG = true ;
 
     private static final Intent SECURE_CAMERA_INTENT =
             new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE)
@@ -194,15 +200,27 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         int indicationBottomMargin = getResources().getDimensionPixelSize(
                 R.dimen.keyguard_indication_margin_bottom);
         MarginLayoutParams mlp = (MarginLayoutParams) mIndicationText.getLayoutParams();
+
+        ///M: Since we need to add a ECC button below Indication Text,
+        ///   we remove this part code due to it will make a significant/weird space between Indication Text & ECC Button.
+        /*
         if (mlp.bottomMargin != indicationBottomMargin) {
             mlp.bottomMargin = indicationBottomMargin;
             mIndicationText.setLayoutParams(mlp);
-        }
+        }*/
 
         // Respect font size setting.
         mIndicationText.setTextSize(TypedValue.COMPLEX_UNIT_PX,
                 getResources().getDimensionPixelSize(
                         com.android.internal.R.dimen.text_size_small_material));
+
+        /// M: Fix ALPS01868023, reload resources when locale changed.
+        getCameraView().setContentDescription(
+            getResources().getString(R.string.accessibility_camera_button)) ;
+        getLockIcon().setContentDescription(
+            getResources().getString(R.string.accessibility_unlock_button)) ;
+        getPhoneView().setContentDescription(
+            getResources().getString(R.string.accessibility_phone_button)) ;
     }
 
     public void setActivityStarter(ActivityStarter activityStarter) {
@@ -220,7 +238,6 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
 
     public void setPhoneStatusBar(PhoneStatusBar phoneStatusBar) {
         mPhoneStatusBar = phoneStatusBar;
-        updateCameraVisibility(); // in case onFinishInflate() was called too early
     }
 
     private Intent getCameraIntent() {
@@ -232,10 +249,6 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     }
 
     private void updateCameraVisibility() {
-        if (mCameraImageView == null) {
-            // Things are not set up yet; reply hazy, ask again later
-            return;
-        }
         ResolveInfo resolved = mContext.getPackageManager().resolveActivityAsUser(getCameraIntent(),
                 PackageManager.MATCH_DEFAULT_ONLY,
                 mLockPatternUtils.getCurrentUser());
@@ -258,7 +271,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     private boolean isCameraDisabledByDpm() {
         final DevicePolicyManager dpm =
                 (DevicePolicyManager) getContext().getSystemService(Context.DEVICE_POLICY_SERVICE);
-        if (dpm != null && mPhoneStatusBar != null) {
+        if (dpm != null) {
             try {
                 final int userId = ActivityManagerNative.getDefault().getCurrentUser().id;
                 final int disabledFlags = dpm.getKeyguardDisabledFeatures(null, userId);
@@ -336,14 +349,20 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     }
 
     public void launchCamera() {
+        if (DEBUG) Log.d(TAG, "launchCamera() is called.") ;
+
         mFlashlightController.killFlashlight();
+
         Intent intent = getCameraIntent();
         boolean wouldLaunchResolverActivity = PreviewInflater.wouldLaunchResolverActivity(
                 mContext, intent, mLockPatternUtils.getCurrentUser());
         if (intent == SECURE_CAMERA_INTENT && !wouldLaunchResolverActivity) {
+            if (DEBUG) Log.d(TAG, "launchCamera() - launch SECURE_CAMERA_INTENT") ;
+            ///M: [ALPS01844520] Insecure Camera may be resumed if no CLEAR_TOP attribute.
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             mContext.startActivityAsUser(intent, UserHandle.CURRENT);
         } else {
-
+            if (DEBUG) Log.d(TAG, "launchCamera() - launch INSECURE_CAMERA_INTENT") ;
             // We need to delay starting the activity because ResolverActivity finishes itself if
             // launched behind lockscreen.
             mActivityStarter.startActivity(intent, false /* dismissShade */);
@@ -351,7 +370,12 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     }
 
     public void launchPhone() {
+        if (DEBUG) {
+            Log.d(TAG, "launchPhone() is called.") ;
+        }
+
         final TelecomManager tm = TelecomManager.from(mContext);
+
         if (tm.isInCall()) {
             AsyncTask.execute(new Runnable() {
                 @Override

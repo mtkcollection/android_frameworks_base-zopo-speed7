@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +33,7 @@ import android.graphics.Region.Op;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
@@ -37,6 +43,8 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import com.android.internal.R;
 
 public abstract class AbsSeekBar extends ProgressBar {
+    private static final String LOG_TAG = "AbsSeekBar";
+
     private final Rect mTempRect = new Rect();
 
     private Drawable mThumb;
@@ -675,6 +683,7 @@ public abstract class AbsSeekBar extends ProgressBar {
      * This is called when the user has started touching this widget.
      */
     void onStartTrackingTouch() {
+        Log.d(LOG_TAG, "onStartTrackingTouch");
         mIsDragging = true;
     }
 
@@ -683,6 +692,7 @@ public abstract class AbsSeekBar extends ProgressBar {
      * canceled.
      */
     void onStopTrackingTouch() {
+        Log.d(LOG_TAG, "onStopTrackingTouch");
         mIsDragging = false;
     }
 
@@ -779,6 +789,20 @@ public abstract class AbsSeekBar extends ProgressBar {
             // for invalidation won't be the actual bounds we want invalidated,
             // so just invalidate this whole view.
             invalidate();
+        }
+    }
+
+    @Override
+    public void invalidateDrawable(Drawable dr) {
+        if (dr == mThumb) {
+            final Rect dirty = dr.getBounds();
+            final int scrollX = mScrollX + mPaddingLeft - mThumbOffset;
+            final int scrollY = mScrollY + mPaddingTop;
+
+            invalidate(dirty.left + scrollX, dirty.top + scrollY,
+                    dirty.right + scrollX, dirty.bottom + scrollY);
+        } else {
+            super.invalidateDrawable(dr);
         }
     }
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +34,13 @@
 #include "../LayerRenderer.h"
 #include "../OpenGLRenderer.h"
 #include "../Stencil.h"
+#include <gui/Surface.h>
+
+/// M: PerfBoost include
+#include <dlfcn.h>
+#include "PerfServiceNative.h"
+void (*perfNotifyFrameUpdate)(int) = NULL;
+typedef void (*notify_frame_update)(int);
 
 #define TRIM_MEMORY_COMPLETE 80
 #define TRIM_MEMORY_UI_HIDDEN 20
@@ -48,11 +60,23 @@ CanvasContext::CanvasContext(RenderThread& thread, bool translucent,
         , mCanvas(NULL)
         , mHaveNewSurface(false)
         , mRootRenderNode(rootRenderNode) {
+    CC_LOGD("CanvasContext() %p", this);
     mAnimationContext = contextFactory->createAnimationContext(mRenderThread.timeLord());
     mRenderThread.renderState().registerCanvasContext(this);
+
+    /// M: PerfBoost
+    void *handle, *func;
+    handle = dlopen("libperfservicenative.so", RTLD_NOW);
+
+    func = dlsym(handle, "PerfServiceNative_notifyFrameUpdate");
+    perfNotifyFrameUpdate = reinterpret_cast<notify_frame_update>(func);
+    if (perfNotifyFrameUpdate == NULL) {
+        ALOGE("PerfServiceNative_notifyFrameUpdate init fail!");
+    }
 }
 
 CanvasContext::~CanvasContext() {
+    CC_LOGD("~CanvasContext() %p", this);
     destroy();
     delete mAnimationContext;
     mRenderThread.renderState().unregisterCanvasContext(this);
@@ -112,10 +136,18 @@ void CanvasContext::setSwapBehavior(SwapBehavior swapBehavior) {
 }
 
 bool CanvasContext::initialize(ANativeWindow* window) {
+    ATRACE_CALL_L1();
+    ALOGD("CanvasContext() %p initialize %p", this, window);
     setSurface(window);
     if (mCanvas) return false;
     mCanvas = new OpenGLRenderer(mRenderThread.renderState());
     mCanvas->initProperties();
+
+    /// M: allocateBuffer in render thread so main thread won't be blocked
+    if (window) {
+        Surface *surf = static_cast<Surface*>(window);
+        TIME_LOG("allocateBuffers", surf->allocateBuffers());
+    }
     return true;
 }
 
@@ -153,6 +185,13 @@ void CanvasContext::processLayerUpdate(DeferredLayerUpdater* layerUpdater) {
 }
 
 void CanvasContext::prepareTree(TreeInfo& info) {
+#if defined(MTK_DEBUG_RENDERER)
+    /// M: check property to enable more detail in systrace each frame
+    char value[PROPERTY_VALUE_MAX];
+    property_get("debug.hwui.log.systrace", value, "");
+    g_HWUI_debug_systrace = (strcmp(value, "1") == 0) ? 1 : 0;
+#endif
+
     mRenderThread.removeFrameCallback(this);
 
     info.damageAccumulator = &mDamageAccumulator;
@@ -177,8 +216,8 @@ void CanvasContext::prepareTree(TreeInfo& info) {
     // TODO: This query is moderately expensive, investigate adding some sort
     // of fast-path based off when we last called eglSwapBuffers() as well as
     // last vsync time. Or something.
-    mNativeWindow->query(mNativeWindow.get(),
-            NATIVE_WINDOW_CONSUMER_RUNNING_BEHIND, &runningBehind);
+    TIME_LOG("nativeWindowQuery", mNativeWindow->query(mNativeWindow.get(),
+            NATIVE_WINDOW_CONSUMER_RUNNING_BEHIND, &runningBehind));
     info.out.canDrawThisFrame = !runningBehind;
 
     if (info.out.hasAnimations || !info.out.canDrawThisFrame) {
@@ -202,6 +241,9 @@ void CanvasContext::notifyFramePending() {
 void CanvasContext::draw() {
     LOG_ALWAYS_FATAL_IF(!mCanvas || mEglSurface == EGL_NO_SURFACE,
             "drawRenderNode called on a context with no canvas or surface!");
+
+    /// M: PerfBoost
+    if(perfNotifyFrameUpdate) perfNotifyFrameUpdate(0);
 
     profiler().markPlaybackStart();
 
@@ -351,7 +393,12 @@ void CanvasContext::trimMemory(RenderThread& thread, int level) {
         Caches::getInstance().flush(Caches::kFlushMode_Full);
         thread.eglManager().destroy();
     } else if (level >= TRIM_MEMORY_UI_HIDDEN) {
+#ifdef MTK_HWUI_RAM_OPTIMIZE
+        CC_LOGD("flush aggressively!!");
+        Caches::getInstance().flush(Caches::kFlushMode_Full);
+#else
         Caches::getInstance().flush(Caches::kFlushMode_Moderate);
+#endif
     }
 }
 

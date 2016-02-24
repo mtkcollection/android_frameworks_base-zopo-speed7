@@ -95,6 +95,7 @@ void RenderState::getViewport(GLsizei* outWidth, GLsizei* outHeight) {
 
 void RenderState::bindFramebuffer(GLuint fbo) {
     if (mFramebuffer != fbo) {
+        CC_LOGD("bindFramebuffer %p, old %d, new %d", this, mFramebuffer, fbo);
         mFramebuffer = fbo;
         glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
     }
@@ -174,6 +175,10 @@ public:
         mObject->decStrong(0);
         mObject = 0;
         delete this;
+    }
+    
+    virtual const char* name() {
+        return "DecStrongTask";
     }
 
 private:

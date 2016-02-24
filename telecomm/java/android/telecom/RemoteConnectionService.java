@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +22,7 @@
 package android.telecom;
 
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.IBinder.DeathRecipient;
 import android.os.RemoteException;
@@ -306,6 +312,53 @@ final class RemoteConnectionService {
 
             mOurConnectionServiceImpl.addRemoteExistingConnection(remoteConnction);
         }
+
+        /* M: CC part start */
+        @Override
+        public void notifyConnectionLost(String connectionId) {
+            // not supported for remote connections.
+        }
+
+        @Override
+        public void notifyActionFailed(String connectionId, int action) {
+            // not supported for remote connections.
+        }
+
+        @Override
+        public void notifySSNotificationToast(String callId, int notiType, int type, int code, String number, int index) {
+            // not supported for remote connections.
+        }
+
+        @Override
+        public void notifyNumberUpdate(String callId, String number) {
+            // not supported for remote connections.
+        }
+
+        @Override
+        public void notifyIncomingInfoUpdate(String callId, int type, String alphaid, int cli_validity) {
+            // not supported for remote connections.
+        }
+
+        @Override
+        public void notifyCdmaCallAccepted(String connectionId) {
+            // not supported for remote connections.
+        }
+        /* M: CC part end */
+
+        /// M: For Volte @{
+        @Override
+        public void updateExtras(String callId, Bundle bundle) {
+            // TODO: maybe should add function here
+        }
+
+        @Override
+        public void handleCreateConferenceComplete(
+                String conferenceId,
+                ConnectionRequest request,
+                ParcelableConference parcelConference) {
+            // TODO: maybe should add function here
+        }
+        /// @}
     };
 
     private final ConnectionServiceAdapterServant mServant =

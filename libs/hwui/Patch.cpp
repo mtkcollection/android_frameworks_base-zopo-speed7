@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,6 +87,20 @@ TextureVertex* Patch::createMesh(const float bitmapWidth, const float bitmapHeig
 
     const int32_t* xDivs = patch->getXDivs();
     const int32_t* yDivs = patch->getYDivs();
+
+#if DEBUG_PATCHES_VERTICES
+    String8 xDivString;
+    String8 yDivString;
+    for (uint32_t i=0; i<xCount; i++) {
+        xDivString.appendFormat("%d ", xDivs[i]);
+    }
+    for (uint32_t i=0; i<yCount; i++) {
+        yDivString.appendFormat("%d ", yDivs[i]);
+    }
+    PATCH_LOGD("NinePatch: (%.2f,%.2f)->(%.2f,%.2f) numXDivs=%d, numYDivs=%d, numColors=%d, padding=(%d,%d,%d,%d), xDivs=[%s], yDivs[%s]",
+            bitmapWidth, bitmapHeight, width, height, patch->numXDivs, patch->numYDivs, patch->numColors,
+            patch->paddingLeft, patch->paddingTop, patch->paddingRight, patch->paddingBottom, xDivString.string(), yDivString.string());
+#endif
 
     const uint32_t xStretchCount = (xCount + 1) >> 1;
     const uint32_t yStretchCount = (yCount + 1) >> 1;

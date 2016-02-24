@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,7 @@ import android.content.Context;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.Slog;
 import android.view.KeyEvent;
 import android.view.View;
@@ -31,6 +37,9 @@ import com.android.internal.policy.IKeyguardShowCallback;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.ViewMediatorCallback;
+
+import com.mediatek.keyguard.PowerOffAlarm.PowerOffAlarmManager ;
+import com.mediatek.keyguard.VoiceWakeup.VoiceWakeupManager ;
 
 import static com.android.keyguard.KeyguardHostView.OnDismissAction;
 
@@ -50,6 +59,7 @@ public class StatusBarKeyguardViewManager {
     private static final long NAV_BAR_SHOW_DELAY_BOUNCER = 320;
 
     private static String TAG = "StatusBarKeyguardViewManager";
+    private final boolean DEBUG = true ;
 
     private final Context mContext;
 
@@ -96,6 +106,7 @@ public class StatusBarKeyguardViewManager {
      * lazily.
      */
     public void show(Bundle options) {
+        if (DEBUG) Log.d(TAG, "show() is called.") ;
         mShowing = true;
         mStatusBarWindowManager.setKeyguardShowing(true);
         reset();
@@ -106,12 +117,15 @@ public class StatusBarKeyguardViewManager {
      * {@link KeyguardBouncer#needsFullscreenBouncer()}.
      */
     private void showBouncerOrKeyguard() {
-        if (mBouncer.needsFullscreenBouncer()) {
+        if (DEBUG) Log.d(TAG, "showBouncerOrKeyguard() is called.") ;
 
+        if (mBouncer.needsFullscreenBouncer()) {
+            if (DEBUG) Log.d(TAG, "needsFullscreenBouncer() is true, show \"Bouncer\" view directly.") ;
             // The keyguard might be showing (already). So we need to hide it.
             mPhoneStatusBar.hideKeyguard();
             mBouncer.show(true /* resetSecuritySelection */);
         } else {
+            if (DEBUG) Log.d(TAG, "needsFullscreenBouncer() is false, show \"Notification Keyguard\" view.") ;
             mPhoneStatusBar.showKeyguard();
             mBouncer.hide(false /* destroyView */);
             mBouncer.prepare();
@@ -119,17 +133,27 @@ public class StatusBarKeyguardViewManager {
     }
 
     private void showBouncer() {
+        showBouncer(false) ;
+    }
+
+    private void showBouncer(boolean authenticated) {
         if (mShowing) {
-            mBouncer.show(false /* resetSecuritySelection */);
+            mBouncer.show(false, authenticated);
         }
         updateStates();
     }
 
     public void dismissWithAction(OnDismissAction r, boolean afterKeyguardGone) {
+        if (DEBUG) {
+            Log.d(TAG, "dismissWithAction() - afterKeyguardGone = " + afterKeyguardGone) ;
+        }
         if (mShowing) {
             if (!afterKeyguardGone) {
+                Log.d(TAG, "dismissWithAction() - afterKeyguardGone = false," +
+                    "call showWithDismissAction") ;
                 mBouncer.showWithDismissAction(r);
             } else {
+                Log.d(TAG, "dismissWithAction() - afterKeyguardGone = true, call bouncer.show()") ;
                 mBouncer.show(false /* resetSecuritySelection */);
                 mAfterKeyguardGoneAction = r;
             }
@@ -141,6 +165,7 @@ public class StatusBarKeyguardViewManager {
      * Reset the state of the view.
      */
     public void reset() {
+        if (DEBUG) Log.d(TAG, "reset() is called, mShowing = " + mShowing + " ,mOccluded = " + mOccluded) ;
         if (mShowing) {
             if (mOccluded) {
                 mPhoneStatusBar.hideKeyguard();
@@ -167,6 +192,18 @@ public class StatusBarKeyguardViewManager {
     }
 
     private void callbackAfterDraw(final IKeyguardShowCallback callback) {
+        ///M: Fix ALPS01942841.
+        ///   The following code is only suitable for L MR0.
+        ///   This will cause issue for L MR1.
+        ///   Because show/hide scrim flow is moved to KeyguardServiceDelegate.
+        ///   hideScrim() will be called in onShown() flow.
+        ///   If keeping this L0 patch, hideScrim() will never be called.
+        /*if (PowerOffAlarmManager.isAlarmBoot() && !mBouncer.isContainerInflated()) {
+            Log.d(TAG, "callbackAfterDraw() - AlarmBoot, but Bouncer container not inflated yet." +
+                "Do not call callback to avoid turning on screen too early.") ;
+            return ;
+        }*/
+
         mContainer.post(new Runnable() {
             @Override
             public void run() {
@@ -180,10 +217,15 @@ public class StatusBarKeyguardViewManager {
     }
 
     public void verifyUnlock() {
+        ///M: fix ALPS01807921
+        ///   We make VerifyUnlock flow just the same as it in KK.
+        ///   This can prevent status unsynced.
+        show(null);
         dismiss();
     }
 
     public void setNeedsInput(boolean needsInput) {
+        Log.d(TAG, "setNeedsInput() - needsInput = " + needsInput) ;
         mStatusBarWindowManager.setKeyguardNeedsInput(needsInput);
     }
 
@@ -199,14 +241,22 @@ public class StatusBarKeyguardViewManager {
                         new Runnable() {
                             @Override
                             public void run() {
-                                mStatusBarWindowManager.setKeyguardOccluded(mOccluded);
-                                reset();
+                                ///M: [ALPS01807921]
+                                ///   mOccluded may be changed before the runnable is executed.
+                                if (mOccluded) {
+                                    Log.d(TAG, "setOccluded.run() - setKeyguardOccluded(true)") ;
+                                    mStatusBarWindowManager.setKeyguardOccluded(true);
+                                    reset();
+                                } else {
+                                    Log.d(TAG, "setOccluded.run() - mOccluded was set to false") ;
+                                }
                             }
                         });
                 return;
             }
         }
         mOccluded = occluded;
+        Log.d(TAG, "setOccluded() - setKeyguardOccluded(" + occluded + ")") ;
         mStatusBarWindowManager.setKeyguardOccluded(occluded);
         reset();
     }
@@ -233,7 +283,10 @@ public class StatusBarKeyguardViewManager {
     /**
      * Hides the keyguard view
      */
+
     public void hide(long startTime, final long fadeoutDuration) {
+        if (DEBUG) Log.d(TAG, "hide() is called.") ;
+
         mShowing = false;
 
         long uptimeMillis = SystemClock.uptimeMillis();
@@ -289,6 +342,7 @@ public class StatusBarKeyguardViewManager {
 
     private void executeAfterKeyguardGoneAction() {
         if (mAfterKeyguardGoneAction != null) {
+            Log.d(TAG, "executeAfterKeyguardGoneAction() is called") ;
             mAfterKeyguardGoneAction.onDismiss();
             mAfterKeyguardGoneAction = null;
         }
@@ -298,8 +352,15 @@ public class StatusBarKeyguardViewManager {
      * Dismisses the keyguard by going to the next screen or making it gone.
      */
     public void dismiss() {
-        if (mScreenOn) {
-            showBouncer();
+        dismiss(false) ;
+    }
+
+    public void dismiss(boolean authenticated) {
+        if (DEBUG) Log.d(TAG, "dismiss(authenticated = " + authenticated + ") is called." +
+             " mScreenOn = " + mScreenOn) ;
+        // VoiceWakeup will need to dismiss keyguard even if screen is off.
+        if (mScreenOn || VoiceWakeupManager.getInstance().isDismissAndLaunchApp()) {
+            showBouncer(authenticated);
         }
     }
 
@@ -323,10 +384,16 @@ public class StatusBarKeyguardViewManager {
      * @return whether the back press has been handled
      */
     public boolean onBackPressed() {
+        Log.d(TAG, "onBackPressed()") ;
         if (mBouncer.isShowing()) {
+            Log.d(TAG, "onBackPressed() - reset & return true") ;
             reset();
+
+            ///M : fix ALPS01852958, clear mAfterKeyguardGoneAction when leaving bouncer.
+            mAfterKeyguardGoneAction = null ;
             return true;
         }
+        Log.d(TAG, "onBackPressed() - reset & return false") ;
         return false;
     }
 
@@ -348,11 +415,16 @@ public class StatusBarKeyguardViewManager {
     private Runnable mMakeNavigationBarVisibleRunnable = new Runnable() {
         @Override
         public void run() {
+            Log.d(TAG, "mMakeNavigationBarVisibleRunnable - set nav bar VISIBLE.") ;
             mPhoneStatusBar.getNavigationBarView().setVisibility(View.VISIBLE);
         }
     };
 
-    private void updateStates() {
+    /**
+     * Update Navi-bar visibility, BACK key visibility, and notify ScrimController/PhoneStatusBar/StatusBarWindowManager that bouncer show/hide.
+     *
+     */
+    public void updateStates() {
         int vis = mContainer.getSystemUiVisibility();
         boolean showing = mShowing;
         boolean occluded = mOccluded;
@@ -369,11 +441,22 @@ public class StatusBarKeyguardViewManager {
         }
         if ((!(showing && !occluded) || bouncerShowing)
                 != (!(mLastShowing && !mLastOccluded) || mLastBouncerShowing) || mFirstUpdate) {
+            Log.d(TAG, "updateStates() - showing = " + showing
+                + ", mLastShowing = " + mLastShowing
+                + "\nupdateStates() - occluded = " + occluded
+                + "mLastOccluded = " + mLastOccluded
+                + "\nupdateStates() - bouncerShowing = " + bouncerShowing
+                + ", mLastBouncerShowing = " + mLastBouncerShowing
+                + "\nupdateStates() - mFirstUpdate = " + mFirstUpdate) ;
+
             if (mPhoneStatusBar.getNavigationBarView() != null) {
                 if (!(showing && !occluded) || bouncerShowing) {
+                    Log.d(TAG, "updateStates() - post to reveal navbar.") ;
                     mContainer.postOnAnimationDelayed(mMakeNavigationBarVisibleRunnable,
                             getNavBarShowDelay());
                 } else {
+                    Log.d(TAG, "updateStates() - set nav bar GONE"
+                        + " for showing notification keyguard.") ;
                     mContainer.removeCallbacks(mMakeNavigationBarVisibleRunnable);
                     mPhoneStatusBar.getNavigationBarView().setVisibility(View.GONE);
                 }
@@ -381,6 +464,7 @@ public class StatusBarKeyguardViewManager {
         }
 
         if (bouncerShowing != mLastBouncerShowing || mFirstUpdate) {
+            Log.d(TAG, "updateStates() - setBouncerShowing(" + bouncerShowing + ")") ;
             mStatusBarWindowManager.setBouncerShowing(bouncerShowing);
             mPhoneStatusBar.setBouncerShowing(bouncerShowing);
             mScrimController.setBouncerShowing(bouncerShowing);
@@ -439,4 +523,11 @@ public class StatusBarKeyguardViewManager {
     public boolean isInputRestricted() {
         return mViewMediatorCallback.isInputRestricted();
     }
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:05:53 +0800
+ * fingerprint add by sileadinc
+ */
+    public void showAutoDismissDialog(String msg, int timeout) {
+        mBouncer.showAutoDismissDialog(msg,timeout);
+    }
+// End of Vanzo:hanshengpeng
 }

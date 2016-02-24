@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +66,8 @@ import android.view.accessibility.AccessibilityManager;
 import com.android.systemui.R;
 import com.android.systemui.recents.AlternateRecentsComponent;
 import com.android.systemui.recents.Constants;
+import com.android.systemui.recents.model.Task;
+import com.mediatek.xlog.Xlog;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -75,6 +82,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class SystemServicesProxy {
     final static String TAG = "SystemServicesProxy";
+    /// M: For Debug
+    static final boolean DEBUG = true;
 
     final static BitmapFactory.Options sBitmapOptions;
 
@@ -150,6 +159,10 @@ public class SystemServicesProxy {
             ArrayList<ActivityManager.RecentTaskInfo> tasks =
                     new ArrayList<ActivityManager.RecentTaskInfo>();
             int count = Math.min(numLatestTasks, Constants.DebugFlags.App.SystemServicesProxyMockTaskCount);
+            if (DEBUG) {
+                Xlog.d(TAG, "getRecentTasks:count = " + count);
+            }
+
             for (int i = 0; i < count; i++) {
                 // Create a dummy component name
                 int packageIndex = i % Constants.DebugFlags.App.SystemServicesProxyMockPackageCount;
@@ -187,6 +200,9 @@ public class SystemServicesProxy {
 
         // Break early if we can't get a valid set of tasks
         if (tasks == null) {
+            if (DEBUG) {
+                Xlog.d(TAG, "getRecentTasks: getRecentTasksForUser is null");
+            }
             return new ArrayList<ActivityManager.RecentTaskInfo>();
         }
 
@@ -203,10 +219,21 @@ public class SystemServicesProxy {
             // tasks if it is not the first active task.
             boolean isExcluded = (t.baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
                     == Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
-            if (isExcluded && (isTopTaskHome || !isFirstValidTask)) {
+            if (DEBUG) {
+                Task.TaskKey taskKey = new Task.TaskKey(t.persistentId, t.baseIntent, t.userId,
+                    t.firstActiveTime, t.lastActiveTime);
+                Xlog.d(TAG, "getRecentTasks:TASK = " + taskKey.toString()
+                       + "/isExcluded = " + isExcluded
+                       + "/isTopTaskHome = " + isTopTaskHome
+                       + "/isFirstValidTask = " + isFirstValidTask
+                       + "/t.id = " + t.id);
+            }
+            /// M: [ALPS01794032] Remove all excluded task @{
+            if (isExcluded) {
                 iter.remove();
                 continue;
             }
+            /// M: [ALPS01794032] Remove all excluded task @}
             isFirstValidTask = false;
         }
 
@@ -215,7 +242,10 @@ public class SystemServicesProxy {
 
     /** Returns a list of the running tasks */
     public List<ActivityManager.RunningTaskInfo> getRunningTasks(int numTasks) {
-        if (mAm == null) return null;
+        if (mAm == null) {
+            Xlog.w(TAG, "getRunningTasks : AM is null");
+            return null;
+        }
         return mAm.getRunningTasks(numTasks);
     }
 
@@ -224,6 +254,10 @@ public class SystemServicesProxy {
         List<ActivityManager.RunningTaskInfo> tasks = getRunningTasks(1);
         if (!tasks.isEmpty()) {
             return tasks.get(0);
+        }
+
+        if (DEBUG) {
+            Xlog.w(TAG, "getTopMostTask : Task is Empty");
         }
         return null;
     }
@@ -296,7 +330,12 @@ public class SystemServicesProxy {
      */
     public static Bitmap getThumbnail(ActivityManager activityManager, int taskId) {
         ActivityManager.TaskThumbnail taskThumbnail = activityManager.getTaskThumbnail(taskId);
-        if (taskThumbnail == null) return null;
+        if (taskThumbnail == null) {
+            if (DEBUG) {
+                Xlog.d(TAG, "getThumbnail: getTaskThumbnail is null: " + taskId);
+            }
+            return null;
+        }
 
         Bitmap thumbnail = taskThumbnail.mainThumbnail;
         ParcelFileDescriptor descriptor = taskThumbnail.thumbnailFileDescriptor;
@@ -310,6 +349,9 @@ public class SystemServicesProxy {
             } catch (IOException e) {
             }
         }
+        if (DEBUG && thumbnail == null) {
+            Xlog.d(TAG, "getThumbnail: thumbnail is null");
+        }
         return thumbnail;
     }
 
@@ -317,7 +359,9 @@ public class SystemServicesProxy {
     public void moveTaskToFront(int taskId, ActivityOptions opts) {
         if (mAm == null) return;
         if (Constants.DebugFlags.App.EnableSystemServicesProxy) return;
-
+        if (DEBUG) {
+            Xlog.d(TAG, "moveTaskToFront : taskId : " + taskId);
+        }
         if (opts != null) {
             mAm.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME,
                     opts.toBundle());
@@ -542,7 +586,12 @@ public class SystemServicesProxy {
     public Bitmap takeScreenshot() {
         DisplayInfo di = new DisplayInfo();
         mDisplay.getDisplayInfo(di);
-        return SurfaceControl.screenshot(di.getNaturalWidth(), di.getNaturalHeight());
+
+        Bitmap screenshot = SurfaceControl.screenshot(di.getNaturalWidth(), di.getNaturalHeight());
+        if (DEBUG && screenshot == null) {
+            Xlog.d(TAG, "takeScreenshot: screenshot is null");
+        }
+        return screenshot;
     }
 
     /**

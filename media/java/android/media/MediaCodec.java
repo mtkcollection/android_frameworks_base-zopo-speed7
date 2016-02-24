@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -238,6 +243,8 @@ import java.util.Map;
  * {@link MediaCodec.CodecException#isTransient} do not return true at the same time.
  */
 final public class MediaCodec {
+    private static final String TAG = "MediaCodec";
+
     /**
      * Per buffer metadata includes an offset and size specifying
      * the range of valid data in the associated codec (output) buffer.
@@ -325,6 +332,12 @@ final public class MediaCodec {
      * after this, unless of course, {@link #flush} follows.
      */
     public static final int BUFFER_FLAG_END_OF_STREAM = 4;
+
+    /**
+     * @hide
+     * This indicated that the frame is marked as the interpolated-frame.
+     */
+    public static final int BUFFER_FLAG_INTERPOLATE_FRAME     = 32;	
 
     private EventHandler mEventHandler;
     private Callback mCallback;

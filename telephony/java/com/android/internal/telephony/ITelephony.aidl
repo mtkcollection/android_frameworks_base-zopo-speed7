@@ -354,8 +354,25 @@ interface ITelephony {
      */
      int getCallStateForSubscriber(int subId);
 
+    /**
+     * Returns the data activity.
+     */
      int getDataActivity();
+
+    /**
+     * Returns the data activity for a subId.
+     */
+     int getDataActivityForSubscriber(int subId);
+
+    /**
+     * Returns the data state.
+     */
      int getDataState();
+
+    /**
+     * Returns the data state for a subId.
+     */
+     int getDataStateForSubscriber(int subId);
 
     /**
      * Returns the current active phone type as integer.
@@ -553,7 +570,7 @@ interface ITelephony {
      *            is sent to the SIM.
      * @param data Data to be sent with the APDU.
      * @return The APDU response from the ICC card with the status appended at
-     *            the end.
+     *            the end. If an error occurs, an empty string is returned.
      */
     String iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
             int p1, int p2, int p3, String data);
@@ -571,7 +588,7 @@ interface ITelephony {
      *            is sent to the SIM.
      * @param data Data to be sent with the APDU.
      * @return The APDU response from the ICC card with the status appended at
-     *            the end.
+     *            the end. If an error occurs, an empty string is returned.
      */
     String iccTransmitApduBasicChannel(int cla, int instruction,
             int p1, int p2, int p3, String data);
@@ -879,4 +896,60 @@ interface ITelephony {
       *   {@link android.Manifest.permission#READ_PHONE_STATE READ_PHONE_STATE}
       */
     String getDeviceId();
+
+
+    String getIccAtr(int slotId);
+    byte[] iccOpenLogicalChannelWithSW(int slotId, String AID);
+    byte[] iccExchangeSimIOUsingSlot(int slotId, int fileID, int command, int p1, int p2, int p3,
+            String filePath);
+    byte[] iccExchangeSimIOExUsingSlot(int slotId, int fileID, int command,
+                                     int p1, int p2, int p3, String filePath, String data, String pin2);
+    
+    
+    /**
+     * Opens a logical channel to the ICC card.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CCHO command.
+     *
+     * @param AID Application id. See ETSI 102.221 and 101.220.
+     * @return an IccOpenLogicalChannelResponse object.
+     */
+    IccOpenLogicalChannelResponse iccOpenLogicalChannelUsingSlot(int slotId, String AID);
+
+    /**
+     * Closes a previously opened logical channel to the ICC card.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CCHC command.
+     *
+     * @param channel is the channel id to be closed as retruned by a
+     *            successful iccOpenLogicalChannel.
+     * @return true if the channel was closed successfully.
+     */
+    boolean iccCloseLogicalChannelUsingSlot(int slotId, int channel);
+
+    /**
+     * Transmit an APDU to the ICC card over a logical channel.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CGLA command.
+     *
+     * @param channel is the channel id to be closed as retruned by a
+     *            successful iccOpenLogicalChannel.
+     * @param cla Class of the APDU command.
+     * @param instruction Instruction of the APDU command.
+     * @param p1 P1 value of the APDU command.
+     * @param p2 P2 value of the APDU command.
+     * @param p3 P3 value of the APDU command. If p3 is negative a 4 byte APDU
+     *            is sent to the SIM.
+     * @param data Data to be sent with the APDU.
+     * @return The APDU response from the ICC card with the status appended at
+     *            the end. If an error occurs, an empty string is returned.
+     */
+    String iccTransmitApduLogicalChannelUsingSlot(int slotId, int channel, int cla, int instruction,
+            int p1, int p2, int p3, String data);
+    
+    String iccTransmitApduBasicChannelUsingSlot(int slotId, int cla, int command, int p1, int p2,
+                int p3, String data);
+
+    void setPolicyDataEnableForSubscriber(int subId, boolean enabled);
+
 }

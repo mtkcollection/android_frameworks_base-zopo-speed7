@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.MissingResourceException;
+import java.util.Objects;
 
 /**
  * Represents a distinct method to place or receive a phone call. Apps which can place calls and
@@ -112,6 +118,46 @@ public class PhoneAccount implements Parcelable {
      * @hide
      */
     public static final int CAPABILITY_MULTI_USER = 0x20;
+
+    /**
+     * Flag indicating that this {@code PhoneAccount} is capable of placing volte calls.
+     * This flag will be set only when the IMS service camped on the IMS server, which
+     * means it is possible to try placing an volte call at this time.
+     * <p>
+     * See {@link #getCapabilities()}
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_VOLTE_CALLING = CAPABILITY_MULTI_USER << 1;
+
+    /**
+     * M: Flag indicating that this {@code PhoneAccount} is capable of placing volte enhanced
+     * conference call. This flag will be set only when the IMS service camped on the IMS
+     * server and with a sim inserted which can placing an volte conference call.
+     * <p>
+     * See {@link #getCapabilities()}
+     * @hide
+     */
+    public static final int CAPABILITY_VOLTE_ENHANCED_CONFERENCE = CAPABILITY_VOLTE_CALLING << 1;
+
+    /**
+     * M: Flag indicating that this {@code PhoneAccount} is capable of placing a call via CDMA
+     * network. This flag will be set only when the phone for this account is CDMA type.
+     * <p>
+     * See {@link #getCapabilities()}
+     * @hide
+     */
+    public static final int CAPABILITY_CDMA_CALL_PROVIDER = CAPABILITY_VOLTE_ENHANCED_CONFERENCE << 1;
+
+    /**
+     * Flag indicating that this {@code PhoneAccount} is capable of placing wifi calls.
+     * This flag will be set only when the IMS service broadcast the wifi calling enabled broadcast,
+     * which means it is possible to dial wifi call at this time.
+     * <p>
+     * See {@link #getCapabilities()}
+     * @hide
+     */
+    public static final int CAPABILITY_WIFI_CALLING = CAPABILITY_CDMA_CALL_PROVIDER << 1;
 
     /**
      * URI scheme for telephone number URIs.
@@ -714,6 +760,7 @@ public class PhoneAccount implements Parcelable {
         mSupportedUriSchemes = Collections.unmodifiableList(in.createStringArrayList());
     }
 
+    /* Google code:
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder().append("[PhoneAccount: ")
@@ -727,5 +774,58 @@ public class PhoneAccount implements Parcelable {
         }
         sb.append("]");
         return sb.toString();
+    }
+    */
+
+    // ---------------------------MTK -----------------------------------------------//
+
+    /**
+     * add for log
+     * @hide
+     */
+    public String toString(){
+        return new StringBuilder()
+                .append("[(AccountHandle: ")
+                .append(mAccountHandle)
+                .append("), Address: ")
+                .append(mAddress)
+                .append(", SubscriptionAddress: ")
+                .append(mSubscriptionAddress)
+                .append(", Capabilities: ")
+                .append(mCapabilities)
+                .append(", IconResId: ")
+                .append(mIconResId)
+                .append(", highlightColor: ")
+                .append(mHighlightColor)
+                .append(", Label: ")
+                .append(mLabel)
+                .append(", ShortDescription: ")
+                .append(mShortDescription)
+                .append(", SupportedUriSchemes: ")
+                .append(mSupportedUriSchemes)
+                .append("]")
+                .toString();
+    }
+
+    // FIXME: There has not check the Bitmap. And think that highlightColor and
+    // Bitmap change is associated.
+    @Override
+    public boolean equals(Object other) {
+        if (other == null || !(other instanceof PhoneAccount)) {
+            return false;
+        }
+
+        PhoneAccount targetAccount = (PhoneAccount) other;
+        return Objects.equals(targetAccount.getCapabilities(), getCapabilities())
+                && Objects.equals(targetAccount.getIconResId(), getIconResId())
+                && Objects.equals(targetAccount.getIconTint(), getIconTint())
+                && Objects.equals(targetAccount.getHighlightColor(), getHighlightColor())
+                && Objects.equals(targetAccount.getIconPackageName(), getIconPackageName())
+                && Objects.equals(targetAccount.getLabel(), getLabel())
+                && Objects.equals(targetAccount.getShortDescription(), getShortDescription())
+                && Objects.equals(targetAccount.getAddress(), getAddress())
+                && Objects.equals(targetAccount.getSubscriptionAddress(), getSubscriptionAddress())
+                && Objects.equals(targetAccount.getSupportedUriSchemes(), getSupportedUriSchemes())
+                && Objects.equals(targetAccount.getAccountHandle(), getAccountHandle());
     }
 }

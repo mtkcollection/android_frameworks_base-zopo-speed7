@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,7 @@
 
 package android.view;
 
+import android.app.ActivityManager;
 import android.os.Build;
 import android.util.Log;
 
@@ -107,6 +113,10 @@ public final class InputEventConsistencyVerifier {
      */
     public static final int FLAG_RAW_DEVICE_INPUT = 1 << 0;
 
+    /// M: Check if device is running monkey test. If yes, ignore to save recent event log
+    private static boolean mIsRunningMonkey = false;
+    private static boolean mGotMonkeySettings = false;
+
     /**
      * Creates an input consistency verifier.
      * @param caller The object to which the verifier is attached.
@@ -126,6 +136,12 @@ public final class InputEventConsistencyVerifier {
         this.mCaller = caller;
         this.mFlags = flags;
         this.mLogTag = (logTag != null) ? logTag : "InputEventConsistencyVerifier";
+        /// M: Check if device is running monkey test. If yes, ignore to save recent event log @{
+        if (!mGotMonkeySettings) {
+            mIsRunningMonkey = ActivityManager.isUserAMonkey();
+            mGotMonkeySettings = true;
+        }
+        /// @}
     }
 
     /**
@@ -602,7 +618,8 @@ public final class InputEventConsistencyVerifier {
                 mViolationMessage.append("\n  ");
                 appendEvent(mViolationMessage, 0, mCurrentEvent, false);
 
-                if (RECENT_EVENTS_TO_LOG != 0 && mRecentEvents != null) {
+                /// M: If running monkey test, ignore to save recent event log
+                if (RECENT_EVENTS_TO_LOG != 0 && mRecentEvents != null && !mIsRunningMonkey) {
                     mViolationMessage.append("\n  -- recent events --");
                     for (int i = 0; i < RECENT_EVENTS_TO_LOG; i++) {
                         final int index = (mMostRecentEventIndex + RECENT_EVENTS_TO_LOG - i)
@@ -625,7 +642,8 @@ public final class InputEventConsistencyVerifier {
             mViolationMessage.setLength(0);
         }
 
-        if (RECENT_EVENTS_TO_LOG != 0) {
+        /// M: If running monkey test, ignore to save recent event log
+        if (RECENT_EVENTS_TO_LOG != 0 && !mIsRunningMonkey) {
             if (mRecentEvents == null) {
                 mRecentEvents = new InputEvent[RECENT_EVENTS_TO_LOG];
                 mRecentEventsUnhandled = new boolean[RECENT_EVENTS_TO_LOG];

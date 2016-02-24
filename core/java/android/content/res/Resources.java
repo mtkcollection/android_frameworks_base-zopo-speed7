@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,9 +37,13 @@ import android.graphics.Movie;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable.ConstantState;
+/// M: ALPS01854259, Skip preloading vectorDrawable on SMB projects @{
+import android.graphics.drawable.VectorDrawable;
+/// @}
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.util.ArrayMap;
 import android.util.AttributeSet;
@@ -81,12 +90,18 @@ public class Resources {
 
     private static final boolean DEBUG_LOAD = false;
     private static final boolean DEBUG_CONFIG = false;
+    private static final boolean DEBUG_RESOURCE_ID = false; /// M: Debug for specified resource ID
     private static final boolean TRACE_FOR_PRELOAD = false;
     private static final boolean TRACE_FOR_MISS_PRELOAD = false;
 
     private static final int LAYOUT_DIR_CONFIG = ActivityInfo.activityInfoConfigToNative(
             ActivityInfo.CONFIG_LAYOUT_DIRECTION);
-
+    /// M: ALPS01854259, Get native config flag @{
+    private static final int NATIVE_CONFIG_DENSITY = ActivityInfo.activityInfoConfigToNative(
+            ActivityInfo.CONFIG_DENSITY);
+    private static final int NATIVE_CONFIG_SCREEN_SIZE = ActivityInfo.activityInfoConfigToNative(
+            ActivityInfo.CONFIG_SCREEN_SIZE);
+    /// @}
     private static final int ID_OTHER = 0x01000004;
 
     private static final Object sSync = new Object();
@@ -108,6 +123,8 @@ public class Resources {
 
     private static boolean sPreloaded;
     private static int sPreloadedDensity;
+
+    private static int sLogId = 0;      /// M: Remember the resource ID that we want to log it.
 
     // These are protected by mAccessLock.
     private final Object mAccessLock = new Object();
@@ -292,6 +309,12 @@ public class Resources {
      *         possibly styled text information.
      */
     public CharSequence getText(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getText id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         CharSequence res = mAssets.getResourceText(id);
         if (res != null) {
             return res;
@@ -321,6 +344,12 @@ public class Resources {
      *         possibly styled text information.
      */
     public CharSequence getQuantityText(int id, int quantity) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getQuantityText id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         NativePluralRules rule = getPluralRule();
         CharSequence res = mAssets.getResourceBagText(id,
                 attrForQuantityCode(rule.quantityForInt(quantity)));
@@ -382,6 +411,12 @@ public class Resources {
      * stripped of styled text information.
      */
     public String getString(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getString id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         CharSequence res = getText(id);
         if (res != null) {
             return res.toString();
@@ -410,6 +445,12 @@ public class Resources {
      * stripped of styled text information.
      */
     public String getString(int id, Object... formatArgs) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getString id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         String raw = getString(id);
         return String.format(mConfiguration.locale, raw, formatArgs);
     }
@@ -441,6 +482,12 @@ public class Resources {
      */
     public String getQuantityString(int id, int quantity, Object... formatArgs)
             throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getQuantityString id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         String raw = getQuantityText(id, quantity).toString();
         return String.format(mConfiguration.locale, raw, formatArgs);
     }
@@ -466,6 +513,12 @@ public class Resources {
      * stripped of styled text information.
      */
     public String getQuantityString(int id, int quantity) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getQuantityString id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         return getQuantityText(id, quantity).toString();
     }
 
@@ -484,6 +537,12 @@ public class Resources {
      *         possibly styled text information, or def if id is 0 or not found.
      */
     public CharSequence getText(int id, CharSequence def) {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getText id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         CharSequence res = id != 0 ? mAssets.getResourceText(id) : null;
         return res != null ? res : def;
     }
@@ -500,6 +559,12 @@ public class Resources {
      * @return The styled text array associated with the resource.
      */
     public CharSequence[] getTextArray(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getTextArray id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         CharSequence[] res = mAssets.getResourceTextArray(id);
         if (res != null) {
             return res;
@@ -520,6 +585,12 @@ public class Resources {
      * @return The string array associated with the resource.
      */
     public String[] getStringArray(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getStringArray id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         String[] res = mAssets.getResourceStringArray(id);
         if (res != null) {
             return res;
@@ -540,6 +611,12 @@ public class Resources {
      * @return The int array associated with the resource.
      */
     public int[] getIntArray(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getIntArray id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         int[] res = mAssets.getArrayIntResource(id);
         if (res != null) {
             return res;
@@ -562,6 +639,12 @@ public class Resources {
      * when done with it.
      */
     public TypedArray obtainTypedArray(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** obtainTypedArray id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         int len = mAssets.getArraySize(id);
         if (len < 0) {
             throw new NotFoundException("Array resource ID #0x"
@@ -593,6 +676,12 @@ public class Resources {
      * @see #getDimensionPixelSize
      */
     public float getDimension(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getDimension id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -628,6 +717,12 @@ public class Resources {
      * @see #getDimensionPixelSize
      */
     public int getDimensionPixelOffset(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getDimensionPixelOffset id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -665,6 +760,12 @@ public class Resources {
      * @see #getDimensionPixelOffset
      */
     public int getDimensionPixelSize(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getDimensionPixelSize id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -699,6 +800,12 @@ public class Resources {
      * @throws NotFoundException Throws NotFoundException if the given ID does not exist.
      */
     public float getFraction(int id, int base, int pbase) {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getFraction id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -774,6 +881,12 @@ public class Resources {
      */
     @Nullable
     public Drawable getDrawable(int id, @Nullable Theme theme) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getDrawable id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -841,6 +954,12 @@ public class Resources {
      */
     @Nullable
     public Drawable getDrawableForDensity(int id, int density, @Nullable Theme theme) {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getDrawableForDensity id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -885,6 +1004,12 @@ public class Resources {
      * 
      */
     public Movie getMovie(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getMovie id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         InputStream is = openRawResource(id);
         Movie movie = Movie.decodeStream(is);
         try {
@@ -911,6 +1036,12 @@ public class Resources {
      * @return Returns a single color value in the form 0xAARRGGBB.
      */
     public int getColor(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getColor id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -953,6 +1084,12 @@ public class Resources {
      * solid color or multiple colors that can be selected based on a state.
      */
     public ColorStateList getColorStateList(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getColorStateList id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -986,6 +1123,12 @@ public class Resources {
      * @return Returns the boolean value contained in the resource.
      */
     public boolean getBoolean(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getBoolean id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -1014,6 +1157,12 @@ public class Resources {
      * @return Returns the integer value contained in the resource.
      */
     public int getInteger(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getInteger id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {
@@ -1079,6 +1228,12 @@ public class Resources {
      * @see #getXml
      */
     public XmlResourceParser getLayout(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getLayout id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         return loadXmlResourceParser(id, "layout");
     }
 
@@ -1103,6 +1258,12 @@ public class Resources {
      * @see #getXml
      */
     public XmlResourceParser getAnimation(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getAnimation id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         return loadXmlResourceParser(id, "anim");
     }
 
@@ -1128,6 +1289,12 @@ public class Resources {
      * @see android.util.AttributeSet
      */
     public XmlResourceParser getXml(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getXml id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         return loadXmlResourceParser(id, "xml");
     }
 
@@ -1146,6 +1313,12 @@ public class Resources {
      * 
      */
     public InputStream openRawResource(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** openRawResource id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -1178,6 +1351,12 @@ public class Resources {
      * @throws NotFoundException Throws NotFoundException if the given ID does not exist.
      */
     public InputStream openRawResource(int id, TypedValue value) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** openRawResource id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         getValue(id, value, true);
 
         try {
@@ -1213,6 +1392,12 @@ public class Resources {
      * 
      */
     public AssetFileDescriptor openRawResourceFd(int id) throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** openRawResourceFd id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         TypedValue value;
         synchronized (mAccessLock) {
             value = mTmpValue;
@@ -1259,6 +1444,12 @@ public class Resources {
      */
     public void getValue(int id, TypedValue outValue, boolean resolveRefs)
             throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getValue id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         boolean found = mAssets.getResourceValue(id, 0, outValue, resolveRefs);
         if (found) {
             return;
@@ -1282,6 +1473,12 @@ public class Resources {
      */
     public void getValueForDensity(int id, int density, TypedValue outValue, boolean resolveRefs)
             throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** getValueForDensity id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         boolean found = mAssets.getResourceValue(id, density, outValue, resolveRefs);
         if (found) {
             return;
@@ -1778,6 +1975,23 @@ public class Resources {
                 Slog.i(TAG, "**** Updating config of " + this + ": new config is "
                         + config + " new compat is " + compat);
             }
+            
+            /// M: Log specified resource Id @{
+            if (DEBUG_RESOURCE_ID) {
+                int orgLogId = sLogId;
+                sLogId = SystemProperties.getInt("debug.rms.logid", 0);
+                if(orgLogId != sLogId) {
+                    Slog.i(TAG, "**** Updating config, sLogId: " + sLogId);
+                }
+                if (0 != sLogId) {
+                    Slog.i(TAG, "**** Updating config of " + this + ": old config is "
+                            + mConfiguration + " old compat is " + mCompatibilityInfo);
+                    Slog.i(TAG, "**** Updating config of " + this + ": new config is "
+                            + config + " new compat is " + compat);
+                }
+            }
+            /// @}
+
             if (compat != null) {
                 mCompatibilityInfo = compat;
             }
@@ -1851,7 +2065,7 @@ public class Resources {
             flushLayoutCache();
         }
         synchronized (sSync) {
-            if (mPluralRule != null) {
+            if (mPluralRule != null && config != null) {
                 mPluralRule = NativePluralRules.forLocale(config.locale);
             }
         }
@@ -1918,6 +2132,25 @@ public class Resources {
                                 + Integer.toHexString(cs.getChangingConfigurations())
                                 + ")");
                     }
+                    /// M: ALPS01854259, Flush VectorDrawable for SMB when config change @{
+                    if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                        if ((configChanges & (NATIVE_CONFIG_DENSITY |
+                                NATIVE_CONFIG_SCREEN_SIZE)) != 0) {
+                            Drawable dr = cs.newDrawable();
+                            if (dr != null) {
+                                if (dr instanceof VectorDrawable) {
+                                    if (DEBUG_CONFIG) {
+                                        Log.d(TAG, "FLUSHING VectorDrawable #0x"
+                                            + Long.toHexString(cache.keyAt(i))
+                                            + " / " + cs + " with changes: 0x"
+                                            + Integer.toHexString(cs.getChangingConfigurations()));
+                                    }
+                                    cache.setValueAt(i, null);
+                                }
+                            }
+                        }
+                    }
+                    /// @}
                 }
             }
         }
@@ -2402,6 +2635,22 @@ public class Resources {
         if (mPreloading) {
             // Preloaded drawables never have a theme, but may be themeable.
             final int changingConfigs = cs.getChangingConfigurations();
+            /// M: ALPS01854259, Skip preloading VectorDrawable on SMB projects @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                if (dr instanceof VectorDrawable) {
+                    String resName;
+                    try {
+                        resName = getResourceName(value.resourceId);
+                    } catch (NotFoundException e) {
+                        resName = "?";
+                    }
+                    Log.d(TAG, "Preloaded drawable resource #0x"
+                        + Integer.toHexString(value.resourceId)
+                        + " (" + resName + ") is VectorDrawable,skip preloading it for SMB!!");
+                    return;
+                }
+            }
+            /// @}
             if (isColorDrawable) {
                 if (verifyPreloadConfig(changingConfigs, 0, value.resourceId, "drawable")) {
                     sPreloadedColorDrawables.put(key, cs);
@@ -2641,6 +2890,12 @@ public class Resources {
 
     /*package*/ XmlResourceParser loadXmlResourceParser(int id, String type)
             throws NotFoundException {
+        /// M: Log specified resource Id @{
+        if(DEBUG_RESOURCE_ID && (id == sLogId)) {        
+            Slog.i(TAG, "**** loadXmlResourceParser id:" + id);
+            Slog.i(TAG, "config is " + mConfiguration);
+        }
+        /// @}
         synchronized (mAccessLock) {
             TypedValue value = mTmpValue;
             if (value == null) {

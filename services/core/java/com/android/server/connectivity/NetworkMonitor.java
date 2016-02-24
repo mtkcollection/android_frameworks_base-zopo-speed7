@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -259,6 +264,8 @@ public class NetworkMonitor extends StateMachine {
     private final State mCaptivePortalState = new CaptivePortalState();
     private final State mLingeringState = new LingeringState();
 
+    private static boolean mSkipNetworkValidation = true;
+
     private CaptivePortalLoggedInBroadcastReceiver mCaptivePortalLoggedInBroadcastReceiver = null;
     private String mCaptivePortalLoggedInResponseToken = null;
 
@@ -296,6 +303,9 @@ public class NetworkMonitor extends StateMachine {
                 Settings.Global.CAPTIVE_PORTAL_DETECTION_ENABLED, 1) == 1;
 
         mCaptivePortalLoggedInResponseToken = String.valueOf(new Random().nextLong());
+
+        mSkipNetworkValidation = mContext.getResources().getBoolean(
+                com.mediatek.internal.R.bool.config_skip_network_validation);
 
         start();
     }
@@ -467,8 +477,9 @@ public class NetworkMonitor extends StateMachine {
                     //    the network so don't bother validating here.  Furthermore sending HTTP
                     //    packets over the network may be undesirable, for example an extremely
                     //    expensive metered network, or unwanted leaking of the User Agent string.
-                    if (!mDefaultRequest.networkCapabilities.satisfiedByNetworkCapabilities(
-                            mNetworkAgentInfo.networkCapabilities)) {
+                    if ((!mDefaultRequest.networkCapabilities.satisfiedByNetworkCapabilities(
+                            mNetworkAgentInfo.networkCapabilities)) || 
+                            mNetworkAgentInfo.networkCapabilities.hasCapability( NetworkCapabilities.NET_CAPABILITY_MMS) ) {
                         transitionTo(mValidatedState);
                         return HANDLED;
                     }
@@ -478,7 +489,32 @@ public class NetworkMonitor extends StateMachine {
                     // IPv6) could each take SOCKET_TIMEOUT_MS.  During this time this StateMachine
                     // will be unresponsive. isCaptivePortal() could be executed on another Thread
                     // if this is found to cause problems.
+
+                    //M: Add. In China we can't get 204 from Google server @{
+                    log("mSkipNetworkValidation ="+mSkipNetworkValidation);
+                    if (mSkipNetworkValidation) {
+                        mConnectivityServiceHandler.sendMessage(obtainMessage(EVENT_NETWORK_TESTED,
+                            NETWORK_TEST_RESULT_VALID, 0, mNetworkAgentInfo));
+
+                        //CMCC mobile network sometimes redirect issue, so skip mobile CaptivePortal
+                        if (mNetworkAgentInfo.networkCapabilities.hasTransport(
+                            NetworkCapabilities.TRANSPORT_CELLULAR)){
+                            return HANDLED;
+                        }
+                    }//@}
+
                     int httpResponseCode = isCaptivePortal();
+
+                    //M: Add. @{
+                    if (mSkipNetworkValidation) {
+                        if (httpResponseCode != 204 && httpResponseCode >= 200 && httpResponseCode <= 399){
+                            transitionTo(mCaptivePortalState);
+                        } else {
+                            transitionTo(mValidatedState);
+                        }
+                        return HANDLED;
+                    }//@}
+
                     if (httpResponseCode == 204) {
                         transitionTo(mValidatedState);
                     } else if (httpResponseCode >= 200 && httpResponseCode <= 399) {

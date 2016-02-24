@@ -34,23 +34,54 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal|top"
         android:orientation="vertical" >
-        <TextClock
-            android:id="@+id/clock_view"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:textColor="@color/clock_white"
-            android:singleLine="true"
-            style="@style/widget_big_thin"
-            android:format12Hour="@string/keyguard_widget_12_hours_format"
-            android:format24Hour="@string/keyguard_widget_24_hours_format"
-            android:layout_marginBottom="@dimen/bottom_text_spacing_digital" />
+        <LinearLayout android:id="@+id/clock_container"
+                android:layout_width="match_parent" 
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" 
+                android:layout_gravity="center"
+                style="@style/widget_big_thin"
+                android:layout_marginBottom="@dimen/bottom_text_spacing_digital">
+                <com.mediatek.keyguard.Clock.ClockView
+                    android:id="@+id/clock_view" 
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" 
+                    android:layout_gravity="center">
 
-        <include layout="@layout/keyguard_status_area" />
+                    <TextView android:id="@+id/clock_text"
+                        android:layout_width="wrap_content" 
+                        android:layout_height="wrap_content"
+                        android:singleLine="true" 
+                        android:ellipsize="none"
+                        android:textSize="@dimen/kg_status_clock_font_size"
+                        android:textAppearance="?android:attr/textAppearanceMedium"
+                        android:textColor="#ffffffff" 
+                        android:drawablePadding="2dip"
+                        android:layout_centerInParent="true" />
+
+                    <TextView android:id="@+id/am_pm" 
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" 
+                        android:layout_toEndOf="@id/clock_text"
+                        android:layout_alignBaseline="@id/clock_text" 
+                        android:singleLine="true"
+                        android:ellipsize="none" 
+                        android:textSize="14sp"
+                        android:layout_marginStart="8dip" />
+
+                </com.mediatek.keyguard.Clock.ClockView>
+        </LinearLayout>
+        
+        <LinearLayout android:id = "@+id/keyguard_status_area_id"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp">
+            <include layout="@layout/keyguard_status_area" />
+        </LinearLayout> 
+ 
         <TextView
             android:id="@+id/owner_info"
-            android:layout_marginLeft="16dp"
-            android:layout_marginRight="16dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/date_owner_info_margin"

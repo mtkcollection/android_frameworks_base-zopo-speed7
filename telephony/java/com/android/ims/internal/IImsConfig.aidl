@@ -19,6 +19,10 @@ package com.android.ims.internal;
 
 import com.android.ims.ImsConfigListener;
 
+import com.android.ims.mo.ImsIcsi;
+import com.android.ims.mo.ImsLboPcscf;
+import com.android.ims.mo.ImsPhoneCtx;
+
 /**
  * Provides APIs to get/set the IMS service capability/parameters.
  * The parameters can be configured by operator and/or user.
@@ -120,4 +124,91 @@ interface IImsConfig {
      * @return void
      */
     boolean getVolteProvisioned();
+
+    /**
+     * Gets the value for IMS service/capabilities parameters used by IMS stack.
+     * This function should not be called from the mainthread as it could block the
+     * mainthread to cause ANR.
+     *
+     * @param item as defined in com.android.ims.ImsConfig#ConfigConstants.
+     * @return the value in String array.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    String[] getMasterStringArrayValue(int item);
+
+    /**
+     * Gets the value for IMS service/capabilities parameters used by IMS stack.
+     * This function should not be called from the mainthread as it could block the
+     * mainthread to cause ANR.
+     *
+     * @return the Icsi object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    ImsIcsi[] getMasterIcsiValue();
+
+    /**
+     * Gets the value for IMS service/capabilities parameters used by IMS stack.
+     * This function should not be called from the mainthread as it could block the
+     * mainthread to cause ANR.
+     *
+     * @return the LboPcscf object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    ImsLboPcscf[] getMasterLboPcscfValue();
+
+    /**
+     * Gets the value for IMS service/capabilities parameters used by IMS stack.
+     * This function should not be called from the mainthread as it could block the
+     * mainthread to cause ANR.
+     *
+     * @return the ImsPhoneCtx object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    ImsPhoneCtx[] getMasterImsPhoneCtxValue();
+
+    /**
+     * Sets the value for IMS service/capabilities parameters by
+     * the operator device management entity.
+     *
+     * @param item as defined in com.android.ims.ImsConfig#ConfigConstants.
+     * @param value in String Array format.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    void setProvisionedStringArrayValue(int item, in String[] value);
+
+    /**
+     * Sets the value for IMS service/capabilities parameters by
+     * the operator device management entity.
+     *
+     * @param value in ImsIcsi[] object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    void setProvisionedIcsiValue(in ImsIcsi[] value);
+
+    /**
+     * Sets the value for IMS service/capabilities parameters by
+     * the operator device management entity.
+     *
+     * @param value in ImsLboPcscf[] object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    void setProvisionedLboPcscfValue(in ImsLboPcscf[] value);
+
+    /**
+     * Sets the value for IMS service/capabilities parameters by
+     * the operator device management entity.
+     *
+     * @param value in ImsPhoneCtx[] object.
+     *
+     * @throws ImsException if calling the IMS service results in an error.
+     */
+    void setProvisionedPhoneCtxValue(in ImsPhoneCtx[] value);
+
 }

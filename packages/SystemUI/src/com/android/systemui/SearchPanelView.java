@@ -140,6 +140,10 @@ public class SearchPanelView extends FrameLayout implements StatusBarPanel {
                         v.setImageDrawable(res.getDrawable(iconResId));
                         return;
                     }
+                } else {
+                    /// M: Fix [ALPS01848257] Add search icon
+                    v.setImageResource(R.drawable.ic_action_assist_generic_activated);
+                    return;
                 }
             } catch (PackageManager.NameNotFoundException e) {
                 Log.w(TAG, "Failed to swap drawable; "

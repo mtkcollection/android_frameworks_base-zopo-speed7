@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +49,9 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
@@ -65,6 +72,10 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 
 import static android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN;
+
+//M: PerfService. @{
+import com.mediatek.perfservice.IPerfService;
+//@}
 
 /**
  * A wallpaper service is responsible for showing a live wallpaper behind
@@ -95,7 +106,7 @@ public abstract class WallpaperService extends Service {
     public static final String SERVICE_META_DATA = "android.service.wallpaper";
 
     static final String TAG = "WallpaperService";
-    static final boolean DEBUG = false;
+    static final boolean DEBUG = true;
     
     private static final int DO_ATTACH = 10;
     private static final int DO_DETACH = 20;
@@ -113,6 +124,20 @@ public abstract class WallpaperService extends Service {
     private final ArrayList<Engine> mActiveEngines
             = new ArrayList<Engine>();
     
+    // / M: ALPS01103663 workaround for SmartBook, image wallpaper will restart by systemUI @{
+    private static final String IMAGEWALLPAPER = "com.android.systemui.ImageWallpaper";
+    private WallpaperManager mWallpaperManager;
+    private String mCurrentWallpaper;
+    // / @}
+
+    // M: @{
+    private static final String VIDEOWALLPAPER = "com.media.vlw.VideoLiveWallpaper";
+    private IPerfService mPerfService = null;
+    private int mPerfServiceHandle = -1;
+
+    private int mPerfServiceinited = 0;
+    // @}
+
     static final class WallpaperCommand {
         String action;
         int x;
@@ -899,6 +924,11 @@ public abstract class WallpaperService extends Service {
         }
 
         void doVisibilityChanged(boolean visible) {
+            /// M: if mInitializing is true, then force to doVisibilityChanged(). @{
+            if (mInitializing && !visible) {
+                mInitializing = false;
+            }
+            /// @}
             if (!mDestroyed) {
                 mVisible = visible;
                 reportVisibility();
@@ -909,7 +939,9 @@ public abstract class WallpaperService extends Service {
             if (!mDestroyed) {
                 boolean visible = mVisible
                         & mDisplay != null && mDisplay.getState() != Display.STATE_OFF;
-                if (mReportedVisible != visible) {
+                String packageName = this.getClass().getName();
+                /// M: if mInitializing equals true, then force to do doVisibilityChanged().
+                if ((mReportedVisible != visible) || mInitializing) {
                     mReportedVisible = visible;
                     if (DEBUG) Log.v(TAG, "onVisibilityChanged(" + visible
                             + "): " + this);
@@ -920,6 +952,14 @@ public abstract class WallpaperService extends Service {
                         doOffsetsChanged(false);
                         updateSurface(false, false, false);
                     }
+
+                    if (packageName != null) {
+                        if (!packageName.startsWith(IMAGEWALLPAPER) && 
+                                !packageName.startsWith(VIDEOWALLPAPER)) {
+                            mutliCoreEnable(visible);
+                        }
+                    }
+
                     onVisibilityChanged(visible);
                 }
             }
@@ -1085,6 +1125,18 @@ public abstract class WallpaperService extends Service {
 
         Engine mEngine;
 
+        /// M: This class will receive the notification if the binding process is dead @{
+        class WallpaperDeathRecipient implements IBinder.DeathRecipient {
+            @Override
+            public void binderDied() {
+                if (DEBUG) Log.w(TAG, "WallpaperDeathRecipient.binderDied()");
+                // Call destroy here in case the process using this wallpaper has no chance to do this
+                destroy();
+            }
+        }
+        DeathRecipient mDeathRecipient = new WallpaperDeathRecipient();
+        /// @}
+
         IWallpaperEngineWrapper(WallpaperService context,
                 IWallpaperConnection conn, IBinder windowToken,
                 int windowType, boolean isPreview, int reqWidth, int reqHeight, Rect padding) {
@@ -1154,6 +1206,7 @@ public abstract class WallpaperService extends Service {
                 case DO_ATTACH: {
                     try {
                         mConnection.attachEngine(this);
+                        mConnection.asBinder().linkToDeath(mDeathRecipient, 0);
                     } catch (RemoteException e) {
                         Log.w(TAG, "Wallpaper host disappeared", e);
                         return;
@@ -1167,6 +1220,7 @@ public abstract class WallpaperService extends Service {
                 case DO_DETACH: {
                     mActiveEngines.remove(mEngine);
                     mEngine.detach();
+                    mConnection.asBinder().unlinkToDeath(mDeathRecipient, 0);
                     return;
                 }
                 case DO_SET_DESIRED_SIZE: {
@@ -1246,6 +1300,13 @@ public abstract class WallpaperService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        /// M: ALPS01103663 workaround for SmartBook, image wallpaper will restart by systemUI @{
+        if (isSmartBookSupport()) {
+           mWallpaperManager = (WallpaperManager) getSystemService(WALLPAPER_SERVICE);
+           mCurrentWallpaper = getClass().getName();
+           Log.v(TAG, "Current Wallpaper : " + mCurrentWallpaper);
+        }
+        /// @}
     }
 
     @Override
@@ -1281,6 +1342,41 @@ public abstract class WallpaperService extends Service {
             Engine engine = mActiveEngines.get(i);
             out.print("  Engine "); out.print(engine); out.println(":");
             engine.dump("    ", fd, out, args);
+        }
+    }
+
+    private boolean isSmartBookSupport() {
+        return SystemProperties.get("ro.mtk_smartbook_support").equals("1");
+    }
+
+    private void perfServiceInit() {
+        if(mPerfServiceinited == 0) {
+            IBinder b = ServiceManager.checkService(Context.MTK_PERF_SERVICE);
+            if(b != null) {
+                mPerfService = IPerfService.Stub.asInterface(b);
+                if (mPerfService != null) {
+                    try {
+                        if(mPerfService != null)
+                        mPerfServiceHandle = mPerfService.userReg(2, 0, Process.myPid(), Process.myTid());
+                    } catch (RemoteException e) {
+                        Log.v(TAG, "ERR: RemoteException in perfServiceInit:" + e);
+                    }
+                    mPerfServiceinited = 1;
+                }
+            }
+        }
+    }
+
+    private void mutliCoreEnable(boolean enable) { // 
+        perfServiceInit();
+        if (mPerfService != null && mPerfServiceHandle != -1) {
+            Log.v(TAG, "mutliCore enable: " + enable);
+            try {
+                if (enable) mPerfService.userEnable(mPerfServiceHandle);
+                if (!enable) mPerfService.userDisable(mPerfServiceHandle);
+            } catch (RemoteException e) {
+                Log.v(TAG, "ERR: RemoteException in mutliCoreEnable:" + e); 
+            }
         }
     }
 }

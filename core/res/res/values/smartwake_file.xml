@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+
+    <array name="smart_wake_file">
+        <item>"/sys/devices/bus.2/11007000.I2C0/i2c-0/0-0020/"</item>
+        <item>"/sys/devices/bus.2/11008000.I2C1/i2c-1/1-0026/"</item>
+        <item>"/sys/devices/bus.2/11008000.I2C1/i2c-1/1-0038/"</item>
+        <item>"/sys/devices/bus.2/11008000.I2C1/i2c-1/1-005d/"</item>
+        <item>"/sys/devices/bus.3/11008000.I2C1/i2c-1/1-005d/"</item>
+        <item>"/sys/devices/platform/mt-i2c.0/i2c-0/0-0020/"</item>
+        <item>"/sys/devices/platform/mt-i2c.0/i2c-0/0-0038/"</item>
+        <item>"/sys/devices/platform/mt-i2c.0/i2c-0/0-005d/"</item>
+        <item>"/sys/devices/platform/mt-i2c.1/i2c-1/1-0038/"</item>
+        <item>"/sys/devices/platform/mt-i2c.1/i2c-1/1-005d/"</item>
+        <item>"/sys/devices/platform/mt-i2c.2/i2c-2/2-005d/"</item>
+    </array>
+
+</resources>

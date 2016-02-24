@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -30,6 +35,10 @@ import com.android.internal.telecom.ITelecomService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+/// M: CC049: TelecomManager API to query if VT is enabled @{
+import android.os.SystemProperties;
+/// @}
 
 /**
  * Provides access to information about active calls and registration/call-management functionality.
@@ -1089,4 +1098,53 @@ public class TelecomManager {
         }
         return isConnected;
     }
+
+    //--------------------------------------mtk---------------------------------------------------//
+    /// M: CC048: TelecomManager API to get IMS specific feature capable PhoneAccounts @{
+    /**
+     * Returns a list of all {@link PhoneAccountHandle}s which are Volte call capable.
+     *
+     * @return All {@link PhoneAccountHandle}s.
+     * @hide
+     */
+    public List<PhoneAccountHandle> getVolteCallCapablePhoneAccounts() {
+        try {
+            if (isServiceConnected()) {
+                return getTelecomService().getVolteCallCapablePhoneAccounts();
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error calling ITelecomService#getVolteCallCapablePhoneAccounts", e);
+        }
+        return Collections.EMPTY_LIST;
+    }
+
+    /**
+     * Returns a list of all {@link PhoneAccountHandle}s which are Video call capable.
+     *
+     * @return All {@link PhoneAccountHandle}s.
+     * @hide
+     */
+    public List<PhoneAccountHandle> getVideoCallCapablePhoneAccounts() {
+        try {
+            if (isServiceConnected()) {
+                return getTelecomService().getVideoCallCapablePhoneAccounts();
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error calling ITelecomService#getVideoCallCapablePhoneAccounts", e);
+        }
+        return Collections.EMPTY_LIST;
+    }
+    /// @}
+
+    /// M: CC049: TelecomManager API to query if VT is enabled @{
+    /**
+     * Determine whether the device support ViLTE.
+     *
+     * @return {@code true} if the device is ViLTE-supported and {@code false} otherwise.
+     * @hide
+     */
+    public boolean isVideoEnabled() {
+        return (SystemProperties.get("ro.mtk_vilte_support").equals("1"));
+    }
+    /// @}
 }

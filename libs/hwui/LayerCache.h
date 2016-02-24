@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +37,11 @@ class RenderState;
 
 // Debug
 #if DEBUG_LAYERS
-    #define LAYER_LOGD(...) ALOGD(__VA_ARGS__)
+    #define LAYER_LOGD(...) \
+    {                            \
+        if (g_HWUI_debug_layers) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define LAYER_LOGD(...)
 #endif

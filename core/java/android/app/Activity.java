@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,6 +106,9 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.HashMap;
+
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 /**
  * An activity is a single, focused thing that the user can do.  Almost all
@@ -796,6 +804,9 @@ public class Activity extends ContextThemeWrapper
     ActivityTransitionState mActivityTransitionState = new ActivityTransitionState();
     SharedElementCallback mEnterTransitionListener = SharedElementCallback.NULL_CALLBACK;
     SharedElementCallback mExitTransitionListener = SharedElementCallback.NULL_CALLBACK;
+
+    /// M: BMW. 
+    private Context mContext;
 
     /** Return the intent that started this activity. */
     public Intent getIntent() {
@@ -1624,6 +1635,9 @@ public class Activity extends ContextThemeWrapper
             for (int i = 0; i < numCursors; i++) {
                 ManagedCursor c = mManagedCursors.get(i);
                 if (c != null) {
+                    /// M: Debugging for ManagedCursor whether is closed @{
+                    Log.v("ManageCursor", "onDestroy() loop cursor=" + c.hashCode());
+                    /// @}
                     c.mCursor.close();
                 }
             }
@@ -1943,6 +1957,9 @@ public class Activity extends ContextThemeWrapper
             String sortOrder) {
         Cursor c = getContentResolver().query(uri, projection, selection, null, sortOrder);
         if (c != null) {
+            /// M: Debugging for ManagedCursor whether is closed @{
+            Log.v("ManageCursor", "managedQuery, c=" + c.hashCode());
+            /// @}
             startManagingCursor(c);
         }
         return c;
@@ -1983,6 +2000,9 @@ public class Activity extends ContextThemeWrapper
             String[] selectionArgs, String sortOrder) {
         Cursor c = getContentResolver().query(uri, projection, selection, selectionArgs, sortOrder);
         if (c != null) {
+            /// M: Debugging for ManagedCursor whether is closed @{
+            Log.v("ManageCursor", "managedQuery, c=" + c.hashCode());
+            /// @}
             startManagingCursor(c);
         }
         return c;
@@ -2018,6 +2038,11 @@ public class Activity extends ContextThemeWrapper
     @Deprecated
     public void startManagingCursor(Cursor c) {
         synchronized (mManagedCursors) {
+            /// M: Debugging for ManagedCursor whether is closed @{
+            if (c != null) {
+                Log.v("ManageCursor", "startManagingCursor, c=" + c.hashCode());
+            }
+            /// @}
             mManagedCursors.add(new ManagedCursor(c));
         }
     }
@@ -2042,6 +2067,11 @@ public class Activity extends ContextThemeWrapper
     @Deprecated
     public void stopManagingCursor(Cursor c) {
         synchronized (mManagedCursors) {
+            /// M: Debugging for ManagedCursor whether is closed @{
+            if (c != null) {
+                Log.v("ManageCursor", "stopManagingCursor, c=" + c.hashCode());
+            }
+            /// @}
             final int N = mManagedCursors.size();
             for (int i=0; i<N; i++) {
                 ManagedCursor mc = mManagedCursors.get(i);
@@ -2369,7 +2399,16 @@ public class Activity extends ContextThemeWrapper
                     >= Build.VERSION_CODES.ECLAIR) {
                 event.startTracking();
             } else {
-                onBackPressed();
+                /// M: Fix ALPS00348455 @{
+                if (isResumed()) {
+                    onBackPressed();
+                } else {
+                    Log.v(TAG, "Tracking Key Down, activity is resumed: " + isResumed());
+                    // Fix sub activity of tab activity which isn't in resumed state
+                    // Return false means didn't handle this key event
+                    return false;
+                }
+                /// @}
             }
             return true;
         }
@@ -2453,8 +2492,17 @@ public class Activity extends ContextThemeWrapper
                 >= Build.VERSION_CODES.ECLAIR) {
             if (keyCode == KeyEvent.KEYCODE_BACK && event.isTracking()
                     && !event.isCanceled()) {
-                onBackPressed();
-                return true;
+                /// M: Fix ALPS00247686, ALPS00253881 Free test JE issue @{
+                if (isResumed()) {
+                    onBackPressed();
+                    return true;
+                } else {
+                    Log.v(TAG, "Tracking Key Up, activity is resumed: " + isResumed());
+                    // Fix sub activity of tab activity which isn't in resumed state
+                    // Return false means didn't handle this key event
+                    return false;
+                }
+                /// @}
             }
         }
         return false;
@@ -2738,6 +2786,13 @@ public class Activity extends ContextThemeWrapper
     public boolean dispatchTouchEvent(MotionEvent ev) {
         if (ev.getAction() == MotionEvent.ACTION_DOWN) {
             onUserInteraction();
+            /// M: BMW @{  
+            MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();            
+            if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null && isResumed()) {
+                Slog.v(TAG, "[BMW] dispatchTouchEvent test into isResumed true");   
+                mMultiWindowProxy.moveActivityTaskToFront(mToken);
+            }
+            /// @} 
         }
         if (getWindow().superDispatchTouchEvent(ev)) {
             return true;
@@ -3741,6 +3796,16 @@ public class Activity extends ContextThemeWrapper
      * @see #startActivity
      */
     public void startActivityForResult(Intent intent, int requestCode, @Nullable Bundle options) {
+        /// M: BMW @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();         
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null) {               
+            if (mContext != null && mMultiWindowProxy.getFloatingState()) {               
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent);
+            } else if (mIntent != null && mMultiWindowProxy.isFloatingWindow(mIntent)) {
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent); 
+            }                          
+        }
+        /// @}
         if (mParent == null) {
             Instrumentation.ActivityResult ar =
                 mInstrumentation.execStartActivity(
@@ -3857,6 +3922,16 @@ public class Activity extends ContextThemeWrapper
      * @hide
      */
     public void startActivityAsCaller(Intent intent, @Nullable Bundle options, int userId) {
+        /// M: BMW. [ALPS01907282] @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();         
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null) {               
+            if (mContext != null && mMultiWindowProxy.getFloatingState()) {               
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent);
+            } else if (mIntent != null && mMultiWindowProxy.isFloatingWindow(mIntent)) {
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent); 
+            }                          
+        }
+        /// @}
         if (mParent != null) {
             throw new RuntimeException("Can't be called from a child");
         }
@@ -4343,6 +4418,16 @@ public class Activity extends ContextThemeWrapper
      */
     public void startActivityFromFragment(@NonNull Fragment fragment, Intent intent,
             int requestCode, @Nullable Bundle options) {
+        /// M: BMW. @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();         
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null) {               
+            if (mContext != null && mMultiWindowProxy.getFloatingState()) {               
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent);
+            } else if (mIntent != null && mMultiWindowProxy.isFloatingWindow(mIntent)) {
+                 intent = mMultiWindowProxy.adjustWindowIntent(intent); 
+            }                          
+        }
+        /// @}
         if (options != null) {
             mActivityTransitionState.startExitOutTransition(this, options);
         }
@@ -4567,6 +4652,12 @@ public class Activity extends ContextThemeWrapper
             wm.addView(mDecor, getWindow().getAttributes());
             mWindowAdded = true;
         }
+        /// M: BMW @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();            
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null) {   
+            mMultiWindowProxy.setFloatDecorVisibility(mToken, View.VISIBLE);
+        } 
+        /// @}
         mDecor.setVisibility(View.VISIBLE);
     }
 
@@ -5933,6 +6024,17 @@ public class Activity extends ContextThemeWrapper
         mWindow.setCallback(this);
         mWindow.setOnWindowDismissedCallback(this);
         mWindow.getLayoutInflater().setPrivateFactory(this);
+        /// M: BMW. Add floating window control bar button Listener. @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();            
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null) {
+            mContext = context;
+            if (mMultiWindowProxy.isFloatingWindow(intent)) {   
+                mMultiWindowProxy.setWindowType(token, MultiWindowProxy.FLOATING_WINDOW_FULL);
+            } else {
+                mMultiWindowProxy.setWindowType(token, MultiWindowProxy.NOT_FLOATING_WINDOW);
+            }
+        } 
+        /// @}
         if (info.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED) {
             mWindow.setSoftInputMode(info.softInputMode);
         }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +46,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ListPopupWindow.ForwardingListener;
 import android.widget.PopupWindow.OnDismissListener;
 
+import com.mediatek.xlog.Xlog;
 
 /**
  * A view that displays one child at a time and lets the user pick among them.
@@ -585,7 +591,7 @@ public class Spinner extends AbsSpinner implements OnClickListener {
 
         checkSelectionChanged();
 
-        mDataChanged = false;
+        setDataChanged(false);
         mNeedSync = false;
         setNextSelectedPositionInt(mSelectedPosition);
     }
@@ -1126,6 +1132,10 @@ public class Spinner extends AbsSpinner implements OnClickListener {
             } else {
                 hOffset += spinnerPaddingLeft;
             }
+
+            Xlog.d(TAG, "DropdownPopup show(): hOffset = " + hOffset + ", width = " + getWidth()
+                    + ", this = " + this);
+
             setHorizontalOffset(hOffset);
         }
 
@@ -1178,5 +1188,31 @@ public class Spinner extends AbsSpinner implements OnClickListener {
                 });
             }
         }
+    }
+
+    /**
+     * Dismiss the popup window by application's request.
+     * Spinner use the popup window to show its data. Normally, Spinner helps
+     * to decide when to show or dismiss the popup window.
+     *
+     * @internal
+     * @hide
+     */
+    public void dismissPopup() {
+        if (mPopup != null && mPopup.isShowing()) {
+            mPopup.dismiss();
+        }
+    }
+
+    /**
+     * Judge whether the popup window is showing.
+     *
+     * @return true if popup is showing, otherwise false
+     *
+     * @internal
+     * @hide
+     */
+    public boolean isPopupShowing() {
+        return (mPopup != null && mPopup.isShowing());
     }
 }

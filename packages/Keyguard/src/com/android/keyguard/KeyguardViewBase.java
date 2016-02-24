@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +43,7 @@ import android.util.Slog;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 
@@ -45,6 +51,9 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardHostView.OnDismissAction;
 import com.android.keyguard.KeyguardSecurityContainer.SecurityCallback;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
+
+import com.mediatek.keyguard.AntiTheft.AntiTheftManager ;
+import com.mediatek.keyguard.VoiceWakeup.VoiceWakeupManager ;
 
 import java.io.File;
 
@@ -60,7 +69,6 @@ import java.io.File;
 public abstract class KeyguardViewBase extends FrameLayout implements SecurityCallback {
 
     private AudioManager mAudioManager;
-    private TelephonyManager mTelephonyManager = null;
     protected ViewMediatorCallback mViewMediatorCallback;
     protected LockPatternUtils mLockPatternUtils;
     private OnDismissAction mDismissAction;
@@ -99,6 +107,11 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
         mDismissAction = action;
     }
 
+    // M: add for voice unlock,
+    public boolean hasOnDismissAction() {
+        return mDismissAction != null ? true : false;
+    }
+
     @Override
     protected void onFinishInflate() {
         mSecurityContainer =
@@ -108,6 +121,11 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
         mSecurityContainer.setSecurityCallback(this);
         mSecurityContainer.showPrimarySecurityScreen(false);
         // mSecurityContainer.updateSecurityViews(false /* not bouncing */);
+    }
+
+    @Override
+    public void updateNavbarStatus() {
+        mViewMediatorCallback.updateNavbarStatus() ;
     }
 
     /**
@@ -124,6 +142,11 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
      *  @return True if the keyguard is done.
      */
     public boolean dismiss() {
+        /// M: If dm lock is on, should not let user by pass lockscreen
+        if (!AntiTheftManager.isDismissable()) {
+            return false ;
+        }
+
         return dismiss(false);
     }
 
@@ -148,6 +171,13 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
         return false;
     }
 
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:13:38 +0800
+ * fingerprint add by sileadinc
+ */
+    public void showAutoDismissDialog(String msg, int timeout) {
+        mSecurityContainer.showAutoDismissDialog(msg,timeout);
+    }
+// End of Vanzo:hanshengpeng
     protected void announceCurrentSecurityMethod() {
         mSecurityContainer.announceCurrentSecurityMethod();
     }
@@ -168,6 +198,7 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
 
     @Override
     public boolean dismiss(boolean authenticated) {
+        if (DEBUG) Log.d(TAG, "dismiss(authenticated = " + authenticated + ") is called.") ;
         return mSecurityContainer.showNextSecurityScreenOrFinish(authenticated);
     }
 
@@ -177,17 +208,31 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
      */
     @Override
     public void finish() {
+        if (DEBUG) Log.d(TAG, "finish() is called.") ;
+
         // If the alternate unlock was suppressed, it can now be safely
         // enabled because the user has left keyguard.
-        KeyguardUpdateMonitor.getInstance(mContext).setAlternateUnlockEnabled(true);
+        /// M: [ALPS01748966] Move this to KeygaurdBouncer.hide()
+        ///    since that is the truely place that user has left keyguard.
+        //KeyguardUpdateMonitor.getInstance(mContext).setAlternateUnlockEnabled(true);
 
         // If there's a pending runnable because the user interacted with a widget
         // and we're leaving keyguard, then run it.
         boolean deferKeyguardDone = false;
         if (mDismissAction != null) {
+            if (DEBUG) Log.d(TAG, "finish() - call mDismissAction.onDismiss().") ;
             deferKeyguardDone = mDismissAction.onDismiss();
             mDismissAction = null;
         }
+        else if (VoiceWakeupManager.getInstance().isDismissAndLaunchApp()) {
+            if (DEBUG) Log.d(TAG, "finish() - call VoiceWakeupManager.getInstance().onDismiss().") ;
+            VoiceWakeupManager.getInstance().onDismiss();
+            //we need to launch app & dismiss keyguard immediately
+            deferKeyguardDone = false ;
+            // since we need to dismiss keyguard directly, skip onDismiss() of current security view.
+            //mDismissAction = null;
+        }
+
         if (mViewMediatorCallback != null) {
             if (deferKeyguardDone) {
                 mViewMediatorCallback.keyguardDonePending();
@@ -313,12 +358,8 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                     /* Suppress PLAY/PAUSE toggle when phone is ringing or
                      * in-call to avoid music playback */
-                    if (mTelephonyManager == null) {
-                        mTelephonyManager = (TelephonyManager) getContext().getSystemService(
-                                Context.TELEPHONY_SERVICE);
-                    }
-                    if (mTelephonyManager != null &&
-                            mTelephonyManager.getCallState() != TelephonyManager.CALL_STATE_IDLE) {
+                    if (KeyguardUpdateMonitor.getInstance(mContext).getPhoneState()
+                            != TelephonyManager.CALL_STATE_IDLE) {
                         return true;  // suppress key event
                     }
                 case KeyEvent.KEYCODE_MUTE:
@@ -493,4 +534,15 @@ public abstract class KeyguardViewBase extends FrameLayout implements SecurityCa
 
     protected abstract void onExternalMotionEvent(MotionEvent event);
 
+    ///M: added for DiglLayout
+    public void setNotificationPanelView(ViewGroup notificationPanelView) {
+        mSecurityContainer.setNotificationPanelView(notificationPanelView) ;
+    }
+
+    /**
+       * M: on screen turned off.
+       */
+    public void onScreenTurnedOff() {
+        mSecurityContainer.onScreenTurnedOff();
+    }
 }

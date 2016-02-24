@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +50,7 @@ import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.StrictMode;
+import android.os.Trace;
 import android.service.voice.IVoiceInteractionSession;
 import android.text.TextUtils;
 import android.util.Log;
@@ -685,6 +691,18 @@ public abstract class ActivityManagerNative extends Binder implements IActivityM
                     ? Bundle.CREATOR.createFromParcel(data) : null;
             moveTaskToFront(task, fl, options);
             reply.writeNoException();
+            return true;
+        }
+
+        case MOVE_TASK_TO_FRONT_WITH_RESULT_TRANSACTION: {
+            data.enforceInterface(IActivityManager.descriptor);
+            int task = data.readInt();
+            int fl = data.readInt();
+            Bundle options = data.readInt() != 0
+                    ? Bundle.CREATOR.createFromParcel(data) : null;
+            boolean res = moveTaskToFrontWithResult(task, fl, options);
+            reply.writeNoException();
+            reply.writeInt(res ? 1 : 0);
             return true;
         }
 
@@ -2000,6 +2018,7 @@ public abstract class ActivityManagerNative extends Binder implements IActivityM
             return true;
         }
 
+	/// M: Add for getting swap memory usage @{
         case GET_PROCESS_PSS_TRANSACTION: {
             data.enforceInterface(IActivityManager.descriptor);
             int[] pids = data.createIntArray();
@@ -2008,6 +2027,17 @@ public abstract class ActivityManagerNative extends Binder implements IActivityM
             reply.writeLongArray(pss);
             return true;
         }
+	/// @}
+
+        case GET_PROCESS_PSWAP_TRANSACTION: {
+            data.enforceInterface(IActivityManager.descriptor);
+            int[] pids = data.createIntArray();
+            long[] pss = getProcessPswap(pids);
+            reply.writeNoException();
+            reply.writeLongArray(pss);
+            return true;
+        }
+
 
         case SHOW_BOOT_MESSAGE_TRANSACTION: {
             data.enforceInterface(IActivityManager.descriptor);
@@ -2364,6 +2394,71 @@ public abstract class ActivityManagerNative extends Binder implements IActivityM
             reply.writeNoException();
             return true;
         }
+
+        /// M: dump message history and future messages for app transition timeout or freeze timeout cases @{
+        case NOTIFY_WINDOW_TIMEOUT:
+        {
+            data.enforceInterface(IActivityManager.descriptor);
+            notifyWindowTimeout();
+            reply.writeNoException();
+            return true;
+        }
+        /// @}
+
+        /// M: ALPS00431397. When running window animation, halt the activity
+        /// launchigng. Otherwise, restore the activity state @{
+        case HALT_ACTIVITY_RESUMING:
+        {
+            data.enforceInterface(IActivityManager.descriptor);
+            int timeout = data.readInt();
+            boolean result = haltActivityResuming(timeout);
+            reply.writeNoException();
+            reply.writeInt(result ? 1 : 0);
+            return true;
+        }
+
+        case RESTORE_ACTIVITY_RESUMING:
+        {
+            data.enforceInterface(IActivityManager.descriptor);
+            boolean result = restoreActivityResuming();
+            reply.writeNoException();
+            reply.writeInt(result ? 1 : 0);
+            return true;
+        }
+        /// @}
+
+        /// M: LCA, set wallpaper process @{
+        case SET_WALLPAPER_PROCESS:
+        {
+            data.enforceInterface(IActivityManager.descriptor);
+            ComponentName className = ComponentName.readFromParcel(data);
+            setWallpaperProcess(className);
+            reply.writeNoException();
+            return true;
+        }
+        /// @}
+
+        /// M: LCA, update wallpaper state @{
+        case UPDATE_WALLPAPER_STATE:
+        {
+            data.enforceInterface(IActivityManager.descriptor);
+            boolean isForeground = data.readInt() != 0;
+            updateWallpaperState(isForeground);
+            reply.writeNoException();
+            return true;
+        }
+        /// @}
+
+        /// M: ALPS01257806, Force kill AP for IPO without stopping the package @{
+        case FORCE_KILL_PACKAGE_TRANSACTION: {
+            data.enforceInterface(IActivityManager.descriptor);
+            String packageName = data.readString();
+            int userId = data.readInt();
+            forceKillPackage(packageName, userId);
+            reply.writeNoException();
+            return true;
+        }
+        /// @}
         }
 
         return super.onTransact(code, data, reply, flags);
@@ -2403,6 +2498,7 @@ class ActivityManagerProxy implements IActivityManager
     public int startActivity(IApplicationThread caller, String callingPackage, Intent intent,
             String resolvedType, IBinder resultTo, String resultWho, int requestCode,
             int startFlags, ProfilerInfo profilerInfo, Bundle options) throws RemoteException {
+        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "amStartActivity"); /// M: Add for LCA launch time debug
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         data.writeInterfaceToken(IActivityManager.descriptor);
@@ -2431,6 +2527,7 @@ class ActivityManagerProxy implements IActivityManager
         int result = reply.readInt();
         reply.recycle();
         data.recycle();
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER); /// M: Add for LCA launch time debug
         return result;
     }
 
@@ -3156,6 +3253,26 @@ class ActivityManagerProxy implements IActivityManager
         data.recycle();
         reply.recycle();
     }
+    public boolean moveTaskToFrontWithResult(int task, int flags, Bundle options) throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeInt(task);
+        data.writeInt(flags);
+        if (options != null) {
+            data.writeInt(1);
+            options.writeToParcel(data, 0);
+        } else {
+            data.writeInt(0);
+        }
+        mRemote.transact(MOVE_TASK_TO_FRONT_WITH_RESULT_TRANSACTION, data, reply, 0);
+        reply.readException();
+        boolean res = reply.readInt() != 0;
+        data.recycle();
+        reply.recycle();
+        return res;
+    }
     public void moveTaskToBack(int task) throws RemoteException
     {
         Parcel data = Parcel.obtain();
@@ -3691,6 +3808,19 @@ class ActivityManagerProxy implements IActivityManager
         Parcel reply = Parcel.obtain();
         data.writeInterfaceToken(IActivityManager.descriptor);
         values.writeToParcel(data, 0);
+        mRemote.transact(UPDATE_CONFIGURATION_TRANSACTION, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+
+    /// M:[SmartBook]
+    public void updateSystemThreadResources(Configuration config) throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        config.writeToParcel(data, 0);
         mRemote.transact(UPDATE_CONFIGURATION_TRANSACTION, data, reply, 0);
         reply.readException();
         data.recycle();
@@ -4944,12 +5074,27 @@ class ActivityManagerProxy implements IActivityManager
         reply.recycle();
     }
 
+    /// M: Add for getting swap memory usage @{
     public long[] getProcessPss(int[] pids) throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         data.writeInterfaceToken(IActivityManager.descriptor);
         data.writeIntArray(pids);
         mRemote.transact(GET_PROCESS_PSS_TRANSACTION, data, reply, 0);
+        reply.readException();
+        long[] res = reply.createLongArray();
+        data.recycle();
+        reply.recycle();
+        return res;
+    }
+    /// @}
+
+    public long[] getProcessPswap(int[] pids) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeIntArray(pids);
+        mRemote.transact(GET_PROCESS_PSWAP_TRANSACTION, data, reply, 0);
         reply.readException();
         long[] res = reply.createLongArray();
         data.recycle();
@@ -5464,6 +5609,84 @@ class ActivityManagerProxy implements IActivityManager
         data.recycle();
         reply.recycle();
     }
+
+    /// M: dump message history and future messages for app transition timeout or freeze timeout cases @{
+    public void notifyWindowTimeout() throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        mRemote.transact(NOTIFY_WINDOW_TIMEOUT, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+    /// @}
+
+    /// M: ALPS00431397. When running window animation, halt the activity
+    /// launchigng. Otherwise, restore the activity state @{
+    public boolean haltActivityResuming(int timeout) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeInt(timeout);
+        mRemote.transact(HALT_ACTIVITY_RESUMING, data, reply, 0);
+        reply.readException();
+        boolean result = reply.readInt() != 0;
+        data.recycle();
+        reply.recycle();
+        return result;
+    }
+
+    public boolean restoreActivityResuming()  throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        mRemote.transact(RESTORE_ACTIVITY_RESUMING, data, reply, 0);
+        reply.readException();
+        boolean result = reply.readInt() != 0;
+        data.recycle();
+        reply.recycle();
+        return result;
+    }
+    /// @}
+
+    /// M: LCA, set wallpaper process
+    public void setWallpaperProcess(ComponentName className) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        ComponentName.writeToParcel(className, data);
+        mRemote.transact(SET_WALLPAPER_PROCESS, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+
+    /// M: LCA, update wallpaper process adj
+    public void updateWallpaperState(boolean isForeground) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeInt(isForeground ? 1 : 0);
+        mRemote.transact(UPDATE_WALLPAPER_STATE, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+
+    /// M: ALPS01257806, Force kill AP for IPO without stopping the package @{
+    public void forceKillPackage(String packageName, int userId) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeString(packageName);
+        data.writeInt(userId);
+        mRemote.transact(FORCE_KILL_PACKAGE_TRANSACTION, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+    /// @}
 
     private IBinder mRemote;
 }

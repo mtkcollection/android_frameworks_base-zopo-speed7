@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,11 +40,10 @@ namespace uirenderer {
  * left).
  */
 CacheBlock* CacheBlock::insertBlock(CacheBlock* head, CacheBlock* newBlock) {
-#if DEBUG_FONT_RENDERER
-    ALOGD("insertBlock: this, x, y, w, h = %p, %d, %d, %d, %d",
+
+    FONT_RENDERER_LOGD("insertBlock: this, x, y, w, h = %p, %d, %d, %d, %d",
             newBlock, newBlock->mX, newBlock->mY,
             newBlock->mWidth, newBlock->mHeight);
-#endif
 
     CacheBlock* currBlock = head;
     CacheBlock* prevBlock = NULL;
@@ -79,11 +83,10 @@ CacheBlock* CacheBlock::insertBlock(CacheBlock* head, CacheBlock* newBlock) {
 }
 
 CacheBlock* CacheBlock::removeBlock(CacheBlock* head, CacheBlock* blockToRemove) {
-#if DEBUG_FONT_RENDERER
-    ALOGD("removeBlock: this, x, y, w, h = %p, %d, %d, %d, %d",
+
+    FONT_RENDERER_LOGD("removeBlock: this, x, y, w, h = %p, %d, %d, %d, %d",
             blockToRemove, blockToRemove->mX, blockToRemove->mY,
             blockToRemove->mWidth, blockToRemove->mHeight);
-#endif
 
     CacheBlock* newHead = head;
     CacheBlock* nextBlock = blockToRemove->mNext;
@@ -157,6 +160,7 @@ void CacheTexture::releaseTexture() {
     }
     if (mTextureId) {
         mCaches.deleteTexture(mTextureId);
+        TT_REMOVE(mTextureId, "[CacheTexture.h] releaseTexture -");
         mTextureId = 0;
     }
     mDirty = false;
@@ -193,6 +197,7 @@ void CacheTexture::allocateTexture() {
         // Initialize texture dimensions
         glTexImage2D(GL_TEXTURE_2D, 0, mFormat, mWidth, mHeight, 0,
                 mFormat, GL_UNSIGNED_BYTE, 0);
+        TT_ADD(String8("CacheTexture"), mTextureId, mWidth, mHeight, mFormat, GL_UNSIGNED_BYTE, String8("font"), "[CacheTexture.h] allocateTexture +");
 
         const GLenum filtering = getLinearFiltering() ? GL_LINEAR : GL_NEAREST;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filtering);
@@ -220,6 +225,9 @@ bool CacheTexture::upload() {
     mTexture->upload(x, y, width, height);
     setDirty(false);
 
+    FONT_RENDERER_LOGD("CacheTexture %d upload: x, y, width height = %d, %d, %d, %d",
+            getTextureId(), x, y, width, height);
+
     return mHasUnpackRowLength;
 }
 
@@ -235,25 +243,19 @@ bool CacheTexture::fitBitmap(const SkGlyph& glyph, uint32_t* retOriginX, uint32_
         case SkMask::kA8_Format:
         case SkMask::kBW_Format:
             if (mFormat != GL_ALPHA) {
-#if DEBUG_FONT_RENDERER
-                ALOGD("fitBitmap: texture format %x is inappropriate for monochromatic glyphs",
+                FONT_RENDERER_LOGD("fitBitmap: texture format %x is inappropriate for monochromatic glyphs",
                         mFormat);
-#endif
                 return false;
             }
             break;
         case SkMask::kARGB32_Format:
             if (mFormat != GL_RGBA) {
-#if DEBUG_FONT_RENDERER
-                ALOGD("fitBitmap: texture format %x is inappropriate for colour glyphs", mFormat);
-#endif
+                FONT_RENDERER_LOGD("fitBitmap: texture format %x is inappropriate for colour glyphs", mFormat);
                 return false;
             }
             break;
         default:
-#if DEBUG_FONT_RENDERER
-            ALOGD("fitBitmap: unknown glyph format %x encountered", glyph.fMaskFormat);
-#endif
+            FONT_RENDERER_LOGD("fitBitmap: unknown glyph format %x encountered", glyph.fMaskFormat);
             return false;
     }
 
@@ -298,22 +300,21 @@ bool CacheTexture::fitBitmap(const SkGlyph& glyph, uint32_t* retOriginX, uint32_
                     // There's enough height left over to create a new CacheBlock
                     CacheBlock* newBlock = new CacheBlock(oldX, glyphH + TEXTURE_BORDER_SIZE,
                             roundedUpW, mHeight - glyphH - TEXTURE_BORDER_SIZE);
-#if DEBUG_FONT_RENDERER
-                    ALOGD("fitBitmap: Created new block: this, x, y, w, h = %p, %d, %d, %d, %d",
+
+                    FONT_RENDERER_LOGD("fitBitmap: Created new block: this, x, y, w, h = %p, %d, %d, %d, %d",
                             newBlock, newBlock->mX, newBlock->mY,
                             newBlock->mWidth, newBlock->mHeight);
-#endif
+
                     mCacheBlocks = CacheBlock::insertBlock(mCacheBlocks, newBlock);
                 }
             } else {
                 // Insert into current column and adjust column dimensions
                 cacheBlock->mY += glyphH;
                 cacheBlock->mHeight -= glyphH;
-#if DEBUG_FONT_RENDERER
-                ALOGD("fitBitmap: Added to existing block: this, x, y, w, h = %p, %d, %d, %d, %d",
+
+                FONT_RENDERER_LOGD("fitBitmap: Added to existing block: this, x, y, w, h = %p, %d, %d, %d, %d",
                         cacheBlock, cacheBlock->mX, cacheBlock->mY,
                         cacheBlock->mWidth, cacheBlock->mHeight);
-#endif
             }
 
             if (cacheBlock->mHeight < fmin(glyphH, glyphW)) {
@@ -328,17 +329,19 @@ bool CacheTexture::fitBitmap(const SkGlyph& glyph, uint32_t* retOriginX, uint32_
             mNumGlyphs++;
 
 #if DEBUG_FONT_RENDERER
-            ALOGD("fitBitmap: current block list:");
-            mCacheBlocks->output();
+            if (g_HWUI_debug_font_renderer) {
+                FONT_RENDERER_LOGD("fitBitmap: current block list:");
+                mCacheBlocks->output();
+            }
 #endif
 
             return true;
         }
         cacheBlock = cacheBlock->mNext;
     }
-#if DEBUG_FONT_RENDERER
-    ALOGD("fitBitmap: returning false for glyph of size %d, %d", glyphW, glyphH);
-#endif
+
+    FONT_RENDERER_LOGD("fitBitmap: returning false for glyph of size %d, %d", glyphW, glyphH);
+
     return false;
 }
 

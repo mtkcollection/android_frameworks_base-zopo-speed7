@@ -359,7 +359,7 @@
     <string name="accessibility_airplane_mode">Airplane mode.</string>
 
     <!-- Content description of the battery level icon for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
-    <string name="accessibility_battery_level">Battery <xliff:g id="number">%d</xliff:g> percent.</string>
+    <string name="accessibility_battery_level" translatable="false">Battery <xliff:g id="number">%d</xliff:g> percent.</string>
 
     <!-- Content description of the button for showing a settings panel in the notification panel for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_settings_button">System settings.</string>
@@ -384,6 +384,12 @@
 
     <!-- Content description of the ringer silent icon in the notification panel for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_ringer_silent">Ringer silent.</string>
+
+<!-- Vanzo:yinjun on: Tue, 17 Mar 2015 15:46:44 +0800
+statubar out door icon
+-->
+    <string name="accessibility_ringer_outdoor">Ringer outdoor.</string>
+<!-- End of Vanzo: yinjun -->
 
     <!-- Content description of the cast icon in the notification panel for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_casting">@string/quick_settings_casting</string>

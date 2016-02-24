@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,15 +31,26 @@
 namespace android {
 namespace uirenderer {
 
-#define SK_MATRIX_STRING "[%.2f %.2f %.2f] [%.2f %.2f %.2f] [%.2f %.2f %.2f]"
+/* M: These MACRO are for SkMatrix which is row major
+ *       | 0 1 2 |
+ *       | 3 4 5 |
+ *       | 6 7 8 |
+*/
+#define SK_MATRIX_STRING "{[%f %f %f] [%f %f %f] [%f %f %f]}"
 #define SK_MATRIX_ARGS(m) \
     (m)->get(0), (m)->get(1), (m)->get(2), \
     (m)->get(3), (m)->get(4), (m)->get(5), \
     (m)->get(6), (m)->get(7), (m)->get(8)
 
-#define MATRIX_4_STRING "[%.2f %.2f %.2f %.2f] [%.2f %.2f %.2f %.2f]" \
-    " [%.2f %.2f %.2f %.2f] [%.2f %.2f %.2f %.2f]"
+/* M: but Matrix4 is column major
+*       | 0  4  8  12 |
+*       | 1  5  9  13 |
+*       | 2  6 10  14 |
+*       | 3  7 11  15 |
+*/
+#define MATRIX_4_STRING "{0x%x [%f %f %f %f] [%f %f %f %f] [%f %f %f %f] [%f %f %f %f]}"
 #define MATRIX_4_ARGS(m) \
+    (m)->getType(), \
     (m)->data[0], (m)->data[4], (m)->data[8], (m)->data[12], \
     (m)->data[1], (m)->data[5], (m)->data[9], (m)->data[13], \
     (m)->data[2], (m)->data[6], (m)->data[10], (m)->data[14], \

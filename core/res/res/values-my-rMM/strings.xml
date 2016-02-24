@@ -1341,8 +1341,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"ဝိုင်ဖိုင်ကွန်ရက်သို့ ဝင်ပါ"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"ကွန်ရက်သို့ ဝင်ပါ"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
-    <skip />
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"ဝိုင်ဖိုင်ကိုချိတ်ဆက်မရပါ"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" အင်တာနက် ဆက်သွယ်မှု ကောင်းကောင်းမရှိပါ"</string>
     <string name="wifi_p2p_dialog_title" msgid="97611782659324517">"တိုက်ရိုက် ဝိုင်ဖိုင်"</string>
@@ -1852,6 +1851,10 @@
     <item quantity="one" msgid="597194865053253679">"တစ်နာရီကြာ (<xliff:g id="FORMATTEDTIME">%2$s</xliff:g>အထိ)"</item>
     <item quantity="other" msgid="2827214920627669898">"%1$d နာရီကြာ (<xliff:g id="FORMATTEDTIME">%2$s</xliff:g>အထိ)"</item>
   </plurals>
+    <string name="storage_phone">ဖုန်းရှိသိမ်းဆည်းရန်နေရာ</string>
+    <string name="storage_external_usb">ပြင်ပ USB သိမ်းဆည်းရန်နေရာ</string>
+    <string name="storage_ic_usb1">ပြင်ပ IC-USB သိုလှောင်နေရာ၁</string>
+    <string name="storage_ic_usb2">ပြင်ပ IC-USB သိုလှောင်နေရာ၂</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"တစ်မိနစ် အတွင်း"</item>
     <item quantity="other" msgid="6924190729213550991">"%d မိနစ် အတွင်း"</item>
@@ -1872,4 +1875,8 @@
     <string name="stk_cc_ss_to_dial" msgid="2151304435775557162">"DIAL တောင်းဆိုချက်အရ SS တောင်းဆိုချက်အား ပြင်ဆင်ထား၏။"</string>
     <string name="stk_cc_ss_to_ussd" msgid="3951862188105305589">"USSD တောင်းဆိုချက်အရ SS တောင်းဆိုချက်အား ပြင်ဆင်ထား၏။"</string>
     <string name="stk_cc_ss_to_ss" msgid="5470768854991452695">"SS တောင်းဆိုချက်အရ SS တောင်းဆိုချက်အား ပြင်ဆင်ထား၏။"</string>
+  <plurals name="zen_mode_duration_hours">
+    <item quantity="one">တစ်နာရီအတွက်</item>
+    <item quantity="other">%d နာရီအတွက်</item>
+  </plurals>
 </resources>

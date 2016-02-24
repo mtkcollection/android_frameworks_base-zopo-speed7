@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +20,9 @@
  */
 
 package android.util;
+
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.util.IWebProtocolNames;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -155,6 +163,43 @@ public class Patterns {
                         // input.  This is to stop foo.sure from
                         // matching as foo.su
 
+    /**
+     * M: The extended web url pattern
+     */
+    private static Pattern sWebUrlPattern = null;
+
+    /**
+     * M: Use this method to get web url pattern with extended protocol name
+     * @hide
+     * @return the exntended pattern of web url
+     */
+    public static final Pattern getWebUrlPattern() {
+        if (sWebUrlPattern == null) {
+            IWebProtocolNames plugin = (IWebProtocolNames) MPlugin.createInstance(
+                IWebProtocolNames.class.getName());
+            if (plugin != null) {
+                String newProtocolsStr = plugin.getExtendedWebUrlProtocol();
+                if (newProtocolsStr == null) {
+                    sWebUrlPattern = WEB_URL;
+                } else {
+                    String webUrlStr = WEB_URL.toString();
+                    int index = webUrlStr.indexOf("http|");
+                    if (index != -1) {
+                        webUrlStr = new StringBuilder(webUrlStr).insert(index,
+                            newProtocolsStr).toString();
+                        sWebUrlPattern = Pattern.compile(webUrlStr);
+                    } else {
+                        sWebUrlPattern = WEB_URL;
+                    }
+                }
+            } else {
+                Log.d("Patterns", "getWebUrlPattern(), IWebProtocolNames " +
+                    "fail to create plugin instance");
+            }
+        }
+        return sWebUrlPattern;
+    }
+
     public static final Pattern EMAIL_ADDRESS
         = Pattern.compile(
             "[a-zA-Z0-9\\+\\.\\_\\%\\-\\+]{1,256}" +
@@ -185,6 +230,18 @@ public class Patterns {
                 "(\\+[0-9]+[\\- \\.]*)?"        // +<digits><sdd>*
                 + "(\\([0-9]+\\)[\\- \\.]*)?"   // (<digits>)<sdd>*
                 + "([0-9][0-9\\- \\.]+[0-9])"); // <digit><digit|sdd>+<digit>
+
+    /**
+     * M: MTK Version for ALPS00934864
+     * @hide
+     * @internal
+     */
+    public static final Pattern PHONE_EX
+        = Pattern.compile(// sdd = space, dot, or dash
+                "(\\+[0-9\\(\\)]+[\\- \\.]*)?"                                    // +<digits or ( or )><sdd>*
+                + "(\\([0-9\\(\\)]+\\)[\\- \\.]*)?"                               // (<digits or ( or )>)<sdd>*
+                + "([0-9\\(\\)][0-9\\(\\)\\- \\.][0-9\\(\\)\\- \\.]+[0-9\\(\\)])" // <digit or ( or )><digit or ( or )|sdd>+<digit>
+                + "(,? *)?");
 
     /**
      *  Convenience method to take all of the non-null matching groups in a

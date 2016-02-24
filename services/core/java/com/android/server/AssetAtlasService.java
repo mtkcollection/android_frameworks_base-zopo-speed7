@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +61,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+
 /**
  * This service is responsible for packing preloaded bitmaps into a single
  * atlas texture. The resulting texture can be shared across processes to
@@ -63,13 +69,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * @hide
  */
+@SuppressWarnings("nofinalizer")
 public class AssetAtlasService extends IAssetAtlas.Stub {
     /**
      * Name of the <code>AssetAtlasService</code>.
      */
     public static final String ASSET_ATLAS_SERVICE = "assetatlas";
 
-    private static final String LOG_TAG = "AssetAtlas";
+    private static final String LOG_TAG = "AssetAtlasService";
 
     // Turns debug logs on/off. Debug logs are kept to a minimum and should
     // remain on to diagnose issues
@@ -140,6 +147,8 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
         // We only care about drawables that hold bitmaps
         final Resources resources = context.getResources();
         final LongSparseArray<Drawable.ConstantState> drawables = resources.getPreloadedDrawables();
+        /// M: Debug log for checking preload drawables.
+        Log.d(LOG_TAG, "AssetAtlasService: size of preload drawables is " + drawables.size());
 
         final int count = drawables.size();
         for (int i = 0; i < count; i++) {
@@ -305,6 +314,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
                 }
 
                 final long endUpload = System.nanoTime();
+
                 if (DEBUG_ATLAS) {
                     float renderDuration = (endRender - startRender) / 1000.0f / 1000.0f;
                     float uploadDuration = (endUpload - endRender) / 1000.0f / 1000.0f;
@@ -417,22 +427,25 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
             }
 
             try {
-                signal.await(10, TimeUnit.SECONDS);
+                signal.await(15, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Log.w(LOG_TAG, "Could not complete configuration computation");
                 return null;
             }
         }
 
-        // Maximize the number of packed bitmaps, minimize the texture size
-        Collections.sort(results, new Comparator<WorkerResult>() {
-            @Override
-            public int compare(WorkerResult r1, WorkerResult r2) {
-                int delta = r2.count - r1.count;
-                if (delta != 0) return delta;
-                return r1.width * r1.height - r2.width * r2.height;
-            }
-        });
+        /// M: Synchronized results in case result is modified during sorting.
+        synchronized (results) {
+            // Maximize the number of packed bitmaps, minimize the texture size
+            Collections.sort(results, new Comparator<WorkerResult>() {
+                @Override
+                public int compare(WorkerResult r1, WorkerResult r2) {
+                    int delta = r2.count - r1.count;
+                    if (delta != 0) return delta;
+                    return r1.width * r1.height - r2.width * r2.height;
+                }
+            });
+        }
 
         if (DEBUG_ATLAS) {
             float delay = (System.nanoTime() - begin) / 1000.0f / 1000.0f / 1000.0f;

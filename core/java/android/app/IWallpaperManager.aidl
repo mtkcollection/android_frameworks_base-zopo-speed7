@@ -87,4 +87,14 @@ interface IWallpaperManager {
      * Informs the service that wallpaper settings have been restored. Private API.
      */
     void settingsRestored();
+
+     /**
+     * Reset wallpaper, delete wallpaper and wallpaper_info.xml file
+     */
+    void resetWallpaper();
+
+    /**
+     * [MTK LCA Memory Slim], for WMS tell WpMS the visible state changed of wallpaper
+     */
+    void onVisibilityChanged(boolean isVisible); 
 }

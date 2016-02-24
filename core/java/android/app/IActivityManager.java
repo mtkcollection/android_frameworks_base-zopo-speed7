@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -130,6 +135,8 @@ public interface IActivityManager extends IInterface {
     public List<ActivityManager.ProcessErrorStateInfo> getProcessesInErrorState()
             throws RemoteException;
     public void moveTaskToFront(int task, int flags, Bundle options) throws RemoteException;
+    public boolean moveTaskToFrontWithResult(int task, int flags,
+            Bundle options) throws RemoteException;
     public void moveTaskToBack(int task) throws RemoteException;
     public boolean moveActivityTaskToBack(IBinder token, boolean nonRoot) throws RemoteException;
     public void moveTaskBackwards(int task) throws RemoteException;
@@ -192,6 +199,8 @@ public interface IActivityManager extends IInterface {
 
     public Configuration getConfiguration() throws RemoteException;
     public void updateConfiguration(Configuration values) throws RemoteException;
+    /// M:[SmartBook]
+    public void updateSystemThreadResources(Configuration config) throws RemoteException;
     public void setRequestedOrientation(IBinder token,
             int requestedOrientation) throws RemoteException;
     public int getRequestedOrientation(IBinder token) throws RemoteException;
@@ -391,8 +400,15 @@ public interface IActivityManager extends IInterface {
 
     public void updatePersistentConfiguration(Configuration values) throws RemoteException;
 
+    /// M: Add for getting swap memory usage @{
     public long[] getProcessPss(int[] pids) throws RemoteException;
-
+    /// @}
+    /// M: Add for getting swap memory usage @{
+    /**
+     * @internal
+     */
+    public long[] getProcessPswap(int[] pids) throws RemoteException;
+    /// @}
     public void showBootMessage(CharSequence msg, boolean always) throws RemoteException;
 
     public void keyguardWaitingForActivityDrawn() throws RemoteException;
@@ -467,8 +483,21 @@ public interface IActivityManager extends IInterface {
 
     public void notifyLaunchTaskBehindComplete(IBinder token) throws RemoteException;
     public void notifyEnterAnimationComplete(IBinder token) throws RemoteException;
+    public void notifyWindowTimeout() throws RemoteException; /// M: dump message history and future messages for app transition timeout or freeze timeout cases
+    public void setWallpaperProcess(ComponentName className) throws RemoteException; /// M: LCA, set wallpaper process
+    public void updateWallpaperState(boolean isForeground) throws RemoteException;   /// M: LCA, update wallpaper process adj
 
     public void systemBackupRestored() throws RemoteException;
+
+    /// M: ALPS00431397. When running window animation, halt the activity
+    /// launchigng. Otherwise, restore the activity state @{
+    public boolean haltActivityResuming(int timeout) throws RemoteException;
+    public boolean restoreActivityResuming() throws RemoteException;
+    /// @}
+
+    /// M: ALPS01257806, Force kill AP for IPO without stopping the package @{
+    public void forceKillPackage(final String packageName, int userId) throws RemoteException;
+    /// @}
 
     /*
      * Private non-Binder interfaces
@@ -792,4 +821,26 @@ public interface IActivityManager extends IInterface {
     int CHECK_PERMISSION_WITH_TOKEN_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION+241;
     int REGISTER_TASK_STACK_LISTENER_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION+242;
     int SYSTEM_BACKUP_RESTORED = IBinder.FIRST_CALL_TRANSACTION+243;
+
+    int NOTIFY_WINDOW_TIMEOUT = IBinder.FIRST_CALL_TRANSACTION + 300;   /// M: dump message history and future messages for app transition timeout or app freeze timeout cases
+    int SET_WALLPAPER_PROCESS = IBinder.FIRST_CALL_TRANSACTION + 301;   /// M: LCA, set wallpaper process
+    int UPDATE_WALLPAPER_STATE = IBinder.FIRST_CALL_TRANSACTION + 302;  /// M: LCA, update wallpaper process adj
+
+    /// M: ALPS00431397. When running window animation, halt the activity
+    /// launchigng. Otherwise, restore the activity state @{
+    int HALT_ACTIVITY_RESUMING = IBinder.FIRST_CALL_TRANSACTION + 303;
+    int RESTORE_ACTIVITY_RESUMING = IBinder.FIRST_CALL_TRANSACTION + 304;
+    /// @}
+
+    /// M: ALPS00404470. LCA check-in
+    int GET_PROCESS_PSWAP_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 305;
+    /// @}
+
+    /// M: ALPS01257806, Force kill AP for IPO without stopping the package @{
+    int FORCE_KILL_PACKAGE_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 306;
+    /// @}
+
+    /// M: Return the moving result for error handling in RecentApp. @{
+    int MOVE_TASK_TO_FRONT_WITH_RESULT_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 307;
+    /// @}
 }

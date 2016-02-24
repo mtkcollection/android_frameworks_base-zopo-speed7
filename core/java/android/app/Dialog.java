@@ -52,6 +52,9 @@ import android.view.accessibility.AccessibilityEvent;
 
 import java.lang.ref.WeakReference;
 
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
+
 /**
  * Base class for Dialogs.
  * 
@@ -169,6 +172,16 @@ public class Dialog implements DialogInterface, Window.Callback,
         w.setWindowManager(mWindowManager, null, null);
         w.setGravity(Gravity.CENTER);
         mListenersHandler = new ListenersHandler(this);
+        /// M: BMW. When showing dialog at the floating window,
+        /// WRAP_CONTENT causes the abnormal screen. Here,
+        /// just modify the parameters as MATCH_PARENT in phonewindow @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();            
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null 
+                && mMultiWindowProxy.getFloatingState()) {
+             Log.w(TAG, "[BMW] set Window Type: FLOATING_WINDOW_DIALOG");     
+             mMultiWindowProxy.setWindowType(null, MultiWindowProxy.FLOATING_WINDOW_DIALOG);
+        }        
+        /// @}   
     }
 
     /**
@@ -297,7 +310,7 @@ public class Dialog implements DialogInterface, Window.Callback,
         try {
             mWindowManager.addView(mDecor, l);
             mShowing = true;
-    
+            Log.d(TAG, "show");
             sendShowMessage();
         } finally {
         }
@@ -347,7 +360,7 @@ public class Dialog implements DialogInterface, Window.Callback,
             mWindow.closeAllPanels();
             onStop();
             mShowing = false;
-
+            Log.d(TAG, "dismissDialog");
             sendDismissMessage();
         }
     }
@@ -1195,6 +1208,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      */
     public void setOnShowListener(OnShowListener listener) {
         if (listener != null) {
+            Log.d(TAG, "setOnShowListener:" + listener);
             mShowMessage = mListenersHandler.obtainMessage(SHOW, listener);
         } else {
             mShowMessage = null;
@@ -1258,6 +1272,7 @@ public class Dialog implements DialogInterface, Window.Callback,
 
         @Override
         public void handleMessage(Message msg) {
+            Log.d(TAG, "handleMessage:" + msg);
             switch (msg.what) {
                 case DISMISS:
                     ((OnDismissListener) msg.obj).onDismiss(mDialog.get());

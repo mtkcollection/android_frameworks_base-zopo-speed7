@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +53,8 @@ import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -61,6 +68,8 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemProperties;
+import android.os.Trace;
 import android.transition.Scene;
 import android.transition.Transition;
 import android.transition.TransitionInflater;
@@ -97,6 +106,7 @@ import android.view.ViewStub;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.view.animation.Animation;
@@ -108,8 +118,18 @@ import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import com.mediatek.xlog.Xlog;
+
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+
+///M: BMW @{
+import com.mediatek.multiwindow.MultiWindowProxy;
+import com.mediatek.common.multiwindow.IMWPhoneWindowCallback;
+import android.view.View.OnClickListener;
+import android.content.ComponentName;
+import android.os.IBinder;
+///@}
 
 /**
  * Android-specific Window.
@@ -120,6 +140,22 @@ import java.util.ArrayList;
 public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     private final static String TAG = "PhoneWindow";
+
+    /// M: enable log dynamically.
+    private static final boolean DEBUG = SystemProperties.getBoolean(
+            "debug.phonewindow.enable", false);
+
+    /// M: enable log dynamically for debug motion.
+    private static final boolean DBG_MOTION = SystemProperties.getBoolean(
+            "debug.view.motionlog", false);
+
+    private static final boolean DEBUG_TEST_BACKGROUND = SystemProperties.getBoolean(
+            "debug.phonewindow.testBG", false);
+
+    /// M: [APP launch time enhancenment feature] use property to control this feature. @{
+    private static final boolean DBG_APP_LAUNCH_ENHANCE =
+            (1 == SystemProperties.getInt("ro.mtk_perf_simple_start_win", 0)) ? true : false;
+    /// @}
 
     private final static boolean SWEEP_OPEN_MENU = false;
 
@@ -289,6 +325,13 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
     public PhoneWindow(Context context) {
         super(context);
         mLayoutInflater = LayoutInflater.from(context);
+        /// M: BMW @{
+        mMultiWindowProxy = MultiWindowProxy.getInstance();
+        if (mMultiWindowProxy != null){
+            MWcbPhoneWindow cb = new MWcbPhoneWindow();
+            mMultiWindowProxy.setPhoneWindowCallback(cb); 
+        }
+        /// @}
     }
 
     @Override
@@ -704,6 +747,13 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             return;
         }
 
+        /// M: Make sure there is at least one visible non-action item,
+        /// or we will set not prepared and return
+        if (st.menu != null && st.menu.getNonActionItems().size() <= 0) {
+            st.isPrepared = false;
+            return;
+        }
+
         int width = WRAP_CONTENT;
         if (st.decorView == null || st.refreshDecorView) {
             if (st.decorView == null) {
@@ -735,8 +785,16 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
                 // Otherwise, set the normal panel background
                 backgroundResId = st.background;
             }
-            st.decorView.setWindowBackground(getContext().getDrawable(
-                    backgroundResId));
+
+            /// M: Material theme change its type from Drawable to Color, and it leads
+            /// to system crash. @{
+            if (!st.mBackgroundTypeIsInt) {
+                st.decorView.setWindowBackground(getContext().getDrawable(
+                        backgroundResId));
+            } else {
+                st.decorView.setWindowBackground(new ColorDrawable(backgroundResId));
+            }
+            /// @}
 
             ViewParent shownPanelParent = st.shownPanelView.getParent();
             if (shownPanelParent != null && shownPanelParent instanceof ViewGroup) {
@@ -817,10 +875,15 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             return;
         }
 
-        final ViewManager wm = getWindowManager();
+        final WindowManager wm = getWindowManager();
         if ((wm != null) && st.isOpen) {
             if (st.decorView != null) {
-                wm.removeView(st.decorView);
+                /// M: When close optionmenu panel, use removeViewImmediate
+                /// instead of removeView, this will make sure no delay when
+                /// closePanel is blocked by app but another openPanel comes,
+                /// which may cause OptionMenu's ListView detached from window
+                /// but still shown on screen
+                wm.removeViewImmediate(st.decorView);
                 // Log.v(TAG, "Removing main menu from window manager.");
                 if (st.isCompact) {
                     sRotationWatcher.removeWindow(this);
@@ -1360,6 +1423,18 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public final void setBackgroundDrawable(Drawable drawable) {
+        /// M: BMW. [ALPS01881464]. Add black background if no background. 
+        /// If there is a floating window behind the fullscreen window, and
+        /// the fullscreen window has transuluent regions,
+        /// then the floating window need to be composed together, then it 
+        /// maybe displayed on the screen.
+        /// Default disable the black background. If need, enable it in MultiWindowProxy.
+        if (MultiWindowProxy.isFeatureSupport() 
+                    && MultiWindowProxy.isWindowBackgroundEnabled()
+                    && drawable == null) {
+            drawable = new ColorDrawable(Color.BLACK);
+        }
+        /// @}
         if (drawable != mBackgroundDrawable || mBackgroundResource != 0) {
             mBackgroundResource = 0;
             mBackgroundDrawable = drawable;
@@ -1706,7 +1781,11 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public boolean superDispatchKeyEvent(KeyEvent event) {
-        return mDecor.superDispatchKeyEvent(event);
+        boolean handled = mDecor.superDispatchKeyEvent(event);
+        if (DBG_MOTION) {
+            Log.d(TAG, "superDispatchKeyEvent = " + event + ", handled = " + handled);
+        }
+        return handled;
     }
 
     @Override
@@ -1716,7 +1795,11 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public boolean superDispatchTouchEvent(MotionEvent event) {
-        return mDecor.superDispatchTouchEvent(event);
+        boolean handled = mDecor.superDispatchTouchEvent(event);
+        if (DBG_MOTION) {
+            Log.d(TAG, "superDispatchTouchEvent = " + event + ", handled = " + handled);
+        }
+        return handled;
     }
 
     @Override
@@ -1810,6 +1893,21 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
                     dispatcher.startTracking(event, this);
                 }
                 return true;
+            }
+
+            /// M: support IME Toggle Key.
+            case KeyEvent.KEYCODE_IME_TOGGLE: {
+                if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                    if (event.getRepeatCount() > 0) {
+                        break;
+                    }
+                    InputMethodManager imm = (InputMethodManager)
+                        getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.toggleSoftInput(InputMethodManager.SHOW_FORCED_FROM_KEY, 0);
+                    }
+                    return true;
+                }
             }
 
         }
@@ -1939,9 +2037,11 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public final View getDecorView() {
+        Trace.traceBegin(Trace.TRACE_TAG_VIEW, "getDecorView");
         if (mDecor == null) {
             installDecor();
         }
+        Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         return mDecor;
     }
 
@@ -2273,11 +2373,20 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
             if (!isDestroyed()) {
                 final Callback cb = getCallback();
+                if (DBG_MOTION) {
+                    Log.d(TAG, "dispatchKeyEvent = " + event + ", cb = " + cb + ", mFeatureId = "
+                        + mFeatureId);
+                }
                 final boolean handled = cb != null && mFeatureId < 0 ? cb.dispatchKeyEvent(event)
                         : super.dispatchKeyEvent(event);
+                if (DBG_MOTION) {
+                    Log.d(TAG, "dispatchKeyEvent = " + event + ", handled = " + handled);
+                }
                 if (handled) {
                     return true;
                 }
+            } else {
+                Log.d(TAG, "Dropping key event due to destroyed state, event = " + event);
             }
 
             return isDown ? PhoneWindow.this.onKeyDown(mFeatureId, event.getKeyCode(), event)
@@ -2327,6 +2436,10 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         @Override
         public boolean dispatchTouchEvent(MotionEvent ev) {
             final Callback cb = getCallback();
+            if (DBG_MOTION) {
+                Log.d(TAG, "dispatchTouchEvent = " + ev + ", cb = " + cb + ", destroyed? = "
+                        + isDestroyed() + ", mFeatureId = " + mFeatureId);
+            }
             return cb != null && !isDestroyed() && mFeatureId < 0 ? cb.dispatchTouchEvent(ev)
                     : super.dispatchTouchEvent(ev);
         }
@@ -2535,6 +2648,9 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
                 Drawable bg = getBackground();
                 if (bg != null) {
                     bg.setBounds(drawingBounds);
+                    /// M: The outline should be updated if background gets a new size.@{
+                    invalidateOutline();
+                    /// @}
                 }
 
                 if (SWEEP_OPEN_MENU) {
@@ -2652,6 +2768,23 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             if (mMenuBackground != null) {
                 mMenuBackground.draw(canvas);
             }
+
+            if (DEBUG) {
+                Paint paint = new Paint();
+                paint.setColor(0xFFFF0000);
+                paint.setTextSize(20);
+                canvas.drawText(getParent().toString(), 0, 300, paint);
+            }
+        }
+
+        /// M: To check if some area has no background. App should not see green background
+        /// without wallpaper
+        @Override
+        protected void dispatchDraw(Canvas canvas) {
+            if (DEBUG_TEST_BACKGROUND) {
+                canvas.drawARGB(255, 0, 255, 0);
+            }
+            super.dispatchDraw(canvas);
         }
 
 
@@ -3173,6 +3306,12 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             if (cb != null && !isDestroyed() && mFeatureId < 0) {
                 cb.onWindowFocusChanged(hasWindowFocus);
             }
+            /// M: BMW @{           
+            if (MultiWindowProxy.isFeatureSupport() 
+                    && mMultiWindow && mActionView != null) {                         
+                setFloatDecorFocus(hasWindowFocus);
+            } 
+            /// @}
         }
 
         void updateWindowResizeState() {
@@ -3265,6 +3404,14 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             updateColorViewTranslations();
         }
 
+        /// M: to monitor DeorView Visiblity
+        @Override
+        public void setVisibility(int visibility) {
+            super.setVisibility(visibility);
+            Xlog.v("PhoneWindow", "DecorView setVisiblity: visibility = " + visibility
+                + " ,Parent =" + getParent() + ", this =" + this);
+        }
+
         /**
          * Clears out internal reference when the action mode is destroyed.
          */
@@ -3350,7 +3497,14 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         int flagsToUpdate = (FLAG_LAYOUT_IN_SCREEN|FLAG_LAYOUT_INSET_DECOR)
                 & (~getForcedWindowFlags());
         if (mIsFloating) {
-            setLayout(WRAP_CONTENT, WRAP_CONTENT);
+            /// M: BMW @{
+            if (MultiWindowProxy.isFeatureSupport() 
+                 && (mMultiWindow || mMultiWindowDialog)){
+                setLayout(MATCH_PARENT, WRAP_CONTENT);
+            } else {
+                setLayout(WRAP_CONTENT, WRAP_CONTENT);
+            }
+            /// @}
             setFlags(0, flagsToUpdate);
         } else {
             setFlags(FLAG_LAYOUT_IN_SCREEN|FLAG_LAYOUT_INSET_DECOR, flagsToUpdate);
@@ -3543,7 +3697,13 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         int layoutResource;
         int features = getLocalFeatures();
         // System.out.println("Features: 0x" + Integer.toHexString(features));
-        if ((features & (1 << FEATURE_SWIPE_TO_DISMISS)) != 0) {
+
+        /// M: [APP launch time enhancenment feature] Simplified starting window.
+        final boolean mIsStartingWindow = DBG_APP_LAUNCH_ENHANCE
+            && (getAttributes().type == WindowManager.LayoutParams.TYPE_APPLICATION_STARTING);
+        if (mIsStartingWindow) {
+            layoutResource = R.layout.screen_simple;
+        } else if ((features & (1 << FEATURE_SWIPE_TO_DISMISS)) != 0) {
             layoutResource = R.layout.screen_swipe_dismiss;
         } else if ((features & ((1 << FEATURE_LEFT_ICON) | (1 << FEATURE_RIGHT_ICON))) != 0) {
             if (mIsFloating) {
@@ -3602,7 +3762,15 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
         mDecor.startChanging();
 
+        Trace.traceBegin(Trace.TRACE_TAG_VIEW, "DecorView-inflate");
         View in = mLayoutInflater.inflate(layoutResource, null);
+        Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+        /// M: BMW @{
+        if (MultiWindowProxy.isFeatureSupport()
+                && mMultiWindow && !mIsFloating) {  
+           in = prepareFloatDecor(context,in);
+        }
+        /// @}  
         decor.addView(in, new ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT));
         mContentRoot = (ViewGroup) in;
 
@@ -3625,12 +3793,24 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         // Remaining setup -- of background and title -- that only applies
         // to top-level windows.
         if (getContainer() == null) {
-            final Drawable background;
+            Drawable background;
             if (mBackgroundResource != 0) {
                 background = getContext().getDrawable(mBackgroundResource);
             } else {
                 background = mBackgroundDrawable;
             }
+            /// M: BMW. [ALPS01881464]. Add black background if no background. 
+            /// If there is a floating window behind the fullscreen window, and
+            /// the fullscreen window has transuluent regions,
+            /// then the floating window need to be composed together, then it 
+            /// maybe displayed on the screen.
+            /// Default disable the black background. If need, enable it in MultiWindowProxy.
+            if (MultiWindowProxy.isFeatureSupport() 
+                    && MultiWindowProxy.isWindowBackgroundEnabled()
+                    && background == null) {
+                background = new ColorDrawable(Color.BLACK);
+            }
+            /// @}
             mDecor.setWindowBackground(background);
 
             final Drawable frame;
@@ -4389,6 +4569,11 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
         boolean wasLastExpanded;
 
+        /// M: Material theme change its type from Drawable to Color, and it leads
+        /// to system crash. @{
+        boolean mBackgroundTypeIsInt;
+        /// @}
+
         /**
          * Contains the state of the menu when told to freeze.
          */
@@ -4435,8 +4620,19 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
         void setStyle(Context context) {
             TypedArray a = context.obtainStyledAttributes(R.styleable.Theme);
-            background = a.getResourceId(
-                    R.styleable.Theme_panelBackground, 0);
+            /// M: Material theme change its type from Drawable to Color, and it leads
+            /// to system crash. @{
+            int backgroundType = a.getType(R.styleable.Theme_panelBackground);
+            if (backgroundType >= TypedValue.TYPE_FIRST_COLOR_INT &&
+                               backgroundType <= TypedValue.TYPE_LAST_COLOR_INT) {
+                background = a.getColor(R.styleable.Theme_panelBackground, 0);
+                mBackgroundTypeIsInt = true;
+            } else {
+                background = a.getResourceId(
+                        R.styleable.Theme_panelBackground, 0);
+                mBackgroundTypeIsInt = false;
+            }
+            /// @}
             fullBackground = a.getResourceId(
                     R.styleable.Theme_panelFullBackground, 0);
             windowAnimations = a.getResourceId(
@@ -4657,10 +4853,11 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
      * <li> Opens a submenu when selected.
      * <li> Calls back to the callback's onMenuItemSelected when an item is
      * selected.
+     * M: Merge bug fix [ALPS00388675] In music press "Add to playlist" interface display blink
      */
     private final class DialogMenuCallback implements MenuBuilder.Callback, MenuPresenter.Callback {
         private int mFeatureId;
-        private MenuDialogHelper mSubMenuHelper;
+        //private MenuDialogHelper mSubMenuHelper;
 
         public DialogMenuCallback(int featureId) {
             mFeatureId = featureId;
@@ -4682,10 +4879,10 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
                 }
 
                 // Dismiss the submenu, if it is showing
-                if (mSubMenuHelper != null) {
-                    mSubMenuHelper.dismiss();
-                    mSubMenuHelper = null;
-                }
+                //if (mSubMenuHelper != null) {
+                //    mSubMenuHelper.dismiss();
+                //    mSubMenuHelper = null;
+                //}
             }
         }
 
@@ -4711,9 +4908,10 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             // Set a simple callback for the submenu
             subMenu.setCallback(this);
 
+            // M: ListMenuPresenter create sub menu dialog there
             // The window manager will give us a valid window token
-            mSubMenuHelper = new MenuDialogHelper(subMenu);
-            mSubMenuHelper.show(null);
+            //mSubMenuHelper = new MenuDialogHelper(subMenu);
+            //mSubMenuHelper.show(null);
 
             return true;
         }
@@ -4777,4 +4975,111 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             mDecor.updateColorViews(null, false /* animate */);
         }
     }
+    /// M: BMW @{
+    public class MWcbPhoneWindow extends IMWPhoneWindowCallback.Stub{
+        
+        public MWcbPhoneWindow (){      
+        }
+              
+        @Override 
+        public void setWindowType(IBinder iBinder,int windowType){
+            mToken = iBinder;
+            if (windowType == mMultiWindowProxy.FLOATING_WINDOW_FULL) {
+                mMultiWindow = true;
+            } else if (windowType == mMultiWindowProxy.FLOATING_WINDOW_DIALOG) {
+                mMultiWindowDialog = true;  
+            }          
+        }
+        
+        @Override 
+        public void setFloatDecorVisibility(int visibility) {
+            if(mActionView != null) {
+                mActionView.setVisibility(visibility); 
+            }
+            /// M: BMW. [ALPS01940665] Update sticy when FloatDecor's Visibility changed.
+            updateStickView(mMultiWindowProxy.isSticky(mToken));
+        }         
+    }
+    
+    /// M: BMW. Return the view with the multi window decoration (ex. control bar)
+    public ViewGroup prepareFloatDecor(Context context, View mView) {
+        ViewGroup rootView = new FrameLayout(context);
+        rootView.addView(View.inflate(context, com.mediatek.internal.R.layout.float_window, null));
+        ViewGroup contentView = (ViewGroup)rootView.findViewById(com.mediatek.internal.R.id.content);
+        contentView.addView(mView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        mActionView = (ViewGroup) rootView.findViewById(com.mediatek.internal.R.id.action_bar_container);
+        if (mActionView != null)
+            mActionView.setVisibility(View.GONE);
+        PackageManager pm = context.getPackageManager();
+        ImageView logoView = (ImageView)rootView.findViewById(com.mediatek.internal.R.id.activityLogo);
+        logoView.setBackgroundDrawable(pm.getApplicationIcon(context.getApplicationInfo()));
+
+        ImageView closeView = (ImageView)rootView.findViewById(com.mediatek.internal.R.id.activityClose);
+        closeView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v){
+               Log.v(TAG, "[BMW] onCloseFloatingWindow");
+               mMultiWindowProxy.closeWindow(mToken);
+            }                             
+        });
+
+        ImageView maximumView = (ImageView)rootView.findViewById(com.mediatek.internal.R.id.activityMaximum);
+        maximumView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v){
+               mMultiWindowProxy.restoreWindow(mToken,true);
+            }
+        });
+
+        mStickView = (ImageView)rootView.findViewById(com.mediatek.internal.R.id.activityStick);
+        /// M: Update icon.fix issue if change config (eg Language) when floating window is open,
+        /// the activity relaunch, and then the icon will show wrong image
+        updateStickView(mMultiWindowProxy.isSticky(mToken));
+        mStickView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ///M:Update stick button UI
+                updateStickView(!mSticked);
+                mMultiWindowProxy.stickWindow(mToken, mSticked);
+            }
+        }); 
+
+        return rootView;
+    }    
+
+    /// M: BMW. 
+    private void updateStickView(boolean isSticky) {
+        /// M: ALPS01946762.
+        if (mStickView == null)
+            return;
+        mSticked = isSticky;
+        if (isSticky){
+            mStickView.setImageResource(com.mediatek.internal.R.drawable.float_window_stick_clicked);
+        } else {
+            mStickView.setImageResource(com.mediatek.internal.R.drawable.float_window_stick);
+        }
+    }
+
+    /// M: BMW. Set Float Window Control Bar color when focus changed
+    public void setFloatDecorFocus(boolean hasWindowFocus){
+        if (hasWindowFocus) {
+            mActionView.setBackgroundDrawable(getContext().getResources()
+                       .getDrawable(com.mediatek.internal.R.drawable.float_window_actionbar_resume));  
+        } else {              
+            mActionView.setBackgroundDrawable(getContext().getResources()
+                       .getDrawable(com.mediatek.internal.R.drawable.float_window_actionbar_pause)); 
+        }   
+    }
+    
+    MultiWindowProxy mMultiWindowProxy;
+    boolean mMultiWindow = false;
+    boolean mMultiWindowDialog = false;  
+    private ViewGroup mActionView;
+    private boolean mSticked = false;
+    private ImageView mStickView;
+    private ImageView mMaximumView;
+    public IBinder mToken = null; 
+
+    /// @}
 }

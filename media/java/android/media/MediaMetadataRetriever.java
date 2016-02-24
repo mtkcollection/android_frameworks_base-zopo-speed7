@@ -73,13 +73,14 @@ public class MediaMetadataRetriever
             throw new IllegalArgumentException();
         } catch (IOException ioEx) {
             throw new IllegalArgumentException();
+        } finally {
+            /// M: close in finally block to make sure close file descriptor always.
+            try {
+                if (is != null) {
+                    is.close();
+                }
+            } catch (Exception e) {}
         }
-
-        try {
-            if (is != null) {
-                is.close();
-            }
-        } catch (Exception e) {}
     }
 
     /**

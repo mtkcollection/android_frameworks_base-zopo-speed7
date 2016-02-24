@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +102,11 @@ import java.util.Properties;
 
 import libcore.io.IoUtils;
 
+//mtk add start
+import android.provider.Settings.SettingNotFoundException;
+import java.util.Calendar;
+import java.util.HashMap;
+//mtk add end
 /**
  * A GPS implementation of LocationProvider used by LocationManager.
  *
@@ -106,8 +116,8 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     private static final String TAG = "GpsLocationProvider";
 
-    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
-    private static final boolean VERBOSE = Log.isLoggable(TAG, Log.VERBOSE);
+    private static final boolean DEBUG = true; //Log.isLoggable(TAG, Log.DEBUG);
+    private static final boolean VERBOSE = true; //Log.isLoggable(TAG, Log.VERBOSE);
 
     private static final ProviderProperties PROPERTIES = new ProviderProperties(
             true, true, false, false, true, true, true,
@@ -299,9 +309,10 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     // flags to trigger NTP or XTRA data download when network becomes available
     // initialized to true so we do NTP and XTRA when the network comes up after booting
-    private int mInjectNtpTimePending = STATE_PENDING_NETWORK;
-    private int mDownloadXtraDataPending = STATE_PENDING_NETWORK;
-
+    /// M: Do not start download at boot time @{
+    private int mInjectNtpTimePending = STATE_IDLE;
+    private int mDownloadXtraDataPending = STATE_IDLE;
+    /// }@
     // set to true if the GPS engine does not do on-demand NTP time requests
     private boolean mPeriodicTimeInjection;
 
@@ -393,6 +404,14 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     private GeofenceHardwareImpl mGeofenceHardwareImpl;
 
+    //mtk add start
+    /*mGpsTimeSyncFlag : true: need to check the time sync, false: no need to check the time sync*/
+    private boolean mGpsTimeSyncFlag = true;
+    /*isEmergencyCallDialed: [true] IMS emergency call is dialed,
+    [false] IMS emergency call is ended*/
+    private boolean mIsEmergencyCallDialed;
+    //mtk add end
+
     private final IGpsStatusProvider mGpsStatusProvider = new IGpsStatusProvider.Stub() {
         @Override
         public void addGpsStatusListener(IGpsStatusListener listener) throws RemoteException {
@@ -458,7 +477,20 @@ public class GpsLocationProvider implements LocationProviderInterface {
                 updateLowPowerMode();
             } else if (action.equals(SIM_STATE_CHANGED)) {
                 subscriptionOrSimChanged(context);
+            // mtk add start
+            } else if (action.equals("android.location.agps.EMERGENCY_CALL")) {
+                Bundle bundle = intent.getExtras();
+                int state = bundle.getInt("EM_Call_State");
+                String number = bundle.getString("Call_Number");
+                if (state == 1) {
+                    Log.d(TAG, "E911 dialed");
+                    mIsEmergencyCallDialed = true;
+                } else {
+                    Log.d(TAG, "E911 ended");
+                    mIsEmergencyCallDialed = false;
+                }
             }
+            // mtk add end
         }
     };
 
@@ -495,6 +527,13 @@ public class GpsLocationProvider implements LocationProviderInterface {
     }
 
     private void checkWapSuplInit(Intent intent) {
+        // mtk add start
+        boolean ret = isWapPushLegal(intent);
+        Log.d(TAG, "[agps] WARNING: checkWapSuplInit ret=" + ret);
+        if (ret == false) {
+            return;
+        }
+        // mtk add end
         byte[] supl_init = (byte[]) intent.getExtra("data");
         native_agps_ni_message(supl_init,supl_init.length);
     }
@@ -759,6 +798,9 @@ public class GpsLocationProvider implements LocationProviderInterface {
         intentFilter.addAction(Intent.ACTION_SCREEN_OFF);
         intentFilter.addAction(Intent.ACTION_SCREEN_ON);
         intentFilter.addAction(SIM_STATE_CHANGED);
+        // mtk add start
+        intentFilter.addAction("android.location.agps.EMERGENCY_CALL");
+        // mtk add end
         mContext.registerReceiver(mBroadcastReceiver, intentFilter, null, mHandler);
     }
 
@@ -1276,7 +1318,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
             native_delete_aiding_data(flags);
             return true;
         }
-
+        Log.d(TAG, "deleteAidingData extras:" + extras + "flags:" + flags);
         return false;
     }
 
@@ -1288,6 +1330,9 @@ public class GpsLocationProvider implements LocationProviderInterface {
             mStarted = true;
             mSingleShot = singleShot;
             mPositionMode = GPS_POSITION_MODE_STANDALONE;
+            // mtk add start
+            mGpsTimeSyncFlag = true;
+            // mtk add end
 
             boolean agpsEnabled =
                     (Settings.Global.getInt(mContext.getContentResolver(),
@@ -1418,6 +1463,25 @@ public class GpsLocationProvider implements LocationProviderInterface {
         }
 
         mLastFixTime = System.currentTimeMillis();
+            // MTK add start for auto-sync time with GPS
+            if (mGpsTimeSyncFlag && (flags & LOCATION_HAS_LAT_LONG) == LOCATION_HAS_LAT_LONG) {
+                // Add for "time auto-sync with Gps"
+                if (getAutoGpsState()) {
+                    mGpsTimeSyncFlag = false;
+                    Log.d(TAG, "GPS time sync is enabled");
+                    Log.d(TAG, " ########## Auto-sync time with GPS: timestamp = " + timestamp
+                            + " ########## ");
+                    Calendar c = Calendar.getInstance();
+                    c.setTimeInMillis(timestamp);
+                    long when = c.getTimeInMillis();
+                    if (when / 1000 < Integer.MAX_VALUE) {
+                        SystemClock.setCurrentTimeMillis(when);
+                    }
+                } else {
+                    Log.d(TAG, "Auto-sync time with GPS is disabled by user settings!");
+                    Log.d(TAG, "GPS time sync is disabled");
+                }
+            } // MTK add end for auto-sync time with GPS
         // report time to first fix
         if (mTimeToFirstFix == 0 && (flags & LOCATION_HAS_LAT_LONG) == LOCATION_HAS_LAT_LONG) {
             mTimeToFirstFix = (int)(mLastFixTime - mFixRequestTime);
@@ -1491,6 +1555,55 @@ public class GpsLocationProvider implements LocationProviderInterface {
     /**
      * called from native code to update SV info
      */
+    private void reportGnssSvStatus() {
+        int svCount = native_read_gnss_sv_status(mGnssSvs, mGnssSnrs, mGnssSvElevations
+            , mGnssSvAzimuths, mGnssSvEphemeris, mGnssSvAlmanac, mGnssSvInFix);
+        mListenerHelper.onGnssSvStatusChanged(
+                svCount,
+                mGnssSvs,
+                mGnssSnrs,
+                mGnssSvElevations,
+                mGnssSvAzimuths,
+                mGnssSvEphemeris,
+                mGnssSvAlmanac,
+                mGnssSvInFix);
+
+        if (VERBOSE) {
+            Log.v(TAG, "GNSS SV count: " + svCount +
+                    " ephemerisMask: " + Integer.toHexString(mSvMasks[EPHEMERIS_MASK]) +
+                    " almanacMask: " + Integer.toHexString(mSvMasks[ALMANAC_MASK]));
+            for (int i = 0; i < svCount; i++) {
+                Log.v(TAG, "sv: " + mGnssSvs[i] +
+                        " snr: " + mGnssSnrs[i] / 10 +
+                        " elev: " + mGnssSvElevations[i] +
+                        " azimuth: " + mGnssSvAzimuths[i] +
+                        ((mGnssSvEphemeris[i]) ? " E" : " ") +
+                        ((mGnssSvAlmanac[i]) ? " A" : " ") +
+                        ((mGnssSvInFix[i]) ? " U" : " "));
+            }
+        }
+        int svFixCount = 0;
+        for (boolean value : mGnssSvInFix) {
+            if (value) {
+                svFixCount++;
+            }
+        }
+        updateStatus(mStatus, svFixCount);
+
+
+        if (mNavigating && mStatus == LocationProvider.AVAILABLE && mLastFixTime > 0 &&
+            System.currentTimeMillis() - mLastFixTime > RECENT_FIX_TIMEOUT) {
+            // send an intent to notify that the GPS is no longer receiving fixes.
+            Intent intent = new Intent(LocationManager.GPS_FIX_CHANGE_ACTION);
+            intent.putExtra(LocationManager.EXTRA_GPS_ENABLED, false);
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            updateStatus(LocationProvider.TEMPORARILY_UNAVAILABLE, mSvCount);
+        }
+    }
+
+    /**
+     * called from native code to update SV info
+     */
     private void reportSvStatus() {
         int svCount = native_read_sv_status(mSvs, mSnrs, mSvElevations, mSvAzimuths, mSvMasks);
         mListenerHelper.onSvStatusChanged(
@@ -1542,8 +1655,12 @@ public class GpsLocationProvider implements LocationProviderInterface {
                 // Set mAGpsDataConnectionState before calling startUsingNetworkFeature
                 //  to avoid a race condition with handleUpdateNetworkState()
                 mAGpsDataConnectionState = AGPS_DATA_CONNECTION_OPENING;
-                int result = mConnMgr.startUsingNetworkFeature(
-                        ConnectivityManager.TYPE_MOBILE, Phone.FEATURE_ENABLE_SUPL);
+
+// mtk add start
+                int result = doStartUsingNetwork();
+                //int result = mConnMgr.startUsingNetworkFeature(
+                //        ConnectivityManager.TYPE_MOBILE, Phone.FEATURE_ENABLE_SUPL);
+// mtk add end
                 if (ipaddr != null) {
                     try {
                         mAGpsDataConnectionIpAddr = InetAddress.getByAddress(ipaddr);
@@ -2120,9 +2237,11 @@ public class GpsLocationProvider implements LocationProviderInterface {
             return;
         }
 
+        // mtk add start
         boolean result = mConnMgr.requestRouteToHostAddress(
-                ConnectivityManager.TYPE_MOBILE_SUPL,
+                routeNetworkType, // get really network type
                 mAGpsDataConnectionIpAddr);
+        // mtk add end
 
         if (!result) {
             Log.e(TAG, "Error requesting route to host: " + mAGpsDataConnectionIpAddr);
@@ -2148,8 +2267,121 @@ public class GpsLocationProvider implements LocationProviderInterface {
         pw.append(s);
     }
 
+    // mtk add start
+    protected boolean isWapPushLegal(Intent intent) {
+        try {
+            String type = intent.getType();
+            if (!type.equals("application/vnd.omaloc-supl-init")) {
+                Log.e(TAG, "[agps] ERR: content type is [" + type
+                        + "], but we expect [application/vnd.omaloc-supl-init]");
+                return false;
+            }
+            HashMap<String, String> wspHeaders = (HashMap<String, String>) intent
+                    .getExtras().get("wspHeaders");
+            if (wspHeaders == null) {
+                Log.e(TAG, "[agps] ERR: wspHeader is null");
+                return false;
+            }
+            String appId = wspHeaders.get("X-Wap-Application-Id");
+            if (appId == null) {
+                Log.e(TAG, "[agps] ERR: appId(X-Wap-Application-Id) is null");
+                return false;
+            }
+            if (!appId.equals("x-oma-application:ulp.ua")) {
+                Log.e(TAG, "[agps] ERR: appId is [" + appId
+                        + "], but we expect [x-oma-application:ulp.ua]");
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean isFileExists(String path) {
+        File f = new File(path);
+        return f.exists();
+    }
+
+    public boolean isESUPL() {
+        return isFileExists("/data/agps_supl/isESUPL");
+    }
+
+    public boolean isEmergencyCallDialed() {
+        return (isFileExists("/data/agps_supl/isEmergencyCallDialed") || mIsEmergencyCallDialed);
+    }
+
+    private int routeNetworkType = ConnectivityManager.TYPE_MOBILE_SUPL;
+
+
+    public int doStartUsingNetwork() {
+        int networkType = ConnectivityManager.TYPE_MOBILE;
+        String feature = Phone.FEATURE_ENABLE_SUPL;
+        routeNetworkType = ConnectivityManager.TYPE_MOBILE_SUPL;
+
+        TelephonyManager phone = (TelephonyManager)
+                mContext.getSystemService(Context.TELEPHONY_SERVICE);
+
+        //IR92 requirements for emergency location
+        int phoneNetwokrType = phone.getNetworkType();
+
+        Log.d(TAG, "[agps] WARNING: GpsLocationProvider  phoneNetwokrType=[" +
+            phoneNetwokrType + "] isESUPL=[" + isESUPL() + "] isEmergencyCallDialed=["
+            + isEmergencyCallDialed() + "]");
+        if (phoneNetwokrType == TelephonyManager.NETWORK_TYPE_LTE && isESUPL()) {
+            if (isEmergencyCallDialed()) {
+                networkType = ConnectivityManager.TYPE_MOBILE_EMERGENCY;
+                feature = Phone.FEATURE_ENABLE_EMERGENCY;
+                routeNetworkType = ConnectivityManager.TYPE_MOBILE_EMERGENCY;
+            } else {
+                networkType = ConnectivityManager.TYPE_MOBILE_IMS;
+                feature = Phone.FEATURE_ENABLE_IMS;
+                routeNetworkType = ConnectivityManager.TYPE_MOBILE_IMS;
+            }
+        }
+
+        if ((networkType == ConnectivityManager.TYPE_MOBILE && hasIccCard() == false)
+            || isAirplaneModeOn()) {
+            Log.d(TAG, "[agps] APN_REQUEST_FAILED: hasIccCard=" +
+                    hasIccCard() + " isAirplaneModeOn="
+                    + isAirplaneModeOn());
+            return PhoneConstants.APN_REQUEST_FAILED;
+        }
+
+        return mConnMgr.startUsingNetworkFeature(networkType, feature);
+    }
+
+    /**
+     * Add for "time auto-sync with Gps"
+     */
+    private boolean getAutoGpsState() {
+        try {
+            return Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.AUTO_TIME_GPS) > 0;
+        } catch (SettingNotFoundException snfe) {
+            return false;
+        }
+    }
+
+    private boolean hasIccCard() {
+        TelephonyManager tpMgr = (TelephonyManager)
+                mContext.getSystemService(Context.TELEPHONY_SERVICE);
+        if (tpMgr != null) {
+            return tpMgr.hasIccCard();
+        }
+        return false;
+    }
+
+    boolean isAirplaneModeOn() {
+        return Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.AIRPLANE_MODE_ON, 0) == 1;
+    }
+    // mtk add end
+
     // for GPS SV statistics
     private static final int MAX_SVS = 32;
+    private static final int MAX_GNSS_SVS = 256;
     private static final int EPHEMERIS_MASK = 0;
     private static final int ALMANAC_MASK = 1;
     private static final int USED_FOR_FIX_MASK = 2;
@@ -2161,6 +2393,16 @@ public class GpsLocationProvider implements LocationProviderInterface {
     private float mSvAzimuths[] = new float[MAX_SVS];
     private int mSvMasks[] = new int[3];
     private int mSvCount;
+
+    // preallocated arrays, to avoid memory allocation in reportStatus()
+    private int mGnssSvs[] = new int[MAX_GNSS_SVS];
+    private float mGnssSnrs[] = new float[MAX_GNSS_SVS];
+    private float mGnssSvElevations[] = new float[MAX_GNSS_SVS];
+    private float mGnssSvAzimuths[] = new float[MAX_GNSS_SVS];
+    private boolean mGnssSvEphemeris[] = new boolean[MAX_GNSS_SVS];
+    private boolean mGnssSvAlmanac[] = new boolean[MAX_GNSS_SVS];
+    private boolean mGnssSvInFix[] = new boolean[MAX_GNSS_SVS];
+
     // preallocated to avoid memory allocation in reportNmea()
     private byte[] mNmeaBuffer = new byte[120];
 
@@ -2181,6 +2423,10 @@ public class GpsLocationProvider implements LocationProviderInterface {
             float[] elevations, float[] azimuths, int[] masks);
     private native int native_read_nmea(byte[] buffer, int bufferSize);
     private native void native_inject_location(double latitude, double longitude, float accuracy);
+    private native int native_read_gnss_sv_status(int[] svs, float[] snrs,
+            float[] elevations, float[] azimuths, boolean[] ephemeris, boolean[] almanac,
+            boolean[] infix);
+
 
     // XTRA Support
     private native void native_inject_time(long time, long timeReference, int uncertainty);

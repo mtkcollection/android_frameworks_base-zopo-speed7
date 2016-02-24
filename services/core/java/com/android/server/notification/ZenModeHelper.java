@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /**
  * Copyright (c) 2014, The Android Open Source Project
  *
@@ -48,6 +53,9 @@ import android.util.Slog;
 import com.android.internal.R;
 import com.android.server.LocalServices;
 
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.notification.IZenModeHelperExt;
+
 import libcore.io.IoUtils;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -80,6 +88,10 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
     private int mPreviousRingerMode = -1;
     private boolean mEffectsSuppressed;
 
+    ///M: Operator customization to mute alarm or not. @{
+    private IZenModeHelperExt mZenModeHelperExt;
+    ///M: Operator customization to mute alarm or not. @}
+
     public ZenModeHelper(Context context, Looper looper) {
         mContext = context;
         mHandler = new H(looper);
@@ -88,6 +100,11 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         mConfig = mDefaultConfig;
         mSettingsObserver = new SettingsObserver(mHandler);
         mSettingsObserver.observe();
+
+        ///M: Operator customization to mute alarm or not. @{
+        mZenModeHelperExt = MPlugin.createInstance(IZenModeHelperExt.class
+                .getName());
+        ///M: Operator customization to mute alarm or not. @}
     }
 
     public static ZenModeConfig readDefaultConfig(Resources resources) {
@@ -224,7 +241,12 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         setZenMode(zenMode, reason, true);
     }
 
-    private void setZenMode(int zenMode, String reason, boolean setRingerMode) {
+    /** M:
+     * Race condition issue between setZenMode() and readZenModeFromSetting()
+     * Add synchronized to fix CTS fail.
+     * "run cts -c android.media.cts.AudioManagerTest -m testVibrateRinger"
+    */
+    private synchronized void setZenMode(int zenMode, String reason, boolean setRingerMode) {
         ZenLog.traceSetZenMode(zenMode, reason);
         if (mZenMode == zenMode) return;
         ZenLog.traceUpdateZenMode(mZenMode, zenMode);
@@ -237,7 +259,12 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         mHandler.postDispatchOnZenModeChanged();
     }
 
-    public void readZenModeFromSetting() {
+    /** M:
+     * Race condition issue between setZenMode() and readZenModeFromSetting()
+     * Add synchronized to fix CTS fail.
+     * "run cts -c android.media.cts.AudioManagerTest -m testVibrateRinger"
+    */
+    public synchronized void readZenModeFromSetting() {
         final int newMode = Global.getInt(mContext.getContentResolver(),
                 Global.ZEN_MODE, Global.ZEN_MODE_OFF);
         setZenMode(newMode, "setting");
@@ -255,7 +282,17 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         applyRestrictions(muteCalls, USAGE_NOTIFICATION_RINGTONE);
 
         // alarm restrictions
-        final boolean muteAlarms = mZenMode == Global.ZEN_MODE_NO_INTERRUPTIONS;
+        ///M: Operator customization to mute alarm or not. @{
+        //final boolean muteAlarms = mZenMode == Global.ZEN_MODE_NO_INTERRUPTIONS;
+        final boolean muteAlarms;
+        if (mZenModeHelperExt != null) {
+            muteAlarms = mZenModeHelperExt
+                    .customizeMuteAlarm(mZenMode == Global.ZEN_MODE_NO_INTERRUPTIONS);
+        } else {
+            muteAlarms = mZenMode == Global.ZEN_MODE_NO_INTERRUPTIONS;
+        }
+        ///M: Operator customization to mute alarm or not. @}
+
         applyRestrictions(muteAlarms, USAGE_ALARM);
     }
 
@@ -343,9 +380,10 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         switch (ringerModeNew) {
             case AudioManager.RINGER_MODE_SILENT:
                 if (isChange) {
-                    if (mZenMode != Global.ZEN_MODE_NO_INTERRUPTIONS) {
-                        newZen = Global.ZEN_MODE_NO_INTERRUPTIONS;
-                    }
+                    //if (mZenMode != Global.ZEN_MODE_NO_INTERRUPTIONS) {
+                    //    newZen = Global.ZEN_MODE_NO_INTERRUPTIONS;
+                    //}
+                    newZen = Global.ZEN_MODE_NO_INTERRUPTIONS;
                 }
                 break;
             case AudioManager.RINGER_MODE_VIBRATE:
@@ -380,9 +418,10 @@ public class ZenModeHelper implements AudioManagerInternal.RingerModeDelegate {
         switch (ringerModeNew) {
             case AudioManager.RINGER_MODE_SILENT:
                 if (isChange) {
-                    if (mZenMode == Global.ZEN_MODE_OFF) {
-                        newZen = Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS;
-                    }
+                    //if (mZenMode == Global.ZEN_MODE_OFF) {
+                    //    newZen = Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS;
+                    //} 
+                    newZen = Global.ZEN_MODE_NO_INTERRUPTIONS;
                     ringerModeInternalOut = isVibrate ? AudioManager.RINGER_MODE_VIBRATE
                             : AudioManager.RINGER_MODE_NORMAL;
                 } else {

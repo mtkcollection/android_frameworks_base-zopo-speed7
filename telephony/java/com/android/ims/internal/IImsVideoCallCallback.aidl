@@ -22,7 +22,7 @@ import android.telecom.VideoProfile;
 /**
  * Internal remote interface for IMS's video call provider.
  *
- * At least initially, this aidl mirrors telecomm's {@link VideoCallCallback}. We created a
+ * At least initially, this aidl mirrors telecom's {@link VideoCallCallback}. We created a
  * separate aidl interface for invoking callbacks in Telephony from the IMS Service to without
  * accessing internal interfaces. See {@link IImsVideoCallProvider} for additional detail.
  *

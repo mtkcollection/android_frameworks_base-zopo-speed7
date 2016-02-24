@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -196,6 +201,9 @@ public final class BluetoothSocket implements Closeable {
         as.mSocketOS = as.mSocket.getOutputStream();
         as.mAddress = RemoteAddr;
         as.mDevice = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(RemoteAddr);
+        ///M:  Fix fd leadk issue @{
+        as.mPfd = new ParcelFileDescriptor(fds[0]);
+        /// }@
         return as;
     }
     /**
@@ -467,7 +475,7 @@ public final class BluetoothSocket implements Closeable {
                     mSocket = null;
                 }
                 if (mPfd != null) {
-                    mPfd.close();
+                    mPfd.detachFd();
                     mPfd = null;
                 }
            }

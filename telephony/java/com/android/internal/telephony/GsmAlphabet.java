@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,6 +120,14 @@ public class GsmAlphabet {
          * The GSM national language shift table to use, or 0 for the default 7-bit extension table.
          */
         public int languageShiftTable;
+
+        // MTK-START
+        public boolean useSingleShift = false;
+
+        public boolean useLockingShift = false;
+
+        public int shiftLangId = -1;
+        // MTK-END
 
         @Override
         public String toString() {

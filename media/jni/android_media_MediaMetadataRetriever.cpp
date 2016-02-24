@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
 **
 ** Copyright 2008, The Android Open Source Project
 **
@@ -255,7 +260,11 @@ static jobject android_media_MediaMetadataRetriever_getFrameAtTime(JNIEnv *env, 
     jobject config = env->CallStaticObjectMethod(
                         fields.configClazz,
                         fields.createConfigMethod,
+                    #ifdef MTK_HIGH_QUALITY_THUMBNAIL
+                        SkBitmap::kARGB_8888_Config);
+                    #else
                         SkBitmap::kRGB_565_Config);
+                    #endif
 
     uint32_t width, height;
     bool swapWidthAndHeight = false;
@@ -285,12 +294,27 @@ static jobject android_media_MediaMetadataRetriever_getFrameAtTime(JNIEnv *env, 
     SkBitmap *bitmap =
             (SkBitmap *) env->GetLongField(jBitmap, fields.nativeBitmap);
 
+    if (bitmap == NULL) {
+        ALOGE("getFrameAtTime: bitmap is a NULL pointer!");
+        return NULL;
+    }
+
     bitmap->lockPixels();
+
+    #ifdef MTK_HIGH_QUALITY_THUMBNAIL
+      rotate((uint32_t*)bitmap->getPixels(),
+           (uint32_t*)((char*)videoFrame + sizeof(VideoFrame)),
+           videoFrame->mWidth,
+           videoFrame->mHeight,
+           videoFrame->mRotationAngle);
+    #else
     rotate((uint16_t*)bitmap->getPixels(),
            (uint16_t*)((char*)videoFrame + sizeof(VideoFrame)),
            videoFrame->mWidth,
            videoFrame->mHeight,
            videoFrame->mRotationAngle);
+    #endif
+
     bitmap->unlockPixels();
 
     if (videoFrame->mDisplayWidth  != videoFrame->mWidth ||

@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* //device/libs/android_runtime/android_util_Process.cpp
 **
 ** Copyright 2006, The Android Open Source Project
@@ -473,6 +478,19 @@ static jlong android_os_Process_getTotalMemory(JNIEnv* env, jobject clazz)
     return getFreeMemoryImpl(sums, sumsLen, 1);
 }
 
+
+#ifndef MTK_BSP_PACKAGE
+/// M: get lru anonymous memory size @{
+static jlong android_os_Process_getLruAnonMemory(JNIEnv* env, jobject clazz)
+{
+    static const char* const sums[] = { "Active(anon):", "Inactive(anon):", NULL };
+    static const size_t sumsLen[] = { strlen("Active(anon):"), strlen("Inactive(anon):"), 0 };
+    return getFreeMemoryImpl(sums, sumsLen, 2);
+}
+/// @}
+#endif // MTK_BSP_PACKAGE
+
+
 void android_os_Process_readProcLines(JNIEnv* env, jobject clazz, jstring fileStr,
                                       jobjectArray reqFields, jlongArray outFields)
 {
@@ -916,6 +934,48 @@ static jlong android_os_Process_getPss(JNIEnv* env, jobject clazz, jint pid)
     return pss * 1024;
 }
 
+#ifndef MTK_BSP_PACKAGE
+/// M: LTK @{
+static jlong android_os_Process_getRswapRssSum(JNIEnv *env, jobject clazz, jint pid)
+{
+    char line[1024];
+    jlong rswap_rss = 0;
+    unsigned temp;
+    unsigned hit = 0;
+
+    char tmp[128];
+    FILE *fp;
+
+    sprintf(tmp, "/proc/%d/status", pid);
+    fp = fopen(tmp, "r");
+    if (fp == 0) return 0;
+
+    while (true) {
+        if (fgets(line, 1024, fp) == 0) {
+            break;
+        }
+
+        if (sscanf(line, "VmSwap: %d kB", &temp) == 1) {
+            rswap_rss = temp * 1024;  // convert into bytes
+            ++hit;
+            if (hit >= 2)
+                break;
+        }
+
+        if (sscanf(line, "VmRSS: %d kB", &temp) == 1) {
+            rswap_rss += temp * 1024;  // convert into bytes
+            ++hit;
+            if (hit >= 2)
+                break;
+        }
+    }
+
+    fclose(fp);
+    return rswap_rss;
+}
+/// @}
+#endif // MTK_BSP_PACKAGE
+
 jintArray android_os_Process_getPidsForCommands(JNIEnv* env, jobject clazz,
         jobjectArray commandNames)
 {
@@ -1032,6 +1092,9 @@ static const JNINativeMethod methods[] = {
     {"sendSignalQuiet", "(II)V", (void*)android_os_Process_sendSignalQuiet},
     {"getFreeMemory", "()J", (void*)android_os_Process_getFreeMemory},
     {"getTotalMemory", "()J", (void*)android_os_Process_getTotalMemory},
+#ifndef MTK_BSP_PACKAGE
+    {"getLruAnonMemory", "()J", (void*)android_os_Process_getLruAnonMemory},
+#endif
     {"readProcLines", "(Ljava/lang/String;[Ljava/lang/String;[J)V", (void*)android_os_Process_readProcLines},
     {"getPids", "(Ljava/lang/String;[I)[I", (void*)android_os_Process_getPids},
     {"readProcFile", "(Ljava/lang/String;[I[Ljava/lang/String;[J[F)Z", (void*)android_os_Process_readProcFile},
@@ -1040,6 +1103,9 @@ static const JNINativeMethod methods[] = {
     {"getPss", "(I)J", (void*)android_os_Process_getPss},
     {"getPidsForCommands", "([Ljava/lang/String;)[I", (void*)android_os_Process_getPidsForCommands},
     //{"setApplicationObject", "(Landroid/os/IBinder;)V", (void*)android_os_Process_setApplicationObject},
+#ifndef MTK_BSP_PACKAGE
+    { "getRswapRssSum", "(I)J", (void*)android_os_Process_getRswapRssSum},  /// M: LTK
+#endif
     {"killProcessGroup", "(II)I", (void*)android_os_Process_killProcessGroup},
     {"removeAllProcessGroups", "()V", (void*)android_os_Process_removeAllProcessGroups},
 };

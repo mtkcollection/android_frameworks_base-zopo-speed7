@@ -245,7 +245,13 @@ public final class PdfManipulationService extends Service {
                 for (int i = rangeCount - 1; i >= 0; i--) {
                     PageRange range = ranges[i];
                     for (int j = range.getEnd(); j >= range.getStart(); j--) {
-                        mEditor.removePage(j);
+                    	///M: Only page in document should be removed, just
+                    	//      leave those who are not in file. @{
+                    	int mPageCount = mEditor.getPageCount();
+                    	if ((j >= 0) && (j <= mPageCount)) {
+                            mEditor.removePage(j);
+                    	}
+                    	///M: @}
                     }
                 }
             }

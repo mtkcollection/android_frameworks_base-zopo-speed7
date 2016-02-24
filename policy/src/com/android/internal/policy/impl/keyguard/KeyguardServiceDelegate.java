@@ -270,6 +270,8 @@ public class KeyguardServiceDelegate {
     }
 
     private static final View createScrim(Context context) {
+        Log.d(TAG, "createScrim()") ;
+
         View view = new View(context);
 
         int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -299,10 +301,14 @@ public class KeyguardServiceDelegate {
     }
 
     public void showScrim() {
+        Log.d(TAG, "showScrim() - mKeyguardState.deviceHasKeyguard = "
+            + mKeyguardState.deviceHasKeyguard) ;
+        new Throwable().printStackTrace() ;
         if (!mKeyguardState.deviceHasKeyguard) return;
         mScrim.post(new Runnable() {
             @Override
             public void run() {
+                Log.d(TAG, "showScrim() - mScrim.setVisibility(View.VISIBLE)") ;
                 mScrim.setVisibility(View.VISIBLE);
             }
         });

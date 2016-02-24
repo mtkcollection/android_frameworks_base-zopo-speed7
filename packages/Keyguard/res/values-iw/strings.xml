@@ -167,4 +167,7 @@
     <string name="keyguard_transport_play_description" msgid="2924628863741150956">"לחצן \'הפעל\'"</string>
     <string name="keyguard_transport_stop_description" msgid="3084179324810575787">"לחצן \'הפסק\'"</string>
     <string name="keyguard_carrier_default" msgid="8700650403054042153">"אין קליטה."</string>
+    <string name="kg_new_simcard">כרטיס ה-SIM החדש</string>
+    <string name="kg_detecting_simcard">מזהה...</string>
+    <string name="kg_slot_id">חריץ <xliff:g id="number">%d</xliff:g>:</string>
 </resources>

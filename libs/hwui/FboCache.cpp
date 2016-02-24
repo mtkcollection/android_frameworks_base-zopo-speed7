@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +67,7 @@ uint32_t FboCache::getMaxSize() {
 void FboCache::clear() {
     for (size_t i = 0; i < mCache.size(); i++) {
         const GLuint fbo = mCache.itemAt(i);
-        glDeleteFramebuffers(1, &fbo);
+        TIME_LOG("glDeleteFramebuffers", glDeleteFramebuffers(1, &fbo));
     }
     mCache.clear();
 }
@@ -73,18 +78,26 @@ GLuint FboCache::get() {
         fbo = mCache.itemAt(mCache.size() - 1);
         mCache.removeAt(mCache.size() - 1);
     } else {
-        glGenFramebuffers(1, &fbo);
+    glGenFramebuffers(1, &fbo);
     }
     return fbo;
 }
 
 bool FboCache::put(GLuint fbo) {
+    // Detach the texture from the FBO
+    GLuint previousFbo;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, (GLint*) &previousFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, previousFbo);
+
     if (mCache.size() < mMaxSize) {
         mCache.add(fbo);
         return true;
     }
 
-    glDeleteFramebuffers(1, &fbo);
+    TIME_LOG("glDeleteFramebuffers", glDeleteFramebuffers(1, &fbo));
     return false;
 }
 

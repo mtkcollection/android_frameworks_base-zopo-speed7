@@ -51,6 +51,7 @@ interface IUserManager {
     int checkRestrictionsChallenge(in String pin);
     boolean hasRestrictionsChallenge();
     void removeRestrictions();
+    int getSwitchedUserId();
     void setDefaultGuestRestrictions(in Bundle restrictions);
     Bundle getDefaultGuestRestrictions();
     boolean markGuestForDeletion(int userHandle);

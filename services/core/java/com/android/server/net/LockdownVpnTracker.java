@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +66,8 @@ public class LockdownVpnTracker {
     private static final int MAX_ERROR_COUNT = 4;
 
     private static final String ACTION_LOCKDOWN_RESET = "com.android.server.action.LOCKDOWN_RESET";
+    ///M:  To handle keystore reset
+    private static final String ACTION_KEYSTORE_RESET = "com.mediatek.android.keystore.action.KEYSTORE_RESET";
 
     private static final String ACTION_VPN_SETTINGS = "android.net.vpn.SETTINGS";
     private static final String EXTRA_PICK_LOCKDOWN = "android.net.vpn.PICK_LOCKDOWN";
@@ -88,6 +95,11 @@ public class LockdownVpnTracker {
         return KeyStore.getInstance().contains(Credentials.LOCKDOWN_VPN);
     }
 
+    ///M: Fix file corrupt issue ALPS01378269
+    public static boolean isFileUsable() {
+        return KeyStore.getInstance().get(Credentials.LOCKDOWN_VPN) != null;
+    }
+
     public LockdownVpnTracker(Context context, INetworkManagementService netService,
             ConnectivityService connService, Vpn vpn, VpnProfile profile) {
         mContext = Preconditions.checkNotNull(context);
@@ -109,6 +121,16 @@ public class LockdownVpnTracker {
         @Override
         public void onReceive(Context context, Intent intent) {
             reset();
+        }
+    };
+
+    ///M:  To handle keystore reset
+    private BroadcastReceiver mKeystoreResetReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (mVpn != null) mVpn.forceDisconnect();
+            reset();
+            if (mConnService != null) mConnService.updateLockdownVpn();
         }
     };
 
@@ -226,11 +248,24 @@ public class LockdownVpnTracker {
         final IntentFilter resetFilter = new IntentFilter(ACTION_LOCKDOWN_RESET);
         mContext.registerReceiver(mResetReceiver, resetFilter, CONNECTIVITY_INTERNAL, null);
 
+        ///M:  To handle keystore reset
+        final IntentFilter keystoreResetFilter = new IntentFilter(ACTION_KEYSTORE_RESET);
+        keystoreResetFilter.addAction(ACTION_KEYSTORE_RESET);
+        mContext.registerReceiver(mKeystoreResetReceiver, keystoreResetFilter);
+
         try {
             // TODO: support non-standard port numbers
             mNetService.setFirewallEgressDestRule(mProfile.server, 500, true);
             mNetService.setFirewallEgressDestRule(mProfile.server, 4500, true);
             mNetService.setFirewallEgressDestRule(mProfile.server, 1701, true);
+
+
+            ///M: Support PPTP for VPN  @{
+            if (mProfile.type == VpnProfile.TYPE_PPTP) {
+                mNetService.setFirewallEgressDestRule(mProfile.server, 1723, true);
+                mNetService.setFirewallEgressProtoRule("gre", true);
+            }
+            ///@}
         } catch (RemoteException e) {
             throw new RuntimeException("Problem setting firewall rules", e);
         }
@@ -257,6 +292,13 @@ public class LockdownVpnTracker {
             mNetService.setFirewallEgressDestRule(mProfile.server, 500, false);
             mNetService.setFirewallEgressDestRule(mProfile.server, 4500, false);
             mNetService.setFirewallEgressDestRule(mProfile.server, 1701, false);
+
+            ///M: Support PPTP for VPN @{
+            if (mProfile.type == VpnProfile.TYPE_PPTP) {
+                mNetService.setFirewallEgressDestRule(mProfile.server, 1723, false);
+                mNetService.setFirewallEgressProtoRule("gre", false);
+            }
+            ///@}
         } catch (RemoteException e) {
             throw new RuntimeException("Problem setting firewall rules", e);
         }
@@ -264,6 +306,8 @@ public class LockdownVpnTracker {
         hideNotification();
 
         mContext.unregisterReceiver(mResetReceiver);
+        ///M:  To handle keystore reset
+        mContext.unregisterReceiver(mKeystoreResetReceiver);
         mVpn.setEnableTeardown(true);
     }
 

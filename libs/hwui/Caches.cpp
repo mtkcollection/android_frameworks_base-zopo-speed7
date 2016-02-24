@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +45,11 @@ namespace uirenderer {
 ///////////////////////////////////////////////////////////////////////////////
 
 #if DEBUG_CACHE_FLUSH
-    #define FLUSH_LOGD(...) ALOGD(__VA_ARGS__)
+    #define FLUSH_LOGD(...) \
+    {                                 \
+        if (g_HWUI_debug_cache_flush) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define FLUSH_LOGD(...)
 #endif
@@ -221,15 +230,15 @@ bool Caches::initProperties() {
 void Caches::terminate() {
     if (!mInitialized) return;
 
-    glDeleteBuffers(1, &meshBuffer);
+    TIME_LOG("glDeleteBuffers", glDeleteBuffers(1, &meshBuffer));
     mCurrentBuffer = 0;
 
-    glDeleteBuffers(1, &mMeshIndices);
+    TIME_LOG("glDeleteBuffers", glDeleteBuffers(1, &mMeshIndices));
     delete[] mRegionMesh;
     mMeshIndices = 0;
     mRegionMesh = NULL;
 
-    glDeleteBuffers(1, &mShadowStripsIndices);
+    TIME_LOG("glDeleteBuffers", glDeleteBuffers(1, &mShadowStripsIndices));
     mShadowStripsIndices = 0;
 
     fboCache.clear();
@@ -324,6 +333,8 @@ void Caches::dumpMemoryUsage(String8 &log) {
 
     log.appendFormat("Total memory usage:\n");
     log.appendFormat("  %d bytes, %.2f MB\n", total, total / 1024.0f / 1024.0f);
+
+    TT_DUMP_MEMORY_USAGE(log);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -367,7 +378,7 @@ void Caches::flush(FlushMode mode) {
     }
 
     clearGarbage();
-    glFinish();
+    TIME_LOG("glFinish", glFinish());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -379,7 +390,13 @@ bool Caches::bindMeshBuffer() {
 }
 
 bool Caches::bindMeshBuffer(const GLuint buffer) {
-    if (mCurrentBuffer != buffer) {
+    GLuint bindedBuffer;
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, (GLint*) &bindedBuffer);
+    if (mCurrentBuffer != bindedBuffer) {
+        ALOGE("Mesh buffer binding error: mCurrentBuffer = %d, binded buffer = %d",
+                mCurrentBuffer, bindedBuffer);
+    }
+    if (mCurrentBuffer != buffer || bindedBuffer != buffer) {
         glBindBuffer(GL_ARRAY_BUFFER, buffer);
         mCurrentBuffer = buffer;
         return true;
@@ -388,7 +405,13 @@ bool Caches::bindMeshBuffer(const GLuint buffer) {
 }
 
 bool Caches::unbindMeshBuffer() {
-    if (mCurrentBuffer) {
+    GLuint bindedBuffer;
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, (GLint*) &bindedBuffer);
+    if (mCurrentBuffer != bindedBuffer) {
+        ALOGE("Mesh buffer binding error: mCurrentBuffer = %d, binded buffer = %d",
+                mCurrentBuffer, bindedBuffer);
+    }
+    if (mCurrentBuffer || bindedBuffer) {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         mCurrentBuffer = 0;
         return true;
@@ -397,7 +420,13 @@ bool Caches::unbindMeshBuffer() {
 }
 
 bool Caches::bindIndicesBufferInternal(const GLuint buffer) {
-    if (mCurrentIndicesBuffer != buffer) {
+    GLuint bindedBuffer;
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, (GLint*) &bindedBuffer);
+    if (mCurrentIndicesBuffer != bindedBuffer) {
+        ALOGE("Indices buffer binding error: mCurrentIndicesBuffer = %d, binded buffer = %d",
+                mCurrentIndicesBuffer, bindedBuffer);
+    }
+    if (mCurrentIndicesBuffer != buffer || bindedBuffer != buffer) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer);
         mCurrentIndicesBuffer = buffer;
         return true;
@@ -448,7 +477,13 @@ bool Caches::bindShadowIndicesBuffer() {
 }
 
 bool Caches::unbindIndicesBuffer() {
-    if (mCurrentIndicesBuffer) {
+    GLuint bindedBuffer;
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, (GLint*) &bindedBuffer);
+    if (mCurrentIndicesBuffer != bindedBuffer) {
+        ALOGE("Indices buffer binding error: mCurrentIndicesBuffer = %d, binded buffer = %d",
+                mCurrentIndicesBuffer, bindedBuffer);
+    }
+    if (mCurrentIndicesBuffer || bindedBuffer) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
         mCurrentIndicesBuffer = 0;
         return true;
@@ -569,7 +604,7 @@ void Caches::deleteTexture(GLuint texture) {
 
     unbindTexture(texture);
 
-    glDeleteTextures(1, &texture);
+    TIME_LOG("glDeleteTextures", glDeleteTextures(1, &texture));
 }
 
 void Caches::resetBoundTextures() {

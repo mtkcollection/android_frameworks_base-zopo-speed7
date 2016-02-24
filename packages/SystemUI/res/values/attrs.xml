@@ -72,5 +72,11 @@
         <attr name="verticalSpacing" format="dimension" />
         <attr name="horizontalSpacing" format="dimension" />
     </declare-styleable>
+       <!--M: Add for multi-window XML attributes used by default_residentpackage.xml -->
+    <declare-styleable name="ResidentPackage">
+        <attr name="residentPackageName" format="string" />
+        <attr name="residentClassName" format="string" />
+        <attr name="residentOrder" format="integer" />
+    </declare-styleable>
 </resources>
 

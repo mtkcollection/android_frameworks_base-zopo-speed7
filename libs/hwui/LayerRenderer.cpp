@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +20,6 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include <ui/Rect.h>
 
@@ -46,7 +50,7 @@ LayerRenderer::~LayerRenderer() {
 
 status_t LayerRenderer::prepareDirty(float left, float top, float right, float bottom,
         bool opaque) {
-    LAYER_RENDERER_LOGD("Rendering into layer, fbo = %d", mLayer->getFbo());
+    LAYER_RENDERER_LOGD("Rendering into layer %p, fbo %d, alpha %d", mLayer, mLayer->getFbo(), mLayer->getAlpha());
 
     renderState().bindFramebuffer(mLayer->getFbo());
 
@@ -87,7 +91,7 @@ void LayerRenderer::finish() {
 
     generateMesh();
 
-    LAYER_RENDERER_LOGD("Finished rendering into layer, fbo = %d", mLayer->getFbo());
+    LAYER_RENDERER_LOGD("Finished rendering into layer %p, fbo %d, alpha %d", mLayer, mLayer->getFbo(), mLayer->getAlpha());
 
     // No need to unbind our FBO, this will be taken care of by the caller
     // who will invoke OpenGLRenderer::resume()
@@ -236,6 +240,7 @@ Layer* LayerRenderer::createRenderLayer(RenderState& renderState, uint32_t width
     if (layer->isEmpty()) {
         layer->setEmpty(false);
         layer->allocateTexture();
+        TT_ADD(String8("Layer"), layer->getTexture(), layer->getWidth(), layer->getHeight(), GL_RGBA, GL_UNSIGNED_BYTE, String8("layer"), "[LayerRenderer.cpp] allocateTexture +");
 
         // This should only happen if we run out of memory
         if (glGetError() != GL_NO_ERROR) {
@@ -246,8 +251,13 @@ Layer* LayerRenderer::createRenderLayer(RenderState& renderState, uint32_t width
         }
     }
 
+    LAYER_RENDERER_LOGD("createRenderLayer %p, %dx%d, fbo %d, texture %d, alpha %d",
+            layer, layer->getWidth(), layer->getHeight(), layer->getFbo(), layer->getTexture(), layer->getAlpha());
+
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
             layer->getTexture(), 0);
+
+    LAYER_RENDERER_LOGD("Layer %p finished uploading texture %d to fbo %d", layer, layer->getTexture(), layer->getFbo());
 
     renderState.bindFramebuffer(previousFbo);
 
@@ -292,6 +302,9 @@ Layer* LayerRenderer::createTextureLayer(RenderState& renderState) {
 void LayerRenderer::updateTextureLayer(Layer* layer, uint32_t width, uint32_t height,
         bool isOpaque, bool forceFilter, GLenum renderTarget, float* textureTransform) {
     if (layer) {
+        LAYER_RENDERER_LOGD("Updating texture layer %p, %dx%d, fbo %d, texture %d, renderTarget 0x%x, alpha %d",
+                layer, width, height, layer->getFbo(), layer->getTexture(), renderTarget, layer->getAlpha());
+
         layer->setBlend(!isOpaque);
         layer->setForceFilter(forceFilter);
         layer->setSize(width, height);
@@ -312,20 +325,20 @@ void LayerRenderer::updateTextureLayer(Layer* layer, uint32_t width, uint32_t he
 void LayerRenderer::destroyLayer(Layer* layer) {
     if (layer) {
         ATRACE_FORMAT("Destroy %ux%u HW Layer", layer->getWidth(), layer->getHeight());
-        LAYER_RENDERER_LOGD("Recycling layer, %dx%d fbo = %d",
-                layer->getWidth(), layer->getHeight(), layer->getFbo());
+        LAYER_RENDERER_LOGD("Destroying or caching layer %p, %dx%d, fbo %d, texture %d, alpha %d",
+                layer, layer->getWidth(), layer->getHeight(), layer->getFbo(), layer->getTexture(), layer->getAlpha());
 
         if (!Caches::getInstance().layerCache.put(layer)) {
             LAYER_RENDERER_LOGD("  Destroyed!");
             layer->decStrong(0);
         } else {
             LAYER_RENDERER_LOGD("  Cached!");
-#if DEBUG_LAYER_RENDERER
-            Caches::getInstance().layerCache.dump();
-#endif
             layer->removeFbo();
             layer->region.clear();
         }
+#if DEBUG_LAYER_RENDERER
+        if (g_HWUI_debug_layer_renderer) Caches::getInstance().layerCache.dump();
+#endif
     }
 }
 
@@ -467,8 +480,10 @@ bool LayerRenderer::copyLayer(RenderState& renderState, Layer* layer, SkBitmap* 
 
 error:
 #if DEBUG_OPENGL
-        if (error != GL_NO_ERROR) {
-            ALOGD("GL error while copying layer into bitmap = 0x%x", error);
+        if (g_HWUI_debug_opengl) {
+            if (error != GL_NO_ERROR) {
+                ALOGD("GL error while copying layer into bitmap = 0x%x", error);
+            }
         }
 #endif
 

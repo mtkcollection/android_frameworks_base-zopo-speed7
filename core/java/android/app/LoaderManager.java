@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -680,7 +685,9 @@ class LoaderManagerImpl extends LoaderManager {
                         // up this request to be processed once one of the other loaders
                         // finishes or is canceled.
                         if (DEBUG) Log.v(TAG, "  Current loader is running; attempting to cancel");
-                        info.cancel();
+                        /// M: Setup pending loader first then calls cancel function.
+                        /// M: In cancel function, it will restart pending loader
+                        //info.cancel();
                         if (info.mPendingLoader != null) {
                             if (DEBUG) Log.v(TAG, "  Removing pending loader: " + info.mPendingLoader);
                             info.mPendingLoader.destroy();
@@ -689,7 +696,12 @@ class LoaderManagerImpl extends LoaderManager {
                         if (DEBUG) Log.v(TAG, "  Enqueuing as new pending loader");
                         info.mPendingLoader = createLoader(id, args, 
                                 (LoaderManager.LoaderCallbacks<Object>)callback);
-                        return (Loader<D>)info.mPendingLoader.mLoader;
+                        /// M: Setup pending loader first then calls cancel. @{
+                        LoaderInfo pending = info.mPendingLoader;
+                        info.cancel();
+                        //return (Loader<D>)info.mPendingLoader.mLoader;
+                        return (Loader<D>) pending.mLoader;
+                        /// M: }@
                     }
                 }
             } else {

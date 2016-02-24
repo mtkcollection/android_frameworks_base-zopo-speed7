@@ -33,4 +33,11 @@ interface IDreamManager {
     void finishSelf(in IBinder token, boolean immediate);
     void startDozing(in IBinder token, int screenState, int screenBrightness);
     void stopDozing(in IBinder token);
+    /// M: ALPS00446494 Daydream BeanFlinger show once again after press back key to exit @{
+    /**
+     * Remove window token, need run after remove window
+     * @hide
+     */
+    void removeToken(in IBinder token);
+    /// @}
 }

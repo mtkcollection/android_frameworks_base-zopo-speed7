@@ -103,6 +103,7 @@ public abstract class KeyguardAbsKeyInputView extends LinearLayout
 
     protected void verifyPasswordAndUnlock() {
         String entry = getPasswordText();
+        boolean isLockOut = false ;
         if (mLockPatternUtils.checkPassword(entry)) {
             mCallback.reportUnlockAttempt(true);
             mCallback.dismiss(true);
@@ -115,11 +116,17 @@ public abstract class KeyguardAbsKeyInputView extends LinearLayout
                 if (0 == (attempts % LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT)) {
                     long deadline = mLockPatternUtils.setLockoutAttemptDeadline();
                     handleAttemptLockout(deadline);
+                    isLockOut = true ;
                 }
             }
             mSecurityMessageDisplay.setMessage(getWrongPasswordStringId(), true);
         }
         resetPasswordText(true /* animate */);
+
+        ///M: fix ALPS01952796(side effect of ALPS01926268)
+        if (isLockOut) {
+            setPasswordEntryEnabled(false) ;
+        }
     }
 
     protected abstract void resetPasswordText(boolean animate);

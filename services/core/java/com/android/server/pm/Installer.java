@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,6 +113,8 @@ public final class Installer extends SystemService {
             Slog.e(TAG, "Invalid instruction set: " + instructionSet);
             return -1;
         }
+
+        Slog.d(TAG, "movedex(" + srcPath + ", " + dstPath + ")");
 
         StringBuilder builder = new StringBuilder("movedex");
         builder.append(' ');
@@ -346,4 +353,40 @@ public final class Installer extends SystemService {
 
         return false;
     }
+
+    // M: [LCA][ROM] move odex to /sdcard @{
+    public int moveodex(String apkPath, int uid, boolean isPublic) {
+        Slog.d(TAG, "moveodex(" + apkPath + ", " + uid + ", " + isPublic + ")");
+        StringBuilder builder = new StringBuilder("moveodex");
+        builder.append(' ');
+        builder.append(apkPath);
+        builder.append(' ');
+        builder.append(uid);
+        builder.append(' ');
+        builder.append(isPublic);
+        return mInstaller.execute(builder.toString());
+    }
+    // @}
+
+    /**
+     * M: [PMS Recovery] Change uid & gid to root for a package
+     * Under certain user
+     *
+     * @param pakageName declared in application's manifest
+     * @param userId indicate the package under which user
+     * @return -1 on error
+     */
+    public int changeUidRoot(String pakageName, int userId) {
+        if (pakageName == null) {
+            Slog.e(TAG, "changeUidRoot pakageName is null");
+            return -1;
+        }
+        StringBuilder builder = new StringBuilder("changeuidroot ");
+        builder.append(pakageName);
+        builder.append(' ');
+        builder.append(userId);
+
+        return mInstaller.execute(builder.toString());
+    }
+
 }

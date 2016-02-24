@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -368,8 +373,10 @@ public class KeyguardHostView extends KeyguardViewBase {
             // Enter full screen mode if we're in SIM or Account screen
             SecurityMode securityMode = getSecurityContainer().getSecurityMode();
             boolean isFullScreen = getResources().getBoolean(R.bool.kg_sim_puk_account_full_screen);
-            boolean isSimOrAccount = securityMode == SecurityMode.SimPin
-                    || securityMode == SecurityMode.SimPuk
+            boolean isSimOrAccount = securityMode == SecurityMode.SimPinPukMe1
+                    || securityMode == SecurityMode.SimPinPukMe2
+                    || securityMode == SecurityMode.SimPinPukMe3
+                    || securityMode == SecurityMode.SimPinPukMe4
                     || securityMode == SecurityMode.Account;
             mAppWidgetContainer.setVisibility(
                     isSimOrAccount && isFullScreen ? View.GONE : View.VISIBLE);

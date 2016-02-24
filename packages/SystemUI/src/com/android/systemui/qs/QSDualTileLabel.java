@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -186,7 +191,8 @@ public class QSDualTileLabel extends LinearLayout {
             }
         }
         if (lastWordBoundary == -1) {
-            lastWordBoundary = i - 1;
+	    //M:ALPS01802643 ,sometimes lastWord in FirstLine cannot fully display ,so change i-1 to i-2.	
+            lastWordBoundary = i - 2;
         }
         mFirstLine.setText(mText.substring(0, lastWordBoundary));
         mSecondLine.setText(mText.substring(lastWordBoundary).trim());

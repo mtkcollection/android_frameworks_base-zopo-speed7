@@ -264,6 +264,8 @@ class TaskResourceLoader implements Runnable {
  * NOTE: We should not hold any references to a Context from a static instance */
 public class RecentsTaskLoader {
     private static final String TAG = "RecentsTaskLoader";
+    /// M: For Debug
+    static final boolean DEBUG = true;
 
     static RecentsTaskLoader sInstance;
     static int INVALID_TASK_ID = -1;
@@ -339,11 +341,20 @@ public class RecentsTaskLoader {
             ActivityInfoHandle infoHandle) {
         // Return the task description label if it exists
         if (td != null && td.getLabel() != null) {
+            if (DEBUG) {
+                Log.d(TAG, "TaskDescription label: " + td.getLabel());
+            }
             return td.getLabel();
         }
         // Return the cached activity label if it exists
         String label = mActivityLabelCache.getAndInvalidateIfModified(taskKey);
         if (label != null) {
+            if (DEBUG) {
+                Log.d(TAG, "mActivityLabelCache: " + label +
+                " (" + mActivityLabelCache.getLastActiveTimeInfo(taskKey) + ") " +
+                System.currentTimeMillis());
+
+            }
             return label;
         }
         // All short paths failed, load the label from the activity info and cache it
@@ -353,6 +364,9 @@ public class RecentsTaskLoader {
         }
         if (infoHandle.info != null) {
             label = ssp.getActivityLabel(infoHandle.info);
+            if (DEBUG) {
+                Log.d(TAG, "getActivityLabel: " + label);
+            }
             mActivityLabelCache.put(taskKey, label);
         } else {
             Log.w(TAG, "Missing ActivityInfo for " + taskKey.baseIntent.getComponent()
@@ -519,6 +533,12 @@ public class RecentsTaskLoader {
      * out of memory.
      */
     public void onTrimMemory(int level) {
+
+        /// M: Add log for debuging memory trimming
+        if (DEBUG) {
+            Log.d(TAG, "RecentsTaskLoader: onTrimMemory level = " + level);
+        }
+
         RecentsConfiguration config = RecentsConfiguration.getInstance();
         switch (level) {
             case ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN:

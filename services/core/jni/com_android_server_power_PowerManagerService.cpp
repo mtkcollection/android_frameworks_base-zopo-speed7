@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,12 +48,16 @@ namespace android {
 
 static struct {
     jmethodID userActivityFromNative;
+    jmethodID setSmartBookScreenFromNative;
 } gPowerManagerServiceClassInfo;
 
 // ----------------------------------------------------------------------------
 
 static jobject gPowerManagerServiceObj;
 static struct power_module* gPowerModule;
+
+static Mutex gPowerManagerLock;
+static bool gSmartBookScreenOn = true;
 
 static nsecs_t gLastEventTime[USER_ACTIVITY_EVENT_LAST + 1];
 
@@ -65,6 +74,11 @@ static bool checkAndClearExceptionFromCallback(JNIEnv* env, const char* methodNa
         return true;
     }
     return false;
+}
+
+bool android_server_PowerManagerService_isSmartBookScreenOn() {
+    AutoMutex _l(gPowerManagerLock);
+    return gSmartBookScreenOn;
 }
 
 void android_server_PowerManagerService_userActivity(nsecs_t eventTime, int32_t eventType) {
@@ -95,6 +109,17 @@ void android_server_PowerManagerService_userActivity(nsecs_t eventTime, int32_t 
                 gPowerManagerServiceClassInfo.userActivityFromNative,
                 nanoseconds_to_milliseconds(eventTime), eventType, 0);
         checkAndClearExceptionFromCallback(env, "userActivityFromNative");
+    }
+}
+
+void android_server_PowerManagerService_setSmartBookScreen(int32_t cmd, int32_t timeout) {
+    if (gPowerManagerServiceObj) {
+        JNIEnv* env = AndroidRuntime::getJNIEnv();
+
+        env->CallVoidMethod(gPowerManagerServiceObj,
+                gPowerManagerServiceClassInfo.setSmartBookScreenFromNative,
+                cmd, timeout);
+        checkAndClearExceptionFromCallback(env, "setSmartBookScreenFromNative");
     }
 }
 
@@ -156,6 +181,43 @@ static void nativeSendPowerHint(JNIEnv *env, jclass clazz, jint hintId, jint dat
     }
 }
 
+static void nativeSetBlNotify(JNIEnv *env, jclass clazz, jboolean enable) {
+    ALOGD_IF_SLOW(100, "nativeSetBlNotify while turning screen on");
+    autosuspend_bl_notify();
+}
+
+/* Only For Smart Book Suspend/Resume */
+static void nativeSetSmartBookMode(JNIEnv *env, jclass clazz, jboolean enable) {
+    if (enable) {
+        ALOGD_IF_SLOW(100, "Excessive delay in smartbook_mode_enable() while turning screen off");
+        smartbook_mode_enable();
+    } else {
+        ALOGD_IF_SLOW(100, "Excessive delay in smartbook_mode_disable() while turning screen on");
+        smartbook_mode_disable();
+    }
+}
+
+/* Only For Smart Book Suspend/Resume */
+static void nativeSetSmartBookSuspend(JNIEnv *env, jclass clazz, jboolean enable) {
+    if (enable) {
+        ALOGD_IF_SLOW(100, "Excessive delay in smartbook_mode_enable() while turning screen off");
+        smartbook_mode_suspend();
+    } else {
+        ALOGD_IF_SLOW(100, "Excessive delay in smartbook_mode_disable() while turning screen on");
+        smartbook_mode_resume();
+    }
+}
+
+/* Only For Smart Book Screen Control */
+static void nativeSetSmartBookScreen(JNIEnv *env, jclass clazz, jint cmd, jint timeout) {
+    set_smartbook_screen(cmd, timeout);
+    if (cmd != 0) {
+        gSmartBookScreenOn = true;
+    } else {
+        gSmartBookScreenOn = false;
+    }
+}
+
 // ----------------------------------------------------------------------------
 
 static JNINativeMethod gPowerManagerServiceMethods[] = {
@@ -172,6 +234,14 @@ static JNINativeMethod gPowerManagerServiceMethods[] = {
             (void*) nativeSetAutoSuspend },
     { "nativeSendPowerHint", "(II)V",
             (void*) nativeSendPowerHint },
+    { "nativeSetBlNotify", "(Z)V",
+            (void*) nativeSetBlNotify },
+    { "nativeSetSmartBookMode", "(Z)V",
+            (void*) nativeSetSmartBookMode },
+    { "nativeSetSmartBookSuspend", "(Z)V",
+            (void*) nativeSetSmartBookSuspend },
+    { "nativeSetSmartBookScreen", "(II)V",
+            (void*) nativeSetSmartBookScreen },
 };
 
 #define FIND_CLASS(var, className) \
@@ -198,6 +268,9 @@ int register_android_server_PowerManagerService(JNIEnv* env) {
 
     GET_METHOD_ID(gPowerManagerServiceClassInfo.userActivityFromNative, clazz,
             "userActivityFromNative", "(JII)V");
+
+    GET_METHOD_ID(gPowerManagerServiceClassInfo.setSmartBookScreenFromNative, clazz,
+            "setSmartBookScreenFromNative", "(II)V");
 
     // Initialize
     for (int i = 0; i <= USER_ACTIVITY_EVENT_LAST; i++) {

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,6 +77,9 @@ public class RecentsCreateFragment extends Fragment {
 
     private static final int LOADER_RECENTS = 3;
 
+    /// M: add a loading view to notify user we are loading item background.
+    private View mLoadingView;
+
     public static void show(FragmentManager fm) {
         final RecentsCreateFragment fragment = new RecentsCreateFragment();
         final FragmentTransaction ft = fm.beginTransaction();
@@ -87,6 +95,12 @@ public class RecentsCreateFragment extends Fragment {
         final View view = inflater.inflate(R.layout.fragment_directory, container, false);
 
         mEmptyView = view.findViewById(android.R.id.empty);
+
+        /// M: add a loading view to notify user we are loading item background. @{
+        mLoadingView = view.findViewById(R.id.loading);
+        TextView loadingTextView = (TextView) mLoadingView.findViewById(R.id.loading_text);
+        loadingTextView.setText(com.mediatek.internal.R.string.contact_widget_loading);
+        /// @}
 
         mListView = (ListView) view.findViewById(R.id.list);
         mListView.setOnItemClickListener(mItemListener);
@@ -195,6 +209,9 @@ public class RecentsCreateFragment extends Fragment {
 
         public void swapStacks(List<DocumentStack> stacks) {
             mStacks = stacks;
+
+            /// M: When finish loading, disable loading view.
+            mLoadingView.setVisibility(View.GONE);
 
             if (isEmpty()) {
                 mEmptyView.setVisibility(View.VISIBLE);

@@ -167,4 +167,7 @@
     <string name="keyguard_transport_play_description" msgid="2924628863741150956">"Κουμπί αναπαραγωγής"</string>
     <string name="keyguard_transport_stop_description" msgid="3084179324810575787">"Κουμπί διακοπής"</string>
     <string name="keyguard_carrier_default" msgid="8700650403054042153">"Καμία υπηρεσία."</string>
+    <string name="kg_new_simcard">Νέα κάρτα SIM</string>
+    <string name="kg_detecting_simcard">Γίνεται ανίχνευση…</string>
+    <string name="kg_slot_id">Υποδοχή <xliff:g id="number">%d</xliff:g>:</string>
 </resources>

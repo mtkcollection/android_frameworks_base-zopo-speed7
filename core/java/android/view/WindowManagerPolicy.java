@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -357,6 +362,54 @@ public interface WindowManagerPolicy {
          * @return true if window is on default display.
          */
         public boolean isDefaultDisplay();
+        
+        /**
+         * M: BMW. Check whether the window is belong to floating window. @{
+         * @hide
+         */
+        public boolean isFloatingWindow();
+        /// @}
+
+        /**
+         * M: BMW. Get the floating region from the TaskStack @{
+         * @ param rotation the desired rotation for the floating rectangle
+         * @ param displayWidth the width of the display
+         * @ param displayHeight the height of the display
+         * @ return null if the window is not floating window.
+         * @hide
+         */
+        public Rect getFloatingRect(int rotation, int displayWidth, int
+                displayHeight);
+        /// @}
+
+
+        /**
+         * M: BMW. Identify the window state is located at the focus stack box @{
+         * @ return true if at the focus stack box. Otherwise, at the non-focus
+         *               stack box.
+         * @hide
+         */
+        public boolean isFocusStack();
+        /// @}
+        
+
+        /**
+         * M: BMW. When running layoutWindowLw at MtkPhoneWindowManager, it needs to
+         * adjust the floating rectangle by the offsets.
+         * @ param xOffset offset of X
+         * @ param yOffset offset of Y
+         * @hide
+         */
+        public void adjustFloatingRect(int xOffset, int yOffset);
+        /// @}
+
+        /**
+         * M: BMW. Identify the floating window is full for the floating stack
+         * @ return true full window at the floating stack. Otherwise, non-full.
+         * @hide
+         */
+        public boolean isFullFloatWindow();
+        /// @}
     }
 
     /**
@@ -415,6 +468,11 @@ public interface WindowManagerPolicy {
 
         public void shutdown(boolean confirm);
         public void rebootSafeMode(boolean confirm);
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 14:25:51 +0800
+ * Power Reboot
+ */
+        public void reboot(String reason, boolean confirm);
+// End of Vanzo:tanglei
 
         /**
          * Return the window manager lock needed to correctly call "Lw" methods.
@@ -426,6 +484,39 @@ public interface WindowManagerPolicy {
 
         /** Unregister a system listener for touch events */
         void unregisterPointerEventListener(PointerEventListener listener);
+
+        /// M:[SmartBook] Switch the inputmethod language
+        public void switchInputMethod(boolean forwardDirection);
+        /// M:[SmartBook] Notify the smarbook plug state from UEvent
+        public void notifySmartBookState(boolean plugin);
+		
+        /**
+         * M: BMW. Resize flag : The default value is none.(Don't resize)
+         */
+        public static final int RESIZE_NONE  = 0;
+
+        /**
+         * M: BMW. Resize flag : Resize the up side border.
+         */
+        public static final int RESIZE_UP    = 1 << 0;
+
+        /**
+         * M: BMW. Resize flag : Resize the down side border.
+         */
+        public static final int RESIZE_DOWN  = 1 << 1;
+
+        /**
+         * M: BMW. Resize flag : Resize the left side border.
+         */
+        public static final int RESIZE_LEFT  = 1 << 2;
+
+        /**
+         * M: BMW. Resize flag : Resize the right side border.
+         */
+        public static final int RESIZE_RIGHT = 1 << 3;
+
+
+
     }
 
     public interface PointerEventListener {
@@ -459,6 +550,8 @@ public interface WindowManagerPolicy {
     public final int OFF_BECAUSE_OF_USER = 2;
     /** Screen turned off because of timeout */
     public final int OFF_BECAUSE_OF_TIMEOUT = 3;
+    /// M: Screen turned off because of proximity sensor
+    public final int OFF_BECAUSE_OF_PROX_SENSOR = 4;
 
     /** @hide */
     @IntDef({USER_ROTATION_FREE, USER_ROTATION_LOCKED})
@@ -1238,6 +1331,10 @@ public interface WindowManagerPolicy {
     public void dump(String prefix, PrintWriter writer, String[] args);
 
     /**
+     */
+    public void showAssistant();
+
+    /**
      * Returns whether a given window type can be magnified.
      *
      * @param windowType The window type.
@@ -1263,4 +1360,19 @@ public interface WindowManagerPolicy {
      * @param fadeoutDuration the duration of the exit animation, in milliseconds
      */
     public void startKeyguardExitAnimation(long startTime, long fadeoutDuration);
+
+    /// M:[SmartBook] @{
+    /**
+     * Switch plug in/out state for SmartBook
+     */
+    public void setExtraDisplayDevicePlugIn(boolean plugin, boolean goHome);
+    /// @}
+    
+     /**
+     * M: BMW. @{
+     * Set the current used input method window state.
+     * @hide
+     */
+    public void setCurrentInputMethodWindowLw(WindowState ime, WindowState target);
+    /// @}
 }

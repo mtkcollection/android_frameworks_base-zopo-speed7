@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +60,9 @@ public abstract class InCallService extends Service {
     private static final int MSG_ON_AUDIO_STATE_CHANGED = 5;
     private static final int MSG_BRING_TO_FOREGROUND = 6;
     private static final int MSG_ON_CAN_ADD_CALL_CHANGED = 7;
+    /// M: voice recording
+    private static final int MSG_UPDATE_RECORD_STATE = 8;
+    private static final int MSG_STORAGE_FULL = 9;
 
     /** Default Handler used to consolidate binder method calls onto a single thread. */
     private final Handler mHandler = new Handler(Looper.getMainLooper()) {
@@ -64,6 +72,7 @@ public abstract class InCallService extends Service {
                 return;
             }
 
+            SomeArgs args;
             switch (msg.what) {
                 case MSG_SET_IN_CALL_ADAPTER:
                     mPhone = new Phone(new InCallAdapter((IInCallAdapter) msg.obj));
@@ -76,7 +85,7 @@ public abstract class InCallService extends Service {
                     mPhone.internalUpdateCall((ParcelableCall) msg.obj);
                     break;
                 case MSG_SET_POST_DIAL_WAIT: {
-                    SomeArgs args = (SomeArgs) msg.obj;
+                    args = (SomeArgs) msg.obj;
                     try {
                         String callId = (String) args.arg1;
                         String remaining = (String) args.arg2;
@@ -94,6 +103,20 @@ public abstract class InCallService extends Service {
                     break;
                 case MSG_ON_CAN_ADD_CALL_CHANGED:
                     mPhone.internalSetCanAddCall(msg.arg1 == 1);
+                    break;
+                case MSG_UPDATE_RECORD_STATE:
+                    args = (SomeArgs) msg.obj;
+                    try {
+                        if (mPhone != null) {
+                            mPhone.internalUpdateRecordState(
+                                    (Integer) args.arg1, (Integer) args.arg2);
+                        }
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                case MSG_STORAGE_FULL:
+                    mPhone.internalOnStorageFull();
                     break;
                 default:
                     break;
@@ -145,6 +168,18 @@ public abstract class InCallService extends Service {
         public void onCanAddCallChanged(boolean canAddCall) {
             mHandler.obtainMessage(MSG_ON_CAN_ADD_CALL_CHANGED, canAddCall ? 1 : 0, 0)
                     .sendToTarget();
+        }
+
+        public void updateRecordState(final int state, final int customValue) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = state;
+            args.arg2 = customValue;
+            mHandler.obtainMessage(MSG_UPDATE_RECORD_STATE, args).sendToTarget();
+        }
+
+        @Override
+        public void onStorageFull() {
+            mHandler.obtainMessage(MSG_STORAGE_FULL).sendToTarget();
         }
     }
 

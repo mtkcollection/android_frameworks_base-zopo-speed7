@@ -23,14 +23,17 @@ import android.animation.TimeInterpolator;
 import android.animation.ValueAnimator;
 import android.app.ActivityManagerNative;
 import android.app.StatusBarManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Message;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -47,18 +50,33 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 
 import com.android.systemui.R;
+import com.android.systemui.recents.RecentsActivity;
 import com.android.systemui.statusbar.BaseStatusBar;
 import com.android.systemui.statusbar.DelegateViewHelper;
 import com.android.systemui.statusbar.policy.DeadZone;
 import com.android.systemui.statusbar.policy.KeyButtonView;
+import android.widget.Button;
+import android.content.Intent;
 
+import com.mediatek.xlog.Xlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 
+//M:multi window ,@{
+import com.mediatek.multiwindow.MultiWindowProxy;
+///}@
 public class NavigationBarView extends LinearLayout {
     final static boolean DEBUG = false;
     final static String TAG = "PhoneStatusBar/NavigationBarView";
+		/// M: add for multi window
+		private final static String ACTION_FLOADWINDOW_SHOW = "com.android.systemui.FLOATWINDOW_SHOW";
+		private boolean mShowFloatWindow = true;
+	/// M: add for Multi window show restore button 
+		private View mRestoreButton;
+		final static int MSG_RESTORE_SHOW = 1025;  
+		private boolean mShowRestoreButton = false;
+		final static boolean NAVBAR_ALWAYS_AT_RIGHT = true;
 
     // slippery nav bar when everything is disabled, e.g. during setup
     final static boolean SLIPPERY_WHEN_DISABLED = true;
@@ -70,6 +88,8 @@ public class NavigationBarView extends LinearLayout {
     int mBarSize;
     boolean mVertical;
     boolean mScreenOn;
+	/// M: add for multi window
+	   boolean mShowFloat;
 
     boolean mShowMenu;
     int mDisabledFlags = 0;
@@ -82,6 +102,8 @@ public class NavigationBarView extends LinearLayout {
     private NavigationBarViewTaskSwitchHelper mTaskSwitchHelper;
     private DelegateViewHelper mDelegateHelper;
     private DeadZone mDeadZone;
+	    /// M: add for multi window
+    private BaseStatusBar mBar;
     private final NavigationBarTransitions mBarTransitions;
 
     // workaround for LayoutTransitions leaving the nav buttons in a weird state (bug 5549288)
@@ -148,9 +170,37 @@ public class NavigationBarView extends LinearLayout {
         }
     };
 
+    /// M: add for multi window @{
+    private BroadcastReceiver mFloatWindowBroadcastReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            boolean showFloatWindow = intent.getBooleanExtra("ShowFloatWindow", false);
+            mShowFloatWindow = showFloatWindow;
+            Xlog.d(TAG, "mFloatWindowBroadcastReceiver showFloatWindow is " + showFloatWindow);
+            getFloatButton().setVisibility(showFloatWindow ? View.VISIBLE : View.INVISIBLE);
+        }
+    };
+    /// @}
+    /// M: add for multi window @{
+    public void showRestoreButton(boolean flag) {
+      Message msg = mHandler.obtainMessage(MSG_RESTORE_SHOW);
+      Bundle b = new Bundle();
+      b.putBoolean("flag",flag);
+      msg.setData(b);
+      msg.sendToTarget();   
+    }   
+    /// @}
     private class H extends Handler {
         public void handleMessage(Message m) {
             switch (m.what) {
+		 /// M: add for multi window @{                
+                case MSG_RESTORE_SHOW:
+                    Bundle b = m.getData();
+                    boolean flag = b.getBoolean("flag");
+                    if (mRestoreButton != null) {
+                        mShowRestoreButton = flag;
+                        mRestoreButton.setVisibility(flag ? View.VISIBLE : View.INVISIBLE); 
+                    }
+                    break;  
                 case MSG_CHECK_INVALID_LAYOUT:
                     final String how = "" + m.obj;
                     final int w = getWidth();
@@ -181,6 +231,14 @@ public class NavigationBarView extends LinearLayout {
         mBarSize = res.getDimensionPixelSize(R.dimen.navigation_bar_size);
         mVertical = false;
         mShowMenu = false;
+	/// M: add for multi window
+        if (RecentsActivity.FLOAT_WINDOW_SUPPORT) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(ACTION_FLOADWINDOW_SHOW);
+            context.registerReceiver(mFloatWindowBroadcastReceiver, filter);
+        }
+
+        mShowFloat = false;
         mDelegateHelper = new DelegateViewHelper(this);
         mTaskSwitchHelper = new NavigationBarViewTaskSwitchHelper(context);
 
@@ -200,6 +258,11 @@ public class NavigationBarView extends LinearLayout {
     public void setBar(BaseStatusBar phoneStatusBar) {
         mTaskSwitchHelper.setBar(phoneStatusBar);
         mDelegateHelper.setBar(phoneStatusBar);
+		  /// M: add for multi window @{
+        if(RecentsActivity.FLOAT_WINDOW_SUPPORT){
+            mBar = phoneStatusBar;
+        }
+        /// @}
     }
 
     public void setOnVerticalChangedListener(OnVerticalChangedListener onVerticalChangedListener) {
@@ -266,6 +329,20 @@ public class NavigationBarView extends LinearLayout {
     public View getHomeButton() {
         return mCurrentView.findViewById(R.id.home);
     }
+    /// M: add for multi window @{
+    public ImageView getFloatButton() {
+        return (ImageView) mCurrentView.findViewById(R.id.multi_float);
+    }
+
+    /// M: add for multi window @{
+    public View getRestoreButton() {
+        return mCurrentView.findViewById(R.id.restore);
+    }
+
+    public Button getExtensionButton() {
+        return (Button)mCurrentView.findViewById(R.id.more);
+    }
+    /// @}
 
     public View getImeSwitchButton() {
         return mCurrentView.findViewById(R.id.ime_switcher);
@@ -334,11 +411,23 @@ public class NavigationBarView extends LinearLayout {
 
         mDisabledFlags = disabledFlags;
 
-        final boolean disableHome = ((disabledFlags & View.STATUS_BAR_DISABLE_HOME) != 0);
-        boolean disableRecent = ((disabledFlags & View.STATUS_BAR_DISABLE_RECENT) != 0);
-        final boolean disableBack = ((disabledFlags & View.STATUS_BAR_DISABLE_BACK) != 0)
-                && ((mNavigationIconHints & StatusBarManager.NAVIGATION_HINT_BACK_ALT) == 0);
-        final boolean disableSearch = ((disabledFlags & View.STATUS_BAR_DISABLE_SEARCH) != 0);
+	  /// M: add for multi window @{
+			 boolean home = ((disabledFlags & View.STATUS_BAR_DISABLE_HOME) != 0);
+			 boolean recent = ((disabledFlags & View.STATUS_BAR_DISABLE_RECENT) != 0);
+			 boolean back = ((disabledFlags & View.STATUS_BAR_DISABLE_BACK) != 0)
+					 && ((mNavigationIconHints & StatusBarManager.NAVIGATION_HINT_BACK_ALT) == 0);
+			 boolean search = ((disabledFlags & View.STATUS_BAR_DISABLE_SEARCH) != 0);
+			 if(RecentsActivity.FLOAT_WINDOW_SUPPORT){
+				 home = home || mBar.isFloatPanelOpened();
+				 recent = recent || mBar.isFloatPanelOpened();
+				 back = back || mBar.isFloatPanelOpened();
+				 search = search || mBar.isFloatPanelOpened();
+			 }
+			 final boolean disableHome = home;
+			 boolean disableRecent = recent;
+			 final boolean disableBack = back;
+			 final boolean disableSearch = search;
+			 /// @}
 
         if (SLIPPERY_WHEN_DISABLED) {
             setSlippery(disableHome && disableRecent && disableBack && disableSearch);
@@ -369,6 +458,42 @@ public class NavigationBarView extends LinearLayout {
         getBackButton()   .setVisibility(disableBack       ? View.INVISIBLE : View.VISIBLE);
         getHomeButton()   .setVisibility(disableHome       ? View.INVISIBLE : View.VISIBLE);
         getRecentsButton().setVisibility(disableRecent     ? View.INVISIBLE : View.VISIBLE);
+		/// M: add for multi window @{
+			  if(RecentsActivity.FLOAT_WINDOW_SUPPORT){
+				  final boolean disableFloat = disableRecent
+						  && !mBar.isFloatPanelOpened();
+				  getExtensionButton().setVisibility(
+						  mBar.isFloatPanelOpened() ? View.VISIBLE : View.INVISIBLE);
+				  getFloatButton().setVisibility(
+						  (!disableFloat && mShowFloatWindow) ? View.VISIBLE
+								  : View.INVISIBLE);
+				  // Add for restore button
+				  if (mCurrentView != null) {
+					  mRestoreButton = mCurrentView.findViewById(R.id.restore);
+					  mRestoreButton.setVisibility(
+						  mShowRestoreButton? View.VISIBLE : View.INVISIBLE);
+					  mRestoreButton.setOnClickListener(new OnClickListener() {
+						  @Override
+						  public void onClick(View v) {
+							// try {
+						      mShowRestoreButton = false;
+						      mRestoreButton.setVisibility(View.INVISIBLE); 
+                              MultiWindowProxy mMultiWindowProxy =MultiWindowProxy.getInstance();
+                              if (mMultiWindowProxy != null){
+                                  mMultiWindowProxy.restoreWindow(null,false);              
+                              }								  						   
+								 // ActivityManagerNative.getDefault().restoreStack(
+									//	  null, false);
+							  Log.d(TAG, "added for restore button in navi onCLick!");
+							// } catch (RemoteException e) {
+							//	  Log.e(TAG, "Can't get restoreStack", e);
+							// }
+						  }
+					  });
+				  }
+				 Xlog.d(TAG, "setDisabledFlags showFloatWindow is " + !disableFloat);
+			  }
+			  // / @}
 
         mBarTransitions.applyBackButtonQuiescentAlpha(mBarTransitions.getMode(), true /*animate*/);
     }
@@ -507,6 +632,19 @@ public class NavigationBarView extends LinearLayout {
         super.onConfigurationChanged(newConfig);
         updateRTLOrder();
         updateTaskSwitchHelper();
+
+        /// M: [ALPS01868023] Set ContentDescription when language changed. @{
+        getBackButton().setContentDescription(
+            getResources().getString(R.string.accessibility_back));
+        getHomeButton().setContentDescription(
+            getResources().getString(R.string.accessibility_home));
+        getRecentsButton().setContentDescription(
+            getResources().getString(R.string.accessibility_recent));
+        getMenuButton().setContentDescription(
+            getResources().getString(R.string.accessibility_menu));
+        getImeSwitchButton().setContentDescription(
+            getResources().getString(R.string.accessibility_ime_switch_button));
+        /// M: [ALPS01868023] Set ContentDescription when language changed. @}
     }
 
     /**

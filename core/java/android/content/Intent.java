@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1634,6 +1639,25 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_BOOT_COMPLETED = "android.intent.action.BOOT_COMPLETED";
+   /** M:
+     * Broadcast Action: action used for power off alarm
+     * The broadcat is sent when the system is booting from power off alarm
+     * @hide
+     *   @{ */
+    public static final String ACTION_POWER_OFF_ALARM_ALERT =
+            "android.intent.action.POWER_OFF_ALARM_ALERT";
+    /** @} */
+
+    /** M:
+     * Broadcast Action: This is broadcast when Settings clears an application's user data.
+     * It is currently used by DeskClock.
+     * @hide
+     * @internal
+     *   @{*/
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SETTINGS_PACKAGE_DATA_CLEARED = "com.mediatek.intent.action.SETTINGS_PACKAGE_DATA_CLEARED";
+    /*  @} */
+
     /**
      * Broadcast Action: This is broadcast when a user action should request a
      * temporary system dialog to dismiss.  Some examples of temporary system
@@ -2169,6 +2193,12 @@ public class Intent implements Parcelable, Cloneable {
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_MEDIA_EJECT = "android.intent.action.MEDIA_EJECT";
 
+   /** M:
+     * Broadcast Action:  when SD card is inserted into the phone
+     * @hide
+     */
+    public static final String ACTION_SD_INSERTED = "android.intent.action.SD_INSERTED";
+
     /**
      * Broadcast Action:  The media scanner has started scanning a directory.
      * The path to the directory being scanned is contained in the Intent.mData field.
@@ -2286,6 +2316,15 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_HEADSET_PLUG = android.media.AudioManager.ACTION_HEADSET_PLUG;
+
+    /**
+     * M: Broadcast Action: action used for HDMI cable plug event
+     * The broadcat is sent when the HDMI cable is plug in or out
+     * @hide
+     * @internal
+     */
+    public static final String ACTION_HDMI_PLUG =
+            "android.intent.action.HDMI_PLUG";
 
     /**
      * <p>Broadcast Action: The user has switched on advanced settings in the settings app:</p>
@@ -3450,6 +3489,41 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_USER =
             "android.intent.extra.USER";
 
+   /** M:
+     * Broadcast Action: action for NotificationPlus feature.
+     * The broadcat is sent to trigger showing transient statusbar.
+     * @hide
+     */
+    public static final String MTK_ACTION_REQUEST_TRANSIENT_STATUSBAR = "com.mediatek.action.REQUEST_TRANSIENT_STATUSBAR";
+
+    /**
+     * M:
+     * Broadcast Action: action used for launcher unread number feature.
+     * The broadcat is sent when the unread number of application changes.
+     * New
+     * @hide
+     * @internal
+     */
+    public static final String ACTION_UNREAD_CHANGED = "com.mediatek.action.UNREAD_CHANGED";
+
+    /**
+     * M:
+     * Extra used to indicate the unread number of which component changes.
+     * New
+     * @hide
+     * @internal
+     */
+    public static final String EXTRA_UNREAD_COMPONENT = "com.mediatek.intent.extra.UNREAD_COMPONENT";
+
+    /**
+     * M:
+     * The number of unread messages.
+     * New
+     * @hide
+     * @internal
+     */
+    public static final String EXTRA_UNREAD_NUMBER = "com.mediatek.intent.extra.UNREAD_NUMBER";
+
     /**
      * Extra used in the response from a BroadcastReceiver that handles
      * {@link #ACTION_GET_RESTRICTION_ENTRIES}. The type of the extra is
@@ -3605,6 +3679,28 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int FLAG_GRANT_PREFIX_URI_PERMISSION = 0x00000080;
 
+    /// M: Background Service Priority Adjustment @{
+    /**
+     * Extend for FLAG_FROM_BACKGROUND
+     *    Can be set by the caller to indicate that this Intent is coming from
+     *    a background operation, not from direct user interaction.
+     * When combined with FLAG_WITH_BACKGROUND_PRIORITY
+     *    Apply background thread priority adjustment while starting new service
+     *
+     * @hide
+     */
+    public static final int FLAG_WITH_BACKGROUND_PRIORITY = 0x00000100;
+    /// @}
+
+    /**
+     * M: BMW. @{
+     * If set in an Intent passed to {@link Context#startActivity Context.startActivity()},
+     * this flag will cause a newly floating activity.
+     *@hide
+     */
+    public static final int FLAG_ACTIVITY_FLOATING = 0x00000200;
+    /// @}
+    
     /**
      * If set, the new activity is not kept in the history stack.  As soon as
      * the user navigates away from it, the activity is finished.  This may also
@@ -4031,6 +4127,108 @@ public class Intent implements Parcelable, Cloneable {
     public static final int URI_ALLOW_UNSAFE = 1<<2;
 
     // ---------------------------------------------------------------------
+
+    //M: start
+    /**
+     * <p>Broadcast Action: The user has switched the mutiple SIM mode of phone. One or
+     * more radios have been turned off or on. The intent will have the following extra value:</p>
+     * <ul>
+     *   <li><em>state</em> - A boolean value indicating whether Airplane Mode is on. If true,
+     *   then cell radio and possibly other radios such as bluetooth or WiFi may have also been
+     *   turned off</li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system.
+     * @hide
+     * @internal
+     */
+    public static final String ACTION_MSIM_MODE_CHANGED = "android.intent.action.MSIM_MODE";
+
+    /**
+     * A int associated with a {@link #ACTION_MSIM_MODE_CHANGED} activity
+     * describing the latest mode. 1 for sim1 only, 2 for sim2 only, 3 for dual sim
+     * @hide
+     * @internal
+     */
+    public static final String EXTRA_MSIM_MODE = "mode";
+
+    /**
+     * Broadcast Action: The USB thering function has been changed.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_TETHERING_CHANGE =
+            "android.intent.action.TETHERING_CHANGED";
+
+    /**
+     * @hide
+     * Enable/Disable the tethering function from adb command
+     */
+    public static final String EXTRA_TETHERING_CONNECTED =
+            "tethering_isconnected";
+    //M: end
+
+    /// M:[SmartBook]Add SmartBook intent @{
+    /**
+     * Sticky broadcast of the current SMARTBOOK plug state.
+     * @hide
+     */
+    public final static String ACTION_SMARTBOOK_PLUG = "android.intent.action.SMARTBOOK_PLUG";
+
+    /**
+     * Extra in {@link #ACTION_SMARTBOOK_PLUG} indicating the state: true if
+     * plug in to SMARTBOOK, false if not.
+     * @hide
+     */
+    public final static String EXTRA_SMARTBOOK_PLUG_STATE = "state";
+    /// @}
+
+    /**
+     * <p>Broadcast Action: The user has switched the default SIM option for data connection. The
+     * intent will have the following extra value:</p>
+     * <ul>
+     *   <li><em>simid</em> - A long value indicating which SIM card is set as the default SIM</li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_DATA_DEFAULT_SIM_CHANGED = "android.intent.action.DATA_DEFAULT_SIM";
+
+    /**
+     * <p>Broadcast Action: The user has modified the sim information. The
+     * intent will have the following extra value:</p>
+     * <ul>
+     *   <li><em>simid</em> - An int value indicating which sim's information is modified</li>
+     *   <li><em>type</em> - An int value indicating which kind of information is modified</li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SIM_SETTINGS_INFO_CHANGED = "android.intent.action.SIM_SETTING_INFO_CHANGED";
+
+    /**
+     * <p>Broadcast Action: The user has switched the default SIM option for sms. The
+     * intent will have the following extra value:</p>
+     * <ul>
+     *   <li><em>simid</em> - A long value indicating which SIM card is set as the default SIM</li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SMS_DEFAULT_SIM_CHANGED = "android.intent.action.SMS_DEFAULT_SIM";
 
     private String mAction;
     private Uri mData;

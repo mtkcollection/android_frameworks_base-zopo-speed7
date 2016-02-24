@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +29,8 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.util.Log;
 import android.util.TimeUtils;
+
+import com.mediatek.xlog.Xlog;
 
 import java.io.PrintWriter;
 
@@ -71,7 +78,9 @@ import java.io.PrintWriter;
  */
 public final class Choreographer {
     private static final String TAG = "Choreographer";
-    private static final boolean DEBUG = false;
+    /// M: enable vsync log dynamically.
+    private static final boolean DEBUG = SystemProperties.getBoolean(
+            "debug.vsync.enablelog", false);
 
     // The default amount of time in ms between animation frames.
     // When vsync is not enabled, we want to have some idea of how long we should
@@ -172,6 +181,11 @@ public final class Choreographer {
         mCallbackQueues = new CallbackQueue[CALLBACK_LAST + 1];
         for (int i = 0; i <= CALLBACK_LAST; i++) {
             mCallbackQueues[i] = new CallbackQueue();
+        }
+
+        if (DEBUG) {
+            Xlog.d(TAG, "Choreographer: mDisplayEventReceiver = " + mDisplayEventReceiver
+                + ",USE_VSYNC = " + USE_VSYNC + ",this = " + this);
         }
     }
 
@@ -320,9 +334,9 @@ public final class Choreographer {
     private void postCallbackDelayedInternal(int callbackType,
             Object action, Object token, long delayMillis) {
         if (DEBUG) {
-            Log.d(TAG, "PostCallback: type=" + callbackType
+            Xlog.d(TAG, "PostCallback: type=" + callbackType
                     + ", action=" + action + ", token=" + token
-                    + ", delayMillis=" + delayMillis);
+                    + ", delayMillis=" + delayMillis + ",this = " + this);
         }
 
         synchronized (mLock) {
@@ -364,8 +378,8 @@ public final class Choreographer {
 
     private void removeCallbacksInternal(int callbackType, Object action, Object token) {
         if (DEBUG) {
-            Log.d(TAG, "RemoveCallbacks: type=" + callbackType
-                    + ", action=" + action + ", token=" + token);
+            Xlog.d(TAG, "RemoveCallbacks: type=" + callbackType
+                    + ", action=" + action + ", token=" + token + ",this = " + this);
         }
 
         synchronized (mLock) {
@@ -480,7 +494,7 @@ public final class Choreographer {
             mFrameScheduled = true;
             if (USE_VSYNC) {
                 if (DEBUG) {
-                    Log.d(TAG, "Scheduling next frame on vsync.");
+                        Xlog.d(TAG, "Scheduling next frame on vsync case 1, this = " + this);
                 }
 
                 // If running on the Looper thread, then schedule the vsync immediately,
@@ -492,12 +506,16 @@ public final class Choreographer {
                     Message msg = mHandler.obtainMessage(MSG_DO_SCHEDULE_VSYNC);
                     msg.setAsynchronous(true);
                     mHandler.sendMessageAtFrontOfQueue(msg);
+                    if (DEBUG) {
+                        Xlog.d(TAG, "Scheduling next frame on vsync case 2, this = " + this);
+                    }
                 }
             } else {
                 final long nextFrameTime = Math.max(
                         mLastFrameTimeNanos / TimeUtils.NANOS_PER_MS + sFrameDelay, now);
                 if (DEBUG) {
-                    Log.d(TAG, "Scheduling next frame in " + (nextFrameTime - now) + " ms.");
+                    Xlog.d(TAG, "Scheduling next frame in " + (nextFrameTime - now)
+                            + " ms, this = " + this);
                 }
                 Message msg = mHandler.obtainMessage(MSG_DO_FRAME);
                 msg.setAsynchronous(true);
@@ -509,6 +527,10 @@ public final class Choreographer {
     void doFrame(long frameTimeNanos, int frame) {
         final long startNanos;
         synchronized (mLock) {
+            if (DEBUG) {
+                Xlog.d(TAG, "doFrame:  frameTimeNanos = " + frameTimeNanos + ",frame = " + frame
+                        + ",mFrameScheduled = " + mFrameScheduled + ",this = " + this);
+            }
             if (!mFrameScheduled) {
                 return; // no work to do
             }
@@ -553,7 +575,7 @@ public final class Choreographer {
             final long endNanos = System.nanoTime();
             Log.d(TAG, "Frame " + frame + ": Finished, took "
                     + (endNanos - startNanos) * 0.000001f + " ms, latency "
-                    + (startNanos - frameTimeNanos) * 0.000001f + " ms.");
+                    + (startNanos - frameTimeNanos) * 0.000001f + " ms, this = " + this);
         }
     }
 
@@ -573,9 +595,10 @@ public final class Choreographer {
         try {
             for (CallbackRecord c = callbacks; c != null; c = c.next) {
                 if (DEBUG) {
-                    Log.d(TAG, "RunCallback: type=" + callbackType
+                    Xlog.d(TAG, "RunCallback: type=" + callbackType
                             + ", action=" + c.action + ", token=" + c.token
-                            + ", latencyMillis=" + (SystemClock.uptimeMillis() - c.dueTime));
+                            + ", latencyMillis=" + (SystemClock.uptimeMillis() - c.dueTime)
+                            + ",this = " + this);
                 }
                 c.run(frameTimeNanos);
             }
@@ -677,6 +700,10 @@ public final class Choreographer {
 
         @Override
         public void handleMessage(Message msg) {
+            if (DEBUG) {
+                Xlog.d(TAG, "FrameHandler handleMessage: msg = " + msg.what + ",this = " + this);
+            }
+
             switch (msg.what) {
                 case MSG_DO_FRAME:
                     doFrame(System.nanoTime(), 0);
@@ -726,6 +753,12 @@ public final class Choreographer {
             // earlier than the frame time, then the vsync event will be processed immediately.
             // Otherwise, messages that predate the vsync event will be handled first.
             long now = System.nanoTime();
+            if (DEBUG) {
+                Xlog.d(TAG, "onVsync: timestampNanos = " + timestampNanos + ",frame = " + frame
+                        + ",now = " + now + ",mHavePendingVsync = " + mHavePendingVsync
+                        + ",this = " + Choreographer.this);
+            }
+
             if (timestampNanos > now) {
                 Log.w(TAG, "Frame time is " + ((timestampNanos - now) * 0.000001f)
                         + " ms in the future!  Check that graphics HAL is generating vsync "

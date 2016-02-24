@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1854,10 +1859,14 @@ public class BackupManagerService {
                 .setPackage(pkgInfo.packageName);
         List<ResolveInfo> hosts = mPackageManager.queryIntentServicesAsUser(
                 intent, 0, UserHandle.USER_OWNER);
-        final int N = hosts.size();
-        for (int i = 0; i < N; i++) {
-            final ServiceInfo info = hosts.get(i).serviceInfo;
-            tryBindTransport(info);
+        if (null != hosts) {
+            final int N = hosts.size();
+            for (int i = 0; i < N; i++) {
+                final ServiceInfo info = hosts.get(i).serviceInfo;
+                tryBindTransport(info);
+            }
+        } else {
+            Slog.w(TAG, "Transport package list is null");
         }
     }
 

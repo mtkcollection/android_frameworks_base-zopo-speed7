@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,8 @@
 
 package com.android.server.wm;
 
+import static com.android.server.wm.WindowManagerService.DEBUG_DIM_LAYER;
+
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.SystemClock;
@@ -26,7 +33,7 @@ import android.view.SurfaceControl;
 import java.io.PrintWriter;
 
 public class DimLayer {
-    private static final String TAG = "DimLayer";
+    private static String TAG = "DimLayer";
     private static final boolean DEBUG = false;
 
     /** Reference to the owner of this object. */
@@ -64,21 +71,31 @@ public class DimLayer {
 
     /** Owning stack */
     final TaskStack mStack;
+    static boolean mIsAnimBg = false;
 
     DimLayer(WindowManagerService service, TaskStack stack, DisplayContent displayContent) {
         mStack = stack;
         mDisplayContent = displayContent;
         final int displayId = mDisplayContent.getDisplayId();
-        if (DEBUG) Slog.v(TAG, "Ctor: displayId=" + displayId);
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "Ctor: displayId=" + displayId);
         SurfaceControl.openTransaction();
+        String surfaceName;
+        if (!mIsAnimBg) {
+            surfaceName = "DimLayer-" + stack.mStackId;
+            mIsAnimBg = true;
+        } else {
+            surfaceName = "DimLayer-" + stack.mStackId + "-AnimBg";
+            mIsAnimBg = false;
+        }
+        TAG = surfaceName;
         try {
             if (WindowManagerService.DEBUG_SURFACE_TRACE) {
                 mDimSurface = new WindowStateAnimator.SurfaceTrace(service.mFxSession,
-                    "DimSurface",
+                    surfaceName,
                     16, 16, PixelFormat.OPAQUE,
                     SurfaceControl.FX_SURFACE_DIM | SurfaceControl.HIDDEN);
             } else {
-                mDimSurface = new SurfaceControl(service.mFxSession, TAG,
+                mDimSurface = new SurfaceControl(service.mFxSession, surfaceName,
                     16, 16, PixelFormat.OPAQUE,
                     SurfaceControl.FX_SURFACE_DIM | SurfaceControl.HIDDEN);
             }
@@ -120,15 +137,15 @@ public class DimLayer {
 
     private void setAlpha(float alpha) {
         if (mAlpha != alpha) {
-            if (DEBUG) Slog.v(TAG, "setAlpha alpha=" + alpha);
+            if (DEBUG_DIM_LAYER) Slog.v(TAG, "setAlpha alpha=" + alpha);
             try {
                 mDimSurface.setAlpha(alpha);
                 if (alpha == 0 && mShowing) {
-                    if (DEBUG) Slog.v(TAG, "setAlpha hiding");
+                    if (DEBUG_DIM_LAYER) Slog.v(TAG, "setAlpha hiding");
                     mDimSurface.hide();
                     mShowing = false;
                 } else if (alpha > 0 && !mShowing) {
-                    if (DEBUG) Slog.v(TAG, "setAlpha showing");
+                    if (DEBUG_DIM_LAYER) Slog.v(TAG, "setAlpha showing");
                     mDimSurface.show();
                     mShowing = true;
                 }
@@ -201,7 +218,7 @@ public class DimLayer {
      * NOTE: Must be called with Surface transaction open. */
     void show() {
         if (isAnimating()) {
-            if (DEBUG) Slog.v(TAG, "show: immediate");
+            if (DEBUG_DIM_LAYER) Slog.v(TAG, "show: immediate");
             show(mLayer, mTargetAlpha, 0);
         }
     }
@@ -215,7 +232,7 @@ public class DimLayer {
      * @param duration How long to take to get there in milliseconds.
      */
     void show(int layer, float alpha, long duration) {
-        if (DEBUG) Slog.v(TAG, "show: layer=" + layer + " alpha=" + alpha
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "show: layer=" + layer + " alpha=" + alpha
                 + " duration=" + duration);
         if (mDimSurface == null) {
             Slog.e(TAG, "show: no Surface");
@@ -242,7 +259,7 @@ public class DimLayer {
                 mDuration = duration;
             }
         }
-        if (DEBUG) Slog.v(TAG, "show: mStartAlpha=" + mStartAlpha + " mStartTime=" + mStartTime);
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "show: mStartAlpha=" + mStartAlpha + " mStartTime=" + mStartTime);
         mTargetAlpha = alpha;
     }
 
@@ -250,7 +267,7 @@ public class DimLayer {
      * NOTE: Must be called with Surface transaction open. */
     void hide() {
         if (mShowing) {
-            if (DEBUG) Slog.v(TAG, "hide: immediate");
+            if (DEBUG_DIM_LAYER) Slog.v(TAG, "hide: immediate");
             hide(0);
         }
     }
@@ -263,7 +280,7 @@ public class DimLayer {
      */
     void hide(long duration) {
         if (mShowing && (mTargetAlpha != 0 || durationEndsEarlier(duration))) {
-            if (DEBUG) Slog.v(TAG, "hide: duration=" + duration);
+            if (DEBUG_DIM_LAYER) Slog.v(TAG, "hide: duration=" + duration);
             show(mLayer, 0, duration);
         }
     }
@@ -291,7 +308,7 @@ public class DimLayer {
                 // Don't exceed limits.
                 alpha = mTargetAlpha;
             }
-            if (DEBUG) Slog.v(TAG, "stepAnimation: curTime=" + curTime + " alpha=" + alpha);
+            if (DEBUG_DIM_LAYER) Slog.v(TAG, "stepAnimation: curTime=" + curTime + " alpha=" + alpha);
             setAlpha(alpha);
         }
 
@@ -300,7 +317,7 @@ public class DimLayer {
 
     /** Cleanup */
     void destroySurface() {
-        if (DEBUG) Slog.v(TAG, "destroySurface.");
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "destroySurface.");
         if (mDimSurface != null) {
             mDimSurface.destroy();
             mDimSurface = null;

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +36,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.CancellationSignal;
+import android.os.DeadObjectException;
 import android.os.OperationCanceledException;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
@@ -44,6 +50,9 @@ import com.android.documentsui.model.RootInfo;
 import libcore.io.IoUtils;
 
 import java.io.FileNotFoundException;
+
+/// M: Add to support drm
+import com.mediatek.drm.OmaDrmStore;
 
 class DirectoryResult implements AutoCloseable {
     ContentProviderClient client;
@@ -77,6 +86,12 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
     private CancellationSignal mSignal;
     private DirectoryResult mResult;
 
+    /// M: add to support drm
+    private int mDrmLevel;
+    /// M: show previous loader's result @{
+    private boolean mIsLoading = false;
+    /// @}
+
     public DirectoryLoader(Context context, int type, RootInfo root, DocumentInfo doc, Uri uri,
             int userSortOrder) {
         super(context, ProviderExecutor.forAuthority(root.authority));
@@ -85,10 +100,13 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
         mDoc = doc;
         mUri = uri;
         mUserSortOrder = userSortOrder;
+        /// M: add to support drm
+        mDrmLevel = ((DocumentsActivity) context).getIntent().getIntExtra(OmaDrmStore.DrmExtra.EXTRA_DRM_LEVEL, -1);
     }
 
     @Override
     public final DirectoryResult loadInBackground() {
+        mIsLoading = true;
         synchronized (this) {
             if (isLoadInBackgroundCanceled()) {
                 throw new OperationCanceledException();
@@ -116,8 +134,62 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
             }
         }
 
+        /// M: Move get custom mode after finishing get result from provider
         // Pick up any custom modes requested by user
         Cursor cursor = null;
+
+        if (mUserSortOrder != State.SORT_ORDER_UNKNOWN) {
+            result.sortOrder = mUserSortOrder;
+        } else {
+            if ((mDoc.flags & Document.FLAG_DIR_PREFERS_LAST_MODIFIED) != 0) {
+                result.sortOrder = State.SORT_ORDER_LAST_MODIFIED;
+            } else {
+                result.sortOrder = State.SORT_ORDER_DISPLAY_NAME;
+            }
+        }
+
+        // Search always uses ranking from provider
+        if (mType == DirectoryFragment.TYPE_SEARCH) {
+            result.sortOrder = State.SORT_ORDER_UNKNOWN;
+        }
+
+        Log.d(TAG, "Loading directory for " + mUri + " with: userMode=" + userMode + ", userSortOrder=" + mUserSortOrder + " --> mode="
+                + result.mode + ", sortOrder=" + result.sortOrder + ", drmLevel=" + mDrmLevel);
+
+        ContentProviderClient client = null;
+        try {
+            client = DocumentsApplication.acquireUnstableProviderOrThrow(resolver, authority);
+
+            cursor = client.query(
+                    mUri, null, null, null, getQuerySortOrder(result.sortOrder), mSignal);
+            cursor.registerContentObserver(mObserver);
+
+            cursor = new RootCursorWrapper(mUri.getAuthority(), mRoot.rootId, cursor, -1);
+
+            if (mType == DirectoryFragment.TYPE_SEARCH) {
+                // Filter directories out of search results, for now
+                cursor = new FilteringCursorWrapper(cursor, null, SEARCH_REJECT_MIMES);
+            } else {
+                // Normal directories should have sorting applied
+                /// M: add to support drm, only show these drm files match given drm level.
+                cursor = new SortingCursorWrapper(cursor, result.sortOrder, mDrmLevel);
+            }
+
+            result.client = client;
+            result.cursor = cursor;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to query", e);
+            result.exception = e;
+            ContentProviderClient.releaseQuietly(client);
+        } finally {
+            synchronized (this) {
+                mSignal = null;
+            }
+        }
+
+        /// M: Move get custom mode after finishing get result from provider, so that
+        /// when user switch show mode(grid/list), loader can get the latest to return
+        /// to fragment.
         try {
             final Uri stateUri = RecentsProvider.buildState(
                     mRoot.authority, mRoot.rootId, mDoc.documentId);
@@ -138,55 +210,9 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
                 result.mode = State.MODE_LIST;
             }
         }
+        Log.d(TAG, "Loading directory finish for " + mUri + " with: userMode=" + userMode);
 
-        if (mUserSortOrder != State.SORT_ORDER_UNKNOWN) {
-            result.sortOrder = mUserSortOrder;
-        } else {
-            if ((mDoc.flags & Document.FLAG_DIR_PREFERS_LAST_MODIFIED) != 0) {
-                result.sortOrder = State.SORT_ORDER_LAST_MODIFIED;
-            } else {
-                result.sortOrder = State.SORT_ORDER_DISPLAY_NAME;
-            }
-        }
-
-        // Search always uses ranking from provider
-        if (mType == DirectoryFragment.TYPE_SEARCH) {
-            result.sortOrder = State.SORT_ORDER_UNKNOWN;
-        }
-
-        Log.d(TAG, "userMode=" + userMode + ", userSortOrder=" + mUserSortOrder + " --> mode="
-                + result.mode + ", sortOrder=" + result.sortOrder);
-
-        ContentProviderClient client = null;
-        try {
-            client = DocumentsApplication.acquireUnstableProviderOrThrow(resolver, authority);
-
-            cursor = client.query(
-                    mUri, null, null, null, getQuerySortOrder(result.sortOrder), mSignal);
-            cursor.registerContentObserver(mObserver);
-
-            cursor = new RootCursorWrapper(mUri.getAuthority(), mRoot.rootId, cursor, -1);
-
-            if (mType == DirectoryFragment.TYPE_SEARCH) {
-                // Filter directories out of search results, for now
-                cursor = new FilteringCursorWrapper(cursor, null, SEARCH_REJECT_MIMES);
-            } else {
-                // Normal directories should have sorting applied
-                cursor = new SortingCursorWrapper(cursor, result.sortOrder);
-            }
-
-            result.client = client;
-            result.cursor = cursor;
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to query", e);
-            result.exception = e;
-            ContentProviderClient.releaseQuietly(client);
-        } finally {
-            synchronized (this) {
-                mSignal = null;
-            }
-        }
-
+        mIsLoading = false;
         return result;
     }
 
@@ -207,6 +233,16 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
             IoUtils.closeQuietly(result);
             return;
         }
+        /// M: If the given result has exception with DeadObjectException type, it means
+        /// client has died, we need load directory it again.
+        if (isStarted() && result != null && result.exception != null
+                && (result.exception instanceof DeadObjectException)) {
+            Log.d(TAG, "deliverResult with client has dead, reload directory again");
+            IoUtils.closeQuietly(result);
+            forceLoad();
+            return;
+        }
+
         DirectoryResult oldResult = mResult;
         mResult = result;
 
@@ -221,12 +257,29 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
 
     @Override
     protected void onStartLoading() {
+        /// M: show previous loader's result @{
+        boolean contentChanged = takeContentChanged();
         if (mResult != null) {
-            deliverResult(mResult);
+            /// Check current contentprovider client, if the server has died, we need reload
+            /// to register observer. @{
+            try {
+                mResult.client.canonicalize(mUri);
+                deliverResult(mResult);
+            } catch (Exception e) {
+                contentChanged = true;
+                Log.d(TAG, "onStartLoading with client has dead, reload to register obsever. " + e);
+            }
+            /// @}
         }
-        if (takeContentChanged() || mResult == null) {
+        Log.d(TAG, "onStartLoading contentChanged: " + contentChanged + ", mIsLoading: "
+                + mIsLoading + ", mResult: " + mResult);
+        if (!contentChanged && mIsLoading) {
+            return;
+        }
+        if (contentChanged || mResult == null) {
             forceLoad();
         }
+        /// @}
     }
 
     @Override
@@ -236,7 +289,22 @@ public class DirectoryLoader extends AsyncTaskLoader<DirectoryResult> {
 
     @Override
     public void onCanceled(DirectoryResult result) {
-        IoUtils.closeQuietly(result);
+        /// M: show previous loader's result @{
+        if (result == null) {
+            return;
+        }
+        if (result.exception != null && (result.exception instanceof OperationCanceledException)) {
+            IoUtils.closeQuietly(result);
+            Log.d(TAG, "DirectoryLoader: loading has been canceled, no deliver result");
+            return;
+        }
+        if (!isReset() && (mResult == null)) {
+            deliverResult(result);
+            Log.d(TAG, "DirectoryLoader show result when onCanceled");
+        } else {
+            IoUtils.closeQuietly(result);
+        }
+        /// @}
     }
 
     @Override

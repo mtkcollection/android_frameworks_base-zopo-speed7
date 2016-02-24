@@ -377,7 +377,7 @@
     <dimen name="timepicker_header_height">96dp</dimen>
     <dimen name="timepicker_minimum_margin_sides">48dp</dimen>
     <dimen name="timepicker_minimum_margin_top_bottom">24dp</dimen>
-    <dimen name="timepicker_radial_picker_dimen">270dp</dimen>
+    <dimen name="timepicker_radial_picker_dimen">280dp</dimen>
 
     <!-- Used by SimpleMonthView -->
     <dimen name="datepicker_day_number_size">12sp</dimen>

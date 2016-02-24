@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,13 +105,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+//MTK add
+import android.os.SystemProperties;
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.mom.SubPermissions;
+import android.app.AlarmManager;
+//MTK end
+
 /**
  * The service class that manages LocationProviders and issues location
  * updates and alerts.
  */
 public class LocationManagerService extends ILocationManager.Stub {
     private static final String TAG = "LocationManagerService";
-    public static final boolean D = Log.isLoggable(TAG, Log.DEBUG);
+    public static final boolean D = true; //Log.isLoggable(TAG, Log.DEBUG);
 
     private static final String WAKELOCK_KEY = TAG;
 
@@ -213,6 +225,13 @@ public class LocationManagerService extends ILocationManager.Stub {
     private int mCurrentUserId = UserHandle.USER_OWNER;
     private int[] mCurrentUserProfiles = new int[] { UserHandle.USER_OWNER };
 
+    //MTK add @prevent provider status error
+    private boolean mProviderCheckAlarm = false;
+    private PendingIntent mProviderCheckTimeoutIntent;
+    private AlarmManager mAlarmManager;
+    private static final int CHECK_PROVIDER_TIMER = 5 * 1000;
+    //MTK end
+
     public LocationManagerService(Context context) {
         super();
         mContext = context;
@@ -271,6 +290,9 @@ public class LocationManagerService extends ILocationManager.Stub {
                     @Override
                     public void onChange(boolean selfChange) {
                         synchronized (mLock) {
+                            // MTK add @prevent provider status error
+                            triggerProviderCheck();
+                            // MTK end
                             updateProvidersLocked();
                         }
                     }
@@ -295,6 +317,50 @@ public class LocationManagerService extends ILocationManager.Stub {
                 }
             }
         }, UserHandle.ALL, intentFilter, null, mLocationHandler);
+
+        // MTK add start ALPS00085457
+        final String ACTION_BOOT_IPO = "android.intent.action.ACTION_BOOT_IPO";
+        final String ACTION_SHUTDOWN_IPO = "android.intent.action.ACTION_SHUTDOWN_IPO";
+        IntentFilter intentIPOFilter = new IntentFilter();
+        if (SystemProperties.get("ro.mtk_ipo_support").equals("1")) {
+            intentIPOFilter.addAction(ACTION_BOOT_IPO);
+            intentIPOFilter.addAction(ACTION_SHUTDOWN_IPO);
+            mContext.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (ACTION_SHUTDOWN_IPO.equals(action)) {
+                    locationIPOremoveProvider();
+                }
+                else if (ACTION_BOOT_IPO.equals(action)) {
+                    locationIPOcreateProvider();
+                    updateProvidersLocked(); 
+                }
+            }
+        }, intentIPOFilter);
+        }
+
+        // MTK add @prevent provider status error
+        final String ALARM_PVDCHECK = "com.mediatek.location.providercheck";
+        IntentFilter intentPvdChkFilter = new IntentFilter();
+        intentPvdChkFilter.addAction(ALARM_PVDCHECK);
+        mContext.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (ALARM_PVDCHECK.equals(action)) {
+                    synchronized (mLock) {
+                        removeProviderCheck();
+                        updateProvidersLocked();
+                    }
+                }
+            }
+            }, intentPvdChkFilter);
+
+        mAlarmManager = (AlarmManager) mContext.getSystemService(Context.ALARM_SERVICE);
+        mProviderCheckTimeoutIntent = PendingIntent.getBroadcast(mContext, 0,
+                                    new Intent(ALARM_PVDCHECK), 0);
+        // MTK add end
     }
 
     /**
@@ -388,13 +454,14 @@ public class LocationManagerService extends ILocationManager.Stub {
                 if (D) Log.d(TAG, "Fallback candidate not version 0: " + packageName);
             }
         }
+        return;
 
-        throw new IllegalStateException("Unable to find a fused location provider that is in the "
+        /*throw new IllegalStateException("Unable to find a fused location provider that is in the "
                 + "system partition with version 0 and signed with the platform certificate. "
                 + "Such a package is needed to provide a default fused location provider in the "
                 + "event that no other fused location provider has been installed or is currently "
                 + "available. For example, coreOnly boot mode when decrypting the data "
-                + "partition. The fallback must also be marked coreApp=\"true\" in the manifest");
+                + "partition. The fallback must also be marked coreApp=\"true\" in the manifest");*/
     }
 
     private void loadProvidersLocked() {
@@ -554,6 +621,121 @@ public class LocationManagerService extends ILocationManager.Stub {
             addTestProviderLocked(name, properties);
         }
     }
+
+    //MTK add
+    private void locationIPOremoveProvider() {
+        Log.d(TAG, "IPO shutdown for location");
+        LocationProviderInterface realProvider = mRealProviders.get(LocationManager.NETWORK_PROVIDER);
+        if (realProvider != null) {
+            LocationProviderProxy networkProvider = (LocationProviderProxy) realProvider;
+            LocationProviderProxy.close(networkProvider);
+            mRealProviders.remove(LocationManager.NETWORK_PROVIDER);
+            mProxyProviders.remove(networkProvider);
+            removeProviderLocked(realProvider);
+            realProvider = null;
+        }
+
+        realProvider = mRealProviders.get(LocationManager.FUSED_PROVIDER);
+        if (realProvider != null) {
+            LocationProviderProxy fusedProvider = (LocationProviderProxy) realProvider;
+            LocationProviderProxy.close(fusedProvider);
+            mRealProviders.remove(LocationManager.FUSED_PROVIDER);
+            mProxyProviders.remove(fusedProvider);
+            removeProviderLocked(realProvider);
+            realProvider = null;
+        }
+        
+        if (mGeocodeProvider != null) {
+            mGeocodeProvider.unbind();
+            mGeocodeProvider = null;
+        }
+    }
+
+    private void locationIPOcreateProvider() {
+        Log.d(TAG, "IPO powerup for location");
+        /*
+        Load package name(s) containing location provider support.
+        These packages can contain services implementing location providers:
+        Geocoder Provider, Network Location Provider, and
+        Fused Location Provider. They will each be searched for
+        service components implementing these providers.
+        The location framework also has support for installation
+        of new location providers at run-time. The new package does not
+        have to be explicitly listed here, however it must have a signature
+        that matches the signature of at least one package on this list.
+        */
+        Resources resources = mContext.getResources();
+        ArrayList<String> providerPackageNames = new ArrayList<String>();
+        String[] pkgs = resources.getStringArray(
+                com.android.internal.R.array.config_locationProviderPackageNames);
+        if (D) Log.d(TAG, "certificates for location providers pulled from: " +
+                Arrays.toString(pkgs));
+        if (pkgs != null) providerPackageNames.addAll(Arrays.asList(pkgs));
+
+        ensureFallbackFusedProviderPresentLocked(providerPackageNames);
+
+        // bind to network provider
+        LocationProviderProxy networkProvider = LocationProviderProxy.createAndBind(
+                mContext,
+                LocationManager.NETWORK_PROVIDER,
+                NETWORK_LOCATION_SERVICE_ACTION,
+                com.android.internal.R.bool.config_enableNetworkLocationOverlay,
+                com.android.internal.R.string.config_networkLocationProviderPackageName,
+                com.android.internal.R.array.config_locationProviderPackageNames,
+                mLocationHandler);
+        if (networkProvider != null) {
+            mRealProviders.put(LocationManager.NETWORK_PROVIDER, networkProvider);
+            mProxyProviders.add(networkProvider);
+            addProviderLocked(networkProvider);
+        } else {
+            Slog.w(TAG,  "no network location provider found");
+        }
+
+        LocationProviderProxy fusedLocationProvider = LocationProviderProxy.createAndBind(
+                mContext,
+                LocationManager.FUSED_PROVIDER,
+                FUSED_LOCATION_SERVICE_ACTION,
+                com.android.internal.R.bool.config_enableFusedLocationOverlay,
+                com.android.internal.R.string.config_fusedLocationProviderPackageName,
+                com.android.internal.R.array.config_locationProviderPackageNames,
+                mLocationHandler);
+        if (fusedLocationProvider != null) {
+            addProviderLocked(fusedLocationProvider);
+            mProxyProviders.add(fusedLocationProvider);
+            mEnabledProviders.add(fusedLocationProvider.getName());
+            mRealProviders.put(LocationManager.FUSED_PROVIDER, fusedLocationProvider);
+        } else {
+            Slog.e(TAG, "no fused location provider found",
+                    new IllegalStateException("Location service needs a fused location provider"));
+        }
+
+        // bind to geocoder provider
+        mGeocodeProvider = GeocoderProxy.createAndBind(mContext,
+                com.android.internal.R.bool.config_enableGeocoderOverlay,
+                com.android.internal.R.string.config_geocoderProviderPackageName,
+                com.android.internal.R.array.config_locationProviderPackageNames,
+                mLocationHandler);
+        if (mGeocodeProvider == null) {
+            Slog.e(TAG,  "no geocoder provider found");
+        }
+    }
+
+
+    // MTK add @prevent provider status error
+    private void triggerProviderCheck() {
+        Log.d(TAG, "triggerProviderCheck before: " + mProviderCheckAlarm + " to:true");
+        mProviderCheckAlarm = true;
+        mAlarmManager.cancel(mProviderCheckTimeoutIntent);
+        mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+        SystemClock.elapsedRealtime() + CHECK_PROVIDER_TIMER, mProviderCheckTimeoutIntent);
+    }
+
+    private void removeProviderCheck() {
+        mProviderCheckAlarm = false;
+        Log.d(TAG, "removeProviderCheck : " + mProviderCheckAlarm);
+        mAlarmManager.cancel(mProviderCheckTimeoutIntent);
+    }
+    // MTK end
 
     /**
      * Called when the device's active user changes.
@@ -750,7 +932,10 @@ public class LocationManagerService extends ILocationManager.Stub {
             if (mListener != null) {
                 return mListener;
             }
-            throw new IllegalStateException("Request for non-existent listener");
+            //MTK Add dont throw exception
+            return null;
+            /*throw new IllegalStateException("Request for non-existent listener");*/
+            //MTK end
         }
 
         public boolean callStatusChangedLocked(String provider, int status, Bundle extras) {
@@ -1270,6 +1455,7 @@ public class LocationManagerService extends ILocationManager.Stub {
                 updateProviderListenersLocked(name, true);
                 changesMade = true;
             }
+            if (D) Log.d(TAG, "updateProvidersLocked provider:" + name + " changesMade: " + changesMade + " isEnabled:" + isEnabled + " shouldBeEnabled:" + shouldBeEnabled);
         }
         if (changesMade) {
             mContext.sendBroadcastAsUser(new Intent(LocationManager.PROVIDERS_CHANGED_ACTION),
@@ -1564,6 +1750,15 @@ public class LocationManagerService extends ILocationManager.Stub {
 
         final int pid = Binder.getCallingPid();
         final int uid = Binder.getCallingUid();
+        //MTK add moms permision check
+        if (MobileManagerUtils.isSupported()) {
+            if (!MobileManagerUtils.checkPermission(SubPermissions.ACCESS_LOCATION, uid)) {
+                Log.d(TAG, "moms denied requestLocationUpdates pkg:" + packageName + " uid:" + uid);
+                return;
+            }
+        }
+        //MTK end
+
         // providers may use public location API's, need to clear identity
         long identity = Binder.clearCallingIdentity();
         try {
@@ -1595,7 +1790,8 @@ public class LocationManagerService extends ILocationManager.Stub {
                 + " " + name + " " + request + " from " + packageName + "(" + uid + ")");
         LocationProviderInterface provider = mProvidersByName.get(name);
         if (provider == null) {
-            throw new IllegalArgumentException("provider doesn't exist: " + name);
+             Log.d(TAG, "provider doesn't exisit exception" + name);
+            //throw new IllegalArgumentException("provider doesn't exisit: " + provider);
         }
 
         UpdateRecord record = new UpdateRecord(name, request, receiver);
@@ -1697,6 +1893,15 @@ public class LocationManagerService extends ILocationManager.Stub {
                 request.getProvider());
         // no need to sanitize this request, as only the provider name is used
 
+        //MTK add moms permision check
+        if (MobileManagerUtils.isSupported()) {
+            if (!MobileManagerUtils.checkPermission(SubPermissions.ACCESS_LOCATION, Binder.getCallingUid())) {
+                Log.d(TAG, "moms denied getLastLocation pkg:" + packageName + " uid:" + Binder.getCallingUid());
+                return null;
+            }
+        }
+        //MTK end
+
         final int uid = Binder.getCallingUid();
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -1761,6 +1966,16 @@ public class LocationManagerService extends ILocationManager.Stub {
         LocationRequest sanitizedRequest = createSanitizedRequest(request, allowedResolutionLevel);
 
         if (D) Log.d(TAG, "requestGeofence: " + sanitizedRequest + " " + geofence + " " + intent);
+
+        //MTK add moms permision check
+        if (MobileManagerUtils.isSupported()) {
+            if (!MobileManagerUtils.checkPermission(SubPermissions.ACCESS_LOCATION, Binder.getCallingUid())) {
+                Log.d(TAG, "moms denied requestGeofence pkg:" + packageName + " request:" + request);
+                return;
+            }
+        }
+        //MTK end
+
 
         // geo-fence manager uses the public location API, need to clear identity
         int uid = Binder.getCallingUid();

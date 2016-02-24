@@ -148,8 +148,18 @@ public class KeyguardIndicationController {
             if (chargingTimeRemaining > 0) {
                 String chargingTimeFormatted = Formatter.formatShortElapsedTimeRoundingUpToMinutes(
                         mContext, chargingTimeRemaining);
+/* Vanzo:libing on: Wed, 24 Jun 2015 15:33:40 +0800
+ * for not show charging time feature
                 return mContext.getResources().getString(
                         R.string.keyguard_indication_charging_time, chargingTimeFormatted);
+ */
+                if (com.android.featureoption.FeatureOption.VANZO_FEATURE_NOT_SHOW_CHARGING_TIME) {
+                    return mContext.getResources().getString(R.string.keyguard_plugged_in);
+                } else {
+                    return mContext.getResources().getString(
+                            R.string.keyguard_indication_charging_time, chargingTimeFormatted);
+                }
+// End of Vanzo:libing
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling IBatteryStats: ", e);

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +22,12 @@
 package android.os.storage;
 
 import android.content.Context;
+import android.os.Environment;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.UserHandle;
-
+import android.os.SystemProperties;
+import android.util.Slog;
 import com.android.internal.util.IndentingPrintWriter;
 
 import java.io.CharArrayWriter;
@@ -35,6 +42,7 @@ import java.io.File;
 public class StorageVolume implements Parcelable {
 
     // TODO: switch to more durable token
+    private static final String TAG = "StorageVolume";
     private int mStorageId;
 
     private final File mPath;
@@ -45,7 +53,7 @@ public class StorageVolume implements Parcelable {
     private final int mMtpReserveSpace;
     private final boolean mAllowMassStorage;
     /** Maximum file size for the storage, or zero for no limit */
-    private final long mMaxFileSize;
+    private long mMaxFileSize;
     /** When set, indicates exclusive ownership of this volume */
     private final UserHandle mOwner;
 
@@ -57,6 +65,10 @@ public class StorageVolume implements Parcelable {
     // ACTION_MEDIA_NOFS, ACTION_MEDIA_MOUNTED, ACTION_MEDIA_SHARED, ACTION_MEDIA_UNSHARED,
     // ACTION_MEDIA_BAD_REMOVAL, ACTION_MEDIA_UNMOUNTABLE and ACTION_MEDIA_EJECT broadcasts.
     public static final String EXTRA_STORAGE_VOLUME = "storage_volume";
+
+    /// M: javaopt_removal @{
+    private static final String PROP_MULTI_PARTITION = "ro.mtk_multi_patition";
+     /// @}
 
     public StorageVolume(File path, int descriptionId, boolean primary, boolean removable,
             boolean emulated, int mtpReserveSpace, boolean allowMassStorage, long maxFileSize,
@@ -113,7 +125,16 @@ public class StorageVolume implements Parcelable {
      * @return the volume description
      */
     public String getDescription(Context context) {
-        return context.getResources().getString(mDescriptionId);
+        if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+            ///usbotg:
+            if (Environment.isUsbotg(mPath.getAbsolutePath())) {
+                return Environment.getOtgDescription(mPath.getAbsolutePath());
+            } else {
+                return context.getResources().getString(mDescriptionId);
+            }
+        } else {
+            return context.getResources().getString(mDescriptionId);
+        }
     }
 
     public int getDescriptionId() {
@@ -195,6 +216,15 @@ public class StorageVolume implements Parcelable {
         return mMaxFileSize;
     }
 
+    /**
+     * set max file size by MountService.
+     *
+     * @hide
+     */
+    public void setMaxFileSize(long maxFileSize) {
+        mMaxFileSize = maxFileSize;
+    }
+
     public UserHandle getOwner() {
         return mOwner;
     }
@@ -215,9 +245,19 @@ public class StorageVolume implements Parcelable {
         if (mUuid == null || mUuid.length() != 9) {
             return -1;
         }
+        // google issue, UUID scope is ox0000-0000 to 0xFFFF-FFFF
+        // it's larger than Integer.MAX_VALUE
+        // so we use Long.parseLong to parse UUID and "%" with Integer.MAX_VALUE
+        // this temp solution can force return a value instead of "-1" when UUID is larger than Integer.MAX_VALUE
+        long value;
+        Slog.i(TAG, "getFatVolumeId mUuid=" + mUuid);
         try {
-            return (int)Long.parseLong(mUuid.replace("-", ""), 16);
+            value = Long.parseLong(mUuid.replace("-", ""), 16);
+            value %= Integer.MAX_VALUE;
+            Slog.i(TAG, "getFatVolumeId value=" + value);
+            return (int) value;
         } catch (NumberFormatException e) {
+            Slog.i(TAG, "getFatVolumeId " + e);
             return -1;
         }
     }

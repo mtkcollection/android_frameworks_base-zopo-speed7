@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,7 +121,7 @@ public:
 
     virtual void onProcess(const sp<Task<VertexBuffer*> >& task) {
         TessellationTask* t = static_cast<TessellationTask*>(task.get());
-        ATRACE_NAME("shape tessellation");
+        ATRACE_NAME_L1("shape tessellation");
         VertexBuffer* buffer = t->tessellator(t->description);
         t->setResult(buffer);
     }
@@ -280,7 +285,7 @@ public:
 
     virtual void onProcess(const sp<Task<TessellationCache::vertexBuffer_pair_t*> >& task) {
         ShadowTask* t = static_cast<ShadowTask*>(task.get());
-        ATRACE_NAME("shadow tessellation");
+        ATRACE_NAME_L1("shadow tessellation");
 
         VertexBuffer* ambientBuffer = new VertexBuffer;
         VertexBuffer* spotBuffer = new VertexBuffer;
@@ -303,10 +308,10 @@ TessellationCache::TessellationCache()
         , mShadowCache(LruCache<ShadowDescription, Task<vertexBuffer_pair_t*>*>::kUnlimitedCapacity) {
     char property[PROPERTY_VALUE_MAX];
     if (property_get(PROPERTY_VERTEX_CACHE_SIZE, property, NULL) > 0) {
-        INIT_LOGD("  Setting %s cache size to %sMB", name, property);
+        INIT_LOGD("  Setting tessellation cache size to %sMB", property);
         setMaxSize(MB(atof(property)));
     } else {
-        INIT_LOGD("  Using default %s cache size of %.2fMB", name, DEFAULT_VERTEX_CACHE_SIZE);
+        INIT_LOGD("  Using default tessellation cache size of %.2fMB", DEFAULT_VERTEX_CACHE_SIZE);
     }
 
     mCache.setOnEntryRemovedListener(&mBufferRemovedListener);

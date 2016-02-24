@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +53,8 @@ public class SurfaceControl {
     private static native void nativeCloseTransaction();
     private static native void nativeSetAnimationTransaction();
 
+    // M: setting extra surface flags
+    private static native void nativeSetFlagsEx(long nativeObject, int flags, int mask);
     private static native void nativeSetLayer(long nativeObject, int zorder);
     private static native void nativeSetPosition(long nativeObject, float x, float y);
     private static native void nativeSetSize(long nativeObject, int w, int h);
@@ -75,6 +82,9 @@ public class SurfaceControl {
             int l, int t, int r, int b,
             int L, int T, int R, int B);
     private static native void nativeSetDisplaySize(IBinder displayToken, int width, int height);
+    // M: getting more display infomation
+    private static native boolean nativeGetDisplayInfoEx(
+            IBinder displayToken, SurfaceControl.PhysicalDisplayInfoEx outInfo);
     private static native SurfaceControl.PhysicalDisplayInfo[] nativeGetDisplayConfigs(
             IBinder displayToken);
     private static native int nativeGetActiveConfig(IBinder displayToken);
@@ -425,6 +435,12 @@ public class SurfaceControl {
         nativeSetMatrix(mNativeObject, dsdx, dtdx, dsdy, dtdy);
     }
 
+    // M: setting extra surface flags
+    public void setFlagsEx(int flags, int mask) {
+        checkNotReleased();
+        nativeSetFlagsEx(mNativeObject, flags, mask);
+    }
+
     public void setWindowCrop(Rect crop) {
         checkNotReleased();
         if (crop != null) {
@@ -524,6 +540,41 @@ public class SurfaceControl {
         }
     }
 
+    // M: getting more display information
+    /**
+     * Describes more properties of a physical display known to surface flinger.
+     */
+    public static final class PhysicalDisplayInfoEx {
+        // 0: LCM
+        // 1: HDMI or MHL
+        // 2: SmartBook
+        public int subtype;
+
+        public PhysicalDisplayInfoEx() {
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof PhysicalDisplayInfoEx && equals((PhysicalDisplayInfoEx) o);
+        }
+
+        public boolean equals(PhysicalDisplayInfoEx other) {
+            return other != null
+                && subtype == other.subtype;
+        }
+
+        @Override
+        public int hashCode() {
+            return 0; // don't care
+        }
+
+        // For debugging purposes
+        @Override
+        public String toString() {
+            return "PhysicalDisplayInfoEx{subtype " + subtype + "}";
+        }
+    }
+
     public static void setDisplayPowerMode(IBinder displayToken, int mode) {
         if (displayToken == null) {
             throw new IllegalArgumentException("displayToken must not be null");
@@ -550,6 +601,17 @@ public class SurfaceControl {
             throw new IllegalArgumentException("displayToken must not be null");
         }
         return nativeSetActiveConfig(displayToken, id);
+    }
+
+    // M: getting more display infomation
+    public static boolean getDisplayInfoEx(IBinder displayToken, SurfaceControl.PhysicalDisplayInfoEx outInfo) {
+        if (displayToken == null) {
+            throw new IllegalArgumentException("displayToken must not be null");
+        }
+        if (outInfo == null) {
+            throw new IllegalArgumentException("outInfo must not be null");
+        }
+        return nativeGetDisplayInfoEx(displayToken, outInfo);
     }
 
     public static void setDisplayProjection(IBinder displayToken,
@@ -723,6 +785,28 @@ public class SurfaceControl {
         // TODO: should take the display as a parameter
         IBinder displayToken = SurfaceControl.getBuiltInDisplay(
                 SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN);
+        return nativeScreenshot(displayToken, new Rect(), width, height, 0, 0, true,
+                false, Surface.ROTATION_0);
+    }
+
+    /**
+     * Like {@link SurfaceControl#screenshot(int, int, int, int, boolean)} but
+     * with builtInDisplayId in the screenshot.
+     *
+     * @param width The desired width of the returned bitmap; the raw
+     * screen will be scaled down to this size.
+     * @param height The desired height of the returned bitmap; the raw
+     * screen will be scaled down to this size.
+     * @param builtInDisplayId The Built-in physical display id.
+     * @return Returns a Bitmap containing the screen contents, or null
+     * if an error occurs. Make sure to call Bitmap.recycle() as soon as
+     * possible, once its content is not needed anymore.
+     *
+     * @hide
+     */
+    public static Bitmap screenshot(int width, int height, int builtInDisplayId) {
+        IBinder displayToken = SurfaceControl.getBuiltInDisplay(builtInDisplayId);
+        Log.d(TAG, "screenshot, builtInDisplayId = " + builtInDisplayId);
         return nativeScreenshot(displayToken, new Rect(), width, height, 0, 0, true,
                 false, Surface.ROTATION_0);
     }

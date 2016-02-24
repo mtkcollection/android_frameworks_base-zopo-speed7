@@ -303,6 +303,8 @@
     <protected-broadcast android:name="android.intent.action.ACTION_SET_RADIO_CAPABILITY_DONE" />
     <protected-broadcast android:name="android.intent.action.ACTION_SET_RADIO_CAPABILITY_FAILED" />
 
+    <protected-broadcast android:name="android.intent.action.ACTION_SET_PHONE_RAT_FAMILY_DONE" />
+    <protected-broadcast android:name="android.intent.action.ACTION_SET_PHONE_RAT_FAMILY_FAILED" />
     <!-- ====================================== -->
     <!-- Permissions for things that cost money -->
     <!-- ====================================== -->
@@ -1039,6 +1041,14 @@
         android:protectionLevel="normal"
         android:label="@string/permlab_transmitIr"
         android:description="@string/permdesc_transmitIr" />
+
+    <!-- Allows an application to access MTK HW 
+         @hide -->
+    <permission android:name="android.permission.ACCESS_MTK_MMHW"
+        android:permissionGroup="android.permission-group.HARDWARE_CONTROLS"
+        android:protectionLevel="normal"
+        android:label="@string/permlab_camera"
+        android:description="@string/permdesc_camera" />
 
     <!-- ==================================================== -->
     <!-- Permissions related to changing audio settings   -->
@@ -2252,6 +2262,14 @@
         android:description="@string/permdesc_bindWallpaper"
         android:protectionLevel="signature|system" />
 
+    <!-- Must be required by a {@link com.android.media.remotedisplay.RemoteDisplayProvider},
+         to ensure that only the system can bind to it.
+         @hide -->
+    <permission android:name="android.permission.BIND_REMOTE_DISPLAY"
+        android:label="@string/permlab_bindRemoteDisplay"
+        android:description="@string/permdesc_bindRemoteDisplay"
+        android:protectionLevel="signature" />
+
     <!-- Must be required by a {@link android.service.voice.VoiceInteractionService},
          to ensure that only the system can bind to it. -->
     <permission android:name="android.permission.BIND_VOICE_INTERACTION"
@@ -3141,6 +3159,30 @@
                 <action android:name="android.backup.TRANSPORT_HOST" />
             </intent-filter>
         </service>
+
+        <!-- Power Off Alarm feature -->
+        <activity android:name="com.android.server.AlarmShutdownActivity"
+            android:permission="android.permission.SHUTDOWN"
+            android:configChanges="mcc|mnc|locale|keyboard|keyboardHidden|orientation|screenSize|screenLayout|fontScale|uiMode"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_ALARM_REQUEST_SHUTDOWN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+ 
+        <!-- storage default path enhancement -->
+        <activity android:name="com.mediatek.storage.StorageDefaultPathDialog"
+                  android:configChanges="orientation|keyboardHidden|screenSize"
+                  android:launchMode="singleTop"
+                  android:excludeFromRecents="true"
+                  android:theme="@*android:style/Theme.Holo.Dialog.Alert">
+            <intent-filter>
+                <action android:name="com.mediatek.storage.StorageDefaultPathDialog" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <service android:name="com.android.server.MountServiceIdler"
                  android:exported="true"

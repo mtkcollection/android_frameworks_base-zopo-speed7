@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +34,8 @@ import static com.android.server.am.ActivityManagerService.DEBUG_RESULTS;
 import static com.android.server.am.ActivityManagerService.DEBUG_STACK;
 import static com.android.server.am.ActivityManagerService.DEBUG_SWITCH;
 import static com.android.server.am.ActivityManagerService.DEBUG_TASKS;
+import static com.android.server.am.ActivityManagerService.DEBUG_THERMAL;
+import static com.android.server.am.ActivityManagerService.DEBUG_TRANSITION;
 import static com.android.server.am.ActivityManagerService.DEBUG_USER_LEAVING;
 import static com.android.server.am.ActivityManagerService.FIRST_SUPERVISOR_STACK_MSG;
 import static com.android.server.am.ActivityManagerService.TAG;
@@ -83,6 +90,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
+import android.os.SystemProperties;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.service.voice.IVoiceInteractionSession;
@@ -113,17 +121,24 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.thermal.MtkThermalSwitchManager;
+///M: BMW
+import com.mediatek.multiwindow.MultiWindowProxy;
+
 public final class ActivityStackSupervisor implements DisplayListener {
     static final boolean DEBUG = ActivityManagerService.DEBUG || false;
-    static final boolean DEBUG_ADD_REMOVE = DEBUG || false;
-    static final boolean DEBUG_APP = DEBUG || false;
-    static final boolean DEBUG_CONTAINERS = DEBUG || false;
-    static final boolean DEBUG_IDLE = DEBUG || false;
-    static final boolean DEBUG_RELEASE = DEBUG || false;
-    static final boolean DEBUG_SAVED_STATE = DEBUG || false;
-    static final boolean DEBUG_SCREENSHOTS = DEBUG || false;
-    static final boolean DEBUG_STATES = DEBUG || false;
-    static final boolean DEBUG_VISIBLE_BEHIND = DEBUG || false;
+    /// M: dynamically enable AMS logs @{
+    static boolean DEBUG_ADD_REMOVE = DEBUG || false;
+    static boolean DEBUG_APP = DEBUG || false;
+    static boolean DEBUG_CONTAINERS = DEBUG || false;
+    static boolean DEBUG_IDLE = DEBUG || false;
+    static boolean DEBUG_RELEASE = DEBUG || false;
+    static boolean DEBUG_SAVED_STATE = DEBUG || false;
+    static boolean DEBUG_SCREENSHOTS = DEBUG || false;
+    static boolean DEBUG_STATES = DEBUG || false;
+    static boolean DEBUG_VISIBLE_BEHIND = DEBUG || false;
+    /// @}
 
     public static final int HOME_STACK_ID = 0;
 
@@ -150,6 +165,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
     static final int CONTAINER_CALLBACK_TASK_LIST_EMPTY = FIRST_SUPERVISOR_STACK_MSG + 11;
     static final int CONTAINER_TASK_LIST_EMPTY_TIMEOUT = FIRST_SUPERVISOR_STACK_MSG + 12;
     static final int LAUNCH_TASK_BEHIND_COMPLETE = FIRST_SUPERVISOR_STACK_MSG + 13;
+    /// M: ALPS00431397. When running window animation, halt the activity resuming.
+    /// Otherwise, restore the activity resuming. @{
+    static final int HALT_RESUMING_TIMEOUT_MSG = FIRST_SUPERVISOR_STACK_MSG + 14;
+    static final int RESTORE_RESUMING_MSG = FIRST_SUPERVISOR_STACK_MSG + 15;
+    /// @}
 
     private final static String VIRTUAL_DISPLAY_BASE_NAME = "ActivityViewVirtualDisplay";
 
@@ -298,6 +318,16 @@ public final class ActivityStackSupervisor implements DisplayListener {
         }
     }
 
+    /// M: mediatek added member start
+
+    boolean mIsPerfBoostEnable = false; /// M: for PerfBoost feature
+
+    Object mHaltActivityLock = new Object();    /// M: ALPS00431397, the lock object
+    boolean mHaltActivity = false;              /// M: ALPS00431397, check if need halt activity resume
+    static final int MAX_TIMEOUT_HALT_ACTIVITY_RESUMING = 3000; /// M : ALPS00431397, The max duration to halt acvitiy is 3 seconds
+
+    /// M: mediatek added member end
+
     public ActivityStackSupervisor(ActivityManagerService service) {
         mService = service;
         mHandler = new ActivityStackSupervisorHandler(mService.mHandler.getLooper());
@@ -381,19 +411,59 @@ public final class ActivityStackSupervisor implements DisplayListener {
     }
 
     ActivityStack getLastStack() {
+        /// M: BMW, even home in front and top activity in Home Stack is not recents activity , 
+        /// we should consider top most floating stack as focus stack @{
+        if (MultiWindowProxy.isFeatureSupport()
+                && isFrontStack(mHomeStack) 
+                && mHomeStack!=null && mHomeStack.topActivity() != null
+                && !mHomeStack.topActivity().isRecentsActivity()) {
+            ArrayList<ActivityStack> frontFloatingStacks = 
+                    getFrontFloatStacks(Display.DEFAULT_DISPLAY);
+            if (frontFloatingStacks.size() > 0) {
+                if(isFloatingStack(mFocusedStack.mStackId)) {
+                    return mFocusedStack;
+                } else {
+                    int top = frontFloatingStacks.size() - 1;
+                    return frontFloatingStacks.get(top);
+                }
+            } 
+        }
+        /// @}
         return mLastFocusedStack;
     }
 
     // TODO: Split into two methods isFrontStack for any visible stack and isFrontmostStack for the
     // top of all visible stacks.
     boolean isFrontStack(ActivityStack stack) {
+        /// M: BMW, consider stack is front or back
+        /// Front floating: front; Back floating: back @{
+        if (stack ==null)
+            return false;
+        if (MultiWindowProxy.isFeatureSupport() && isFloatingStack(stack.mStackId)) {
+            if (getFrontFloatStacks(stack.mDisplayId) != null && getFrontFloatStacks(stack.mDisplayId).contains(stack)) {
+                return true;
+            }
+            return false;
+        }
+        /// @}
         final ActivityRecord parent = stack.mActivityContainer.mParentActivity;
         if (parent != null) {
             stack = parent.task.stack;
         }
         ArrayList<ActivityStack> stacks = stack.mStacks;
         if (stacks != null && !stacks.isEmpty()) {
-            return stack == stacks.get(stacks.size() - 1);
+            /// M: BMW, App stack or home stack: If there are front floating stack,
+            /// then find the top non-floating stack @{
+            if (getFrontFloatStacks(stack.mDisplayId).size() > 0) {
+                for (int stackNdx = stacks.size() - 1; stackNdx>=0; stackNdx--) {
+                    if (isFloatingStack(stacks.get(stackNdx).mStackId))
+                        continue;
+                    return stack == stacks.get(stackNdx);
+                }
+            } else {
+            /// @}
+                return stack == stacks.get(stacks.size() - 1);
+            }
         }
         return false;
     }
@@ -405,7 +475,13 @@ public final class ActivityStackSupervisor implements DisplayListener {
             return;
         }
         ActivityStack topStack = stacks.get(topNdx);
-        final boolean homeInFront = topStack == mHomeStack;
+        /// M: BMW @{
+        boolean homeInFront = topStack == mHomeStack;
+        
+        if (MultiWindowProxy.isFeatureSupport()){
+            homeInFront = isFrontStack(mHomeStack);
+        }
+        /// @}
         if (homeInFront != toFront) {
             mLastFocusedStack = topStack;
             stacks.remove(mHomeStack);
@@ -844,6 +920,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
         if (intent != null && intent.hasFileDescriptors()) {
             throw new IllegalArgumentException("File descriptors passed in Intent");
         }
+
+        /// M: add debug launch time @{
+        mService.logAppLaunchTime(TAG, "startActivity now");
+        /// @}
+
         boolean componentSpecified = intent.getComponent() != null;
 
         // Don't modify the client's object!
@@ -852,6 +933,17 @@ public final class ActivityStackSupervisor implements DisplayListener {
         // Collect information about the target of the Intent.
         ActivityInfo aInfo = resolveActivity(intent, resolvedType, startFlags,
                 profilerInfo, userId);
+
+        // M: To check permission for start application. @{
+        if (MobileManagerUtils.isSupported()) {
+            int uid = Binder.getCallingUid();
+            if (!MobileManagerUtils.checkIntentPermission(intent, aInfo, mService.mContext, uid)) {
+                Slog.e(TAG, "startActivity() is not granted with permission: " +
+                        aInfo.permission + " from uid: " + uid);
+                return ActivityManager.START_PERMISSION_USER_DENIED;
+            }
+        }
+        // @}
 
         ActivityContainer container = (ActivityContainer)iContainer;
         synchronized (mService) {
@@ -1111,7 +1203,9 @@ public final class ActivityStackSupervisor implements DisplayListener {
         r.launchCount++;
         r.lastLaunchTime = SystemClock.uptimeMillis();
 
-        if (localLOGV) Slog.v(TAG, "Launching: " + r);
+        /// M: AMS log enhancement @{
+        if (localLOGV) Slog.v(TAG, "ACT-Launching: " + r);
+        /// @}
 
         int idx = app.activities.indexOf(r);
         if (idx < 0) {
@@ -1139,6 +1233,10 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 EventLog.writeEvent(EventLogTags.AM_RESTART_ACTIVITY,
                         r.userId, System.identityHashCode(r),
                         r.task.taskId, r.shortComponentName);
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD)
+                   Slog.d(TAG, "ACT-AM_RESTART_ACTIVITY " + r + " Task:" + r.task.taskId);
+                /// @}
             }
             if (r.isHomeActivity() && r.isNotResolverActivity()) {
                 // Home process is the root process of the task.
@@ -1178,6 +1276,9 @@ public final class ActivityStackSupervisor implements DisplayListener {
                     ? new ProfilerInfo(profileFile, profileFd, mService.mSamplingInterval,
                     mService.mAutoStopProfiler) : null;
             app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_TOP);
+
+            mService.logAppLaunchTime(TAG, "scheduleLaunchActivity -> ActivityThread"); /// M: It's for debugging App Launch time
+
             app.thread.scheduleLaunchActivity(new Intent(r.intent), r.appToken,
                     System.identityHashCode(r), r.info, new Configuration(mService.mConfiguration),
                     r.compat, r.launchedFromPackage, r.task.voiceInteractor, app.repProcState,
@@ -1216,6 +1317,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         "2nd-crash", false);
                 return false;
             }
+
+            /// M: fix google issue, add to prevent process starting repeatly
+            /// If AP is in 2nd crash, we will stop trying to start AP process. @{
+            r.launchFailed = true;
+            /// @}
 
             // This is the first time we failed -- restart process and
             // retry.
@@ -1485,7 +1591,61 @@ public final class ActivityStackSupervisor implements DisplayListener {
         if (outActivity != null) {
             outActivity[0] = r;
         }
+        
+        /// M: BMW. Modify the attribute of the activity record to meet a better UE @{
+        if (MultiWindowProxy.isFeatureSupport()){
+            // If too many floating window, the activity can't be launched.
+            int ret = mService.mMwActivityMonitor.blockByFloatingStackSize(r);
+            if (ret == MwActivityMonitor.OK_BLOCK_ACTIVITY) {
+                return ActivityManager.START_SUCCESS;
+            }
 
+            // If the activity has been launched, change the floating flag as
+            // the previous one.
+            ActivityRecord  intentActivity = findTaskLocked(r);
+            if (intentActivity != null) {
+                int intentFlag = intentActivity.intent.getFlags();
+                if ((intentFlag & Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                    r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                    if (r.task != null)
+                        r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                } else {
+                    r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                    if (r.task != null)
+                        r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                }
+            }
+            
+            // Special Case for googlequicksearchbox
+            // SearchActivity(cat=launcher) launches VelvetActivity(cat=launcher)
+            // If launching VelvetActivity as the floaing and click google
+            // search at Launcher again, SearchActivity will be launched as
+            // normal stack and launch VelvetActivity as floating stack, the
+            // behavior causes the launcher resume again and VelvetActivity can
+            // not been seen. Therefore, the intent flag of SearchActivity
+            // should be changed by VelvetActivity(launched)
+            if (r.packageName.equals("com.google.android.googlequicksearchbox")
+                    && r.shortComponentName.contains(".SearchActivity")) {
+                for (int stackNdx = getStacks().size() - 1; stackNdx >= 0; --stackNdx) {
+                    final ActivityRecord ac = getStacks().get(stackNdx).topActivity();
+                    if (ac != null && r.packageName.equals(ac.packageName)) {
+                        int intentFlag = ac.intent.getFlags();
+                        if ((intentFlag & Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                            r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                            if (r.task != null)
+                                r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                        } else {
+                            r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                            if (r.task != null)
+                                r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        }
+                        break;
+                    }
+                }
+
+            }
+        }
+        /// @}
         final ActivityStack stack = getFocusedStack();
         if (voiceSession == null && (stack.mResumedActivity == null
                 || stack.mResumedActivity.info.applicationInfo.uid != callingUid)) {
@@ -1546,6 +1706,35 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 return taskStack;
             }
 
+            /// M: BMW, create a new floating stack and make sure normal activity won't start at floating stack@{
+            if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance() != null) {
+                if ((r.intent.getFlags()&Intent.FLAG_ACTIVITY_FLOATING) != 0
+                            && !MultiWindowProxy.getInstance().matchDisableFloatActivityList(r.shortComponentName)) {
+                    // Time to create a floating app stack for this user.
+                    int stackId = createFloatingStackOnDisplay(getNextStackId(), Display.DEFAULT_DISPLAY);
+                    Slog.d(TAG, "[BMW]adjustStackFocus: New floating stack r=" + r + " stackId=" + stackId);
+                    mFocusedStack = getStack(stackId);
+                    return mFocusedStack;
+                } else if (mFocusedStack != null && isFloatingStack(mFocusedStack.mStackId)) {
+                    // Starting a normal activity when the focus stack is a floating stack.
+                    // We should find a existing application stack or create a new one.
+                    final ArrayList<ActivityStack> homeDisplayStacks = mHomeStack.mStacks;
+                    for (int stackNdx = homeDisplayStacks.size() - 1; stackNdx > 0; --stackNdx) {
+                        ActivityStack stack = homeDisplayStacks.get(stackNdx);
+                        if (!stack.isHomeStack() && !isFloatingStack(stack.mStackId)) {
+                            if (DEBUG_FOCUS || DEBUG_STACK) Slog.d(TAG,
+                                "[BMW]adjustStackFocus: Setting focused stack=" + stack);
+                            mFocusedStack = stack;
+                            return mFocusedStack;
+                        }
+                    }
+                    int stackId = createStackOnDisplay(getNextStackId(), Display.DEFAULT_DISPLAY);
+                    Slog.d(TAG, "[BMW]adjustStackFocus: New stack (from a floating stack) r=" + r + " stackId=" + stackId);
+                    mFocusedStack = getStack(stackId);
+                    return mFocusedStack;
+                }
+            }
+            /// @}
             final ActivityContainer container = r.mInitialActivityContainer;
             if (container != null) {
                 // The first time put it on the desired stack, after this put on task stack.
@@ -1564,6 +1753,14 @@ public final class ActivityStackSupervisor implements DisplayListener {
             for (int stackNdx = homeDisplayStacks.size() - 1; stackNdx >= 0; --stackNdx) {
                 final ActivityStack stack = homeDisplayStacks.get(stackNdx);
                 if (!stack.isHomeStack()) {
+                    /// M : BMW. At the moment, we just launch the normal activity.
+                    /// Therefore, the focus stack can't be the floating stack.
+                    /// @{
+                    if (MultiWindowProxy.isFeatureSupport()
+                            && isFloatingStack(stack.mStackId)) {
+                        continue;
+                    }
+                    /// @}
                     if (DEBUG_FOCUS || DEBUG_STACK) Slog.d(TAG,
                             "adjustStackFocus: Setting focused stack=" + stack);
                     mFocusedStack = stack;
@@ -1592,6 +1789,14 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 final ActivityRecord parent = task.stack.mActivityContainer.mParentActivity;
                 isHomeActivity = parent != null && parent.isHomeActivity();
             }
+            /// M: BMW, floating stack shouldn't modify home stack focus state. @{
+            if (!isHomeActivity && isFloatingStack(task.stack.mStackId)){
+                Slog.v(TAG, "[BWM] setFocusedStack r = " + r + ", isHomeActivity = " + isHomeActivity
+                            + ", floating stack shouldn't modify home stack focus state");
+                updateFocusStacks(task.stack);
+                return;
+            }
+            /// @}
             moveHomeStack(isHomeActivity, reason);
         }
     }
@@ -1669,6 +1874,19 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
         }
 
+        /// M: Add debug task message @{
+        if (DEBUG_TASKS) {
+            Slog.i(TAG, "launchFlags(original): 0x" + Integer.toHexString(launchFlags) + ", launchMode:" + r.launchMode
+                + ", startFlags: " + startFlags + ", doResume:" + doResume);
+        }
+        /// @}
+
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.i(TAG, "ACT-launchFlags(original): 0x" + Integer.toHexString(launchFlags) + ", launchMode:" + r.launchMode
+                + ", startFlags: " + startFlags + ", doResume:" + doResume);
+        /// @}
+
         // We'll invoke onUserLeaving before onPause only if the launching
         // activity did not explicitly state that this is an automated launch.
         mUserLeaving = (launchFlags & Intent.FLAG_ACTIVITY_NO_USER_ACTION) == 0;
@@ -1698,6 +1916,13 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 startFlags &= ~ActivityManager.START_FLAG_ONLY_IF_NEEDED;
             }
         }
+
+        /// M: Add debug task message @{
+        if (DEBUG_TASKS) {
+            Slog.i(TAG, "launchFlags(update): 0x" + Integer.toHexString(launchFlags));
+        }
+        /// @}
+
 
         boolean addingToTask = false;
         TaskRecord reuseTask = null;
@@ -1841,6 +2066,30 @@ public final class ActivityStackSupervisor implements DisplayListener {
                     if (DEBUG_TASKS) Slog.d(TAG, "Bring to front target: " + targetStack
                             + " from " + intentActivity);
                     targetStack.moveToFront("intentActivityFound");
+                    /// M: BMW, floating stack shouldn have floating activity @{   
+                    if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance() != null) {
+                        if (!isFloatingStack(targetStack.mStackId)) {
+                            if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                                r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                                if (r.task != null)
+                                    r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                            }  
+                        }else{
+                            // the activity in MwDisableFloatAppList  should not be floating window
+                            // A(floating) -> B, if B stack is floating, move it to app stack  
+                            if(MultiWindowProxy.getInstance().matchDisableFloatActivityList(r.shortComponentName)){
+                                r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING)); 
+                                if (r.task != null)
+                                    r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING)); 
+                                targetStack = moveFloatingStackToAppStackLocked(targetStack, false);
+                            }else if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) == 0) {
+                                r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                                if (r.task != null)
+                                    r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING); 
+                            }
+                        }
+                    }
+                    /// @}
                     if (intentActivity.task.intent == null) {
                         // This task was started because of movement of
                         // the activity based on affinity...  now that we
@@ -1879,6 +2128,9 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             }
                             options = null;
                             movedToFront = true;
+                            /// M: Fix ALPS01276300, at this case, avoid move home to top when resume top @{
+                            intentActivity.task.mMovingToFront = true;
+                            /// @}
                         }
                     }
                     // If the caller has requested that the target task be
@@ -1902,6 +2154,14 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         } else {
                             ActivityOptions.abort(options);
                         }
+                        /// M: Add debug task message @{
+                        if (DEBUG_TASKS) {
+                            Slog.i(TAG, "START_RETURN_INTENT_TO_CALLER, doResume = " + doResume);
+                        }
+                        /// @}
+                        if (r.task == null)  Slog.v(TAG,
+                                "startActivityUncheckedLocked: task left null",
+                                new RuntimeException("here").fillInStackTrace());
                         return ActivityManager.START_RETURN_INTENT_TO_CALLER;
                     }
                     if ((launchFlags &
@@ -1931,6 +2191,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             }
                             ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,
                                     r, top.task);
+                            /// M: AMS log enhancement @{
+                            if (!ActivityManagerService.IS_USER_BUILD) {
+                               Slog.d(TAG, "ACT-AM_NEW_INTENT " + r + top.task);
+                            }
+                            /// @}
                             top.deliverNewIntentLocked(callingUid, r.intent, r.launchedFromPackage);
                         } else {
                             // A special case: we need to
@@ -1942,6 +2207,12 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             // by the top of its task, so it is put in the
                             // right place.
                             sourceRecord = intentActivity;
+
+                            /// M: Add debug task message @{
+                            if (DEBUG_TASKS) {
+                                Slog.i(TAG, "special case ...");
+                            }
+                            /// @}
                         }
                     } else if (r.realActivity.equals(intentActivity.task.realActivity)) {
                         // In this case the top activity on the task is the
@@ -1957,6 +2228,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             if (intentActivity.frontOfTask) {
                                 intentActivity.task.setIntent(r);
                             }
+                            /// M: AMS log enhancement @{
+                            if (!ActivityManagerService.IS_USER_BUILD) {
+                                Slog.d(TAG, "ACT-AM_NEW_INTENT " + r + intentActivity.task);
+                            }
+                            /// @}
                             intentActivity.deliverNewIntentLocked(callingUid, r.intent,
                                     r.launchedFromPackage);
                         } else if (!r.intent.filterEquals(intentActivity.task.intent)) {
@@ -1965,6 +2241,12 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             // should start a new instance on top.
                             addingToTask = true;
                             sourceRecord = intentActivity;
+
+                            /// M: Add debug task message @{
+                            if (DEBUG_TASKS) {
+                                Slog.i(TAG, "since different intents, start new activity...");
+                            }
+                            /// @}
                         }
                     } else if ((launchFlags&Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) == 0) {
                         // In this case an activity is being launched in to an
@@ -1974,6 +2256,12 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         // the new activity on top of the current task.
                         addingToTask = true;
                         sourceRecord = intentActivity;
+
+                        /// M: Add debug task message @{
+                        if (DEBUG_TASKS) {
+                            Slog.i(TAG, "place the new activity on top of the current task...");
+                        }
+                        /// @}
                     } else if (!intentActivity.task.rootWasReset) {
                         // In this case we are launching in to an existing task
                         // that has not yet been started from its front door.
@@ -1998,8 +2286,19 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         } else {
                             ActivityOptions.abort(options);
                         }
+                        /// M: Add debug task message @{
+                        if (DEBUG_TASKS) {
+                            Slog.i(TAG, "START_TASK_TO_FRONT, doResume = " + doResume);
+                        }
+                        /// @}
+                        if (r.task == null)  Slog.v(TAG,
+                            "startActivityUncheckedLocked: task left null",
+                            new RuntimeException("here").fillInStackTrace());
                         return ActivityManager.START_TASK_TO_FRONT;
                     }
+                    /// M: Fix ALPS01276300, reset mMovingToFront flag here @{
+                    intentActivity.task.mMovingToFront = false;
+                    /// @}
                 }
             }
         }
@@ -2023,6 +2322,10 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             || launchSingleTop || launchSingleTask) {
                             ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT, top,
                                     top.task);
+                            /// M: AMS log enhancement @{
+                            if (!ActivityManagerService.IS_USER_BUILD)
+                               Slog.d(TAG, "ACT-AM_NEW_INTENT " + top + top.task);
+                            /// @}
                             // For paranoia, make sure we have correctly
                             // resumed the top activity.
                             topStack.mLastPausedActivity = null;
@@ -2070,6 +2373,30 @@ public final class ActivityStackSupervisor implements DisplayListener {
             if (!launchTaskBehind) {
                 targetStack.moveToFront("startingNewTask");
             }
+            /// M: BMW, floating stack shouldn have floating activity @{   
+            if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance() != null) {
+                if (!isFloatingStack(targetStack.mStackId)) {
+                    if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                        r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                    }  
+                }else{
+                    // the activity in MwDisableFloatAppList  should not be floating window
+                    // A(floating) -> B, if B stack is floating, move it to app stack  
+                    if(MultiWindowProxy.getInstance().matchDisableFloatActivityList(r.shortComponentName)){
+                        r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        targetStack = moveFloatingStackToAppStackLocked(targetStack, false);
+                    }else if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) == 0) {
+                        r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                        if (r.task != null)
+                            r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                    }
+                }
+            }
+            /// @}
             if (reuseTask == null) {
                 r.setTask(targetStack.createTaskRecord(getNextTaskId(),
                         newTaskInfo != null ? newTaskInfo : r.info,
@@ -2098,6 +2425,30 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
             targetStack = sourceTask.stack;
             targetStack.moveToFront("sourceStackToFront");
+            /// M: BMW, floating stack shouldn have floating activity @{   
+            if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance() != null) {
+                if (!isFloatingStack(targetStack.mStackId)) {
+                    if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                        r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                    }  
+                }else{
+                    // the activity in MwDisableFloatAppList  should not be floating window
+                    // A(floating) -> B, if B stack is floating, move it to app stack  
+                    if(MultiWindowProxy.getInstance().matchDisableFloatActivityList(r.shortComponentName)){
+                        r.intent.setFlags(r.intent.getFlags() & ~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags() & ~(Intent.FLAG_ACTIVITY_FLOATING));
+                        targetStack = moveFloatingStackToAppStackLocked(targetStack, false);
+                    }else if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) == 0) {
+                        r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                        if (r.task != null)
+                            r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                    }
+                }
+            }
+            /// @}
             final TaskRecord topTask = targetStack.topTask();
             if (topTask != sourceTask) {
                 targetStack.moveTaskToFrontLocked(sourceTask, r, options, "sourceTaskToFront");
@@ -2109,7 +2460,28 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 ActivityRecord top = sourceTask.performClearTaskLocked(r, launchFlags);
                 keepCurTransition = true;
                 if (top != null) {
+                    /// M: ALPS01265303 & ALPS01545190, Fix google focused stack issue, performClearTaskLocked() may finish all activities in task.
+                    /// If task is cleared and task.mOnTopOfHome is true, it will adjust focused stack to HomeStack.
+                    /// We should adjust right focused task for WMS again. @{
+                    if (r.task != null) {
+                        mWindowManager.moveTaskToTop(r.task.taskId);
+                        Slog.v(TAG, "WMS moveTaskToTop after AMS clear task, r = " + r + " task = " + r.task);
+                    } else {
+                        mWindowManager.moveTaskToTop(sourceTask.taskId);
+                        Slog.v(TAG, "WMS moveTaskToTop after AMS clear task, r = " + r + " sourceTask = " + sourceTask);
+                    }
+                    /// @}
+                    /// M: ALPS01311408, fix google KK issue, when clear top and single top,
+                    /// the activity will not be cleared, we should setTask and setFocusedActivity for "top" @{
+                    top.setTask(sourceTask, null);
+                    mService.setFocusedActivityLocked(top, "clearTop");
+                    /// @}
                     ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT, r, top.task);
+                    /// M: AMS log enhancement @{
+                    if (!ActivityManagerService.IS_USER_BUILD) {
+                        Slog.d(TAG, "ACT-AM_NEW_INTENT " + top + top.task);
+                    }
+                    /// @}
                     top.deliverNewIntentLocked(callingUid, r.intent, r.launchedFromPackage);
                     // For paranoia, make sure we have correctly
                     // resumed the top activity.
@@ -2130,6 +2502,10 @@ public final class ActivityStackSupervisor implements DisplayListener {
                     final TaskRecord task = top.task;
                     task.moveActivityToFrontLocked(top);
                     ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT, r, task);
+                    /// M: AMS log enhancement @{
+                    if (!ActivityManagerService.IS_USER_BUILD)
+                        Slog.d(TAG, "ACT-AM_NEW_INTENT " + top + top.task);
+                    /// @}
                     top.updateOptionsLocked(options);
                     top.deliverNewIntentLocked(callingUid, r.intent, r.launchedFromPackage);
                     targetStack.mLastPausedActivity = null;
@@ -2155,6 +2531,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
             targetStack = inTask.stack;
             targetStack.moveTaskToFrontLocked(inTask, r, options, "inTaskToFront");
+
+            /// M: ALPS01936642 Move task to front when startActivityFromRecents @{
+            targetStack.moveToFront("inTaskToFront");
+            mWindowManager.moveTaskToTop(inTask.taskId);
+            /// @}
 
             // Check whether we should actually launch the new activity in to the task,
             // or just reuse the current activity on top.
@@ -2191,6 +2572,30 @@ public final class ActivityStackSupervisor implements DisplayListener {
             // this case should never happen.
             targetStack = adjustStackFocus(r, newTask);
             targetStack.moveToFront("addingToTopTask");
+            /// M: BMW, floating stack shouldn have floating activity @{   
+            if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance() != null) {
+                if (!isFloatingStack(targetStack.mStackId)) {
+                    if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) != 0) {
+                        r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                    }  
+                }else{
+                    // the activity in MwDisableFloatAppList  should not be floating window
+                    // A(floating) -> B, if B stack is floating, move it to app stack  
+                    if(MultiWindowProxy.getInstance().matchDisableFloatActivityList(r.shortComponentName)){
+                        r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        if (r.task != null)
+                            r.task.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                        targetStack = moveFloatingStackToAppStackLocked(targetStack, false);
+                    }else if (( r.intent.getFlags()& Intent.FLAG_ACTIVITY_FLOATING) == 0) {
+                        r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                        if (r.task != null)
+                            r.task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                    }
+                }
+            }
+            /// @}
             ActivityRecord prev = targetStack.topActivity();
             r.setTask(prev != null ? prev.task : targetStack.createTaskRecord(getNextTaskId(),
                             r.info, intent, null, null, true), null);
@@ -2207,8 +2612,17 @@ public final class ActivityStackSupervisor implements DisplayListener {
         }
         if (newTask) {
             EventLog.writeEvent(EventLogTags.AM_CREATE_TASK, r.userId, r.task.taskId);
+            /// M: AMS log enhancement @{
+            if (!ActivityManagerService.IS_USER_BUILD)
+                Slog.d(TAG, "ACT-AM_CREATE_TASK " + r + " task:" + r.task);
+            /// @}
         }
         ActivityStack.logStartActivity(EventLogTags.AM_CREATE_ACTIVITY, r, r.task);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+           Slog.d(TAG, "ACT-AM_CREATE_ACTIVITY " + r + r.task);
+        /// @}
+
         targetStack.mLastPausedActivity = null;
         targetStack.startActivityLocked(r, newTask, doResume, keepCurTransition, options);
         if (!launchTaskBehind) {
@@ -2269,6 +2683,15 @@ public final class ActivityStackSupervisor implements DisplayListener {
             Configuration config) {
         if (localLOGV) Slog.v(TAG, "Activity idle: " + token);
 
+        /// M: PerfBoost @{
+        if (mIsPerfBoostEnable) {
+            if (DEBUG_TRANSITION) {
+                Slog.v(TAG, "boostEnableTimeoutMs finish");
+            }
+            mIsPerfBoostEnable = false;
+        }
+        /// @}
+
         ArrayList<ActivityRecord> stops = null;
         ArrayList<ActivityRecord> finishes = null;
         ArrayList<UserStartedState> startingUsers = null;
@@ -2286,7 +2709,15 @@ public final class ActivityStackSupervisor implements DisplayListener {
             if (fromTimeout) {
                 reportActivityLaunchedLocked(fromTimeout, r, -1, -1);
             }
-
+            
+            /// M: BMW.If activity idle,update the process max/restore status @{
+            if (MultiWindowProxy.isFeatureSupport() 
+                    && r.app != null && r.app.inMaxOrRestore){
+                r.app.inMaxOrRestore = false;
+                mService.mMwActivityMonitor.updateProcessMiniMaxStatus(r);
+            }
+            /// @}
+            
             // This is a hack to semi-deal with a race condition
             // in the client where it can be constructed with a
             // newer configuration from when we asked it to launch.
@@ -2469,22 +2900,59 @@ public final class ActivityStackSupervisor implements DisplayListener {
         }
         // Do targetStack first.
         boolean result = false;
-        if (isFrontStack(targetStack)) {
-            result = targetStack.resumeTopActivityLocked(target, targetOptions);
-        }
-        for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
-            final ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
-            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
-                final ActivityStack stack = stacks.get(stackNdx);
-                if (stack == targetStack) {
-                    // Already started above.
-                    continue;
+        /// M: BMW, make floating stack come out of sleep from bottom to top.
+        /// It means resumed top from old to the latest stack.
+        /// Make home stack to resume at final if needed @{
+        if (MultiWindowProxy.isFeatureSupport()) {
+            // [ALPS01740467], update sticky stack status.
+            keepStickyStackLocked();
+            ActivityStack homeStack = null;
+            for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
+                final ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+                for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                    final ActivityStack stack = stacks.get(stackNdx);
+                    if (stack.isHomeStack()) {
+                        homeStack = stack;
+                        continue;
+                    }
+                    if (isFrontStack(stack)) {
+                        if (stack == targetStack) {
+                            result = stack.resumeTopActivityLocked(target, targetOptions);
+                        } else {
+                            stack.resumeTopActivityLocked(null);
+                        }
+                    }
                 }
-                if (isFrontStack(stack)) {
-                    stack.resumeTopActivityLocked(null);
+            }
+            if (homeStack != null && isFrontStack(homeStack)) {
+                if (homeStack == targetStack) {
+                    result = homeStack.resumeTopActivityLocked(target, targetOptions);
+                } else {
+                    homeStack.resumeTopActivityLocked(null);
+                }
+            }
+        } else{
+            if (isFrontStack(targetStack)) {
+                result = targetStack.resumeTopActivityLocked(target, targetOptions);
+            }
+            for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
+                final ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+                for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                    final ActivityStack stack = stacks.get(stackNdx);
+                    if (stack == targetStack) {
+                        // Already started above.
+                        continue;
+                    }
+                    if (isFrontStack(stack)) {
+                        stack.resumeTopActivityLocked(null);
+                    }
                 }
             }
         }
+        if (MultiWindowProxy.isFeatureSupport()){
+            keepStickyStackLocked();
+        }
+        /// @}
         return result;
     }
 
@@ -2820,6 +3288,18 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 if (DEBUG_PAUSE) Slog.v(TAG, "Sleep still need to stop "
                         + mStoppingActivities.size() + " activities");
                 scheduleIdleLocked();
+
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD)
+                   Slog.d(TAG, "ACT-IDLE_NOW_MSG from checkReadyForSleepLocked for mStoppingActivities.size() > 0");
+                /// @}
+
+                /// M: workaround, fix "can't enter recovery mode" issue @{
+                if (mService.mShuttingDown) {
+                    mService.notifyAll();
+                }
+                /// @}
+
                 dontSleep = true;
             }
 
@@ -2857,6 +3337,19 @@ public final class ActivityStackSupervisor implements DisplayListener {
         if (isFrontStack(stack)) {
             mService.updateUsageStats(r, true);
         }
+
+        /// M: Thermal switch feature @{
+        if (SystemProperties.get("ro.mtk_benchmark_boost_tp").equals("1")) {
+            mService.mThermalManager.notifyAppState(r.packageName, MtkThermalSwitchManager.AppState.Resumed);
+            if (DEBUG_THERMAL) Slog.v(
+                TAG, "Notify Thermal Manager that Package =" + r.packageName + "is Resumed");
+        }
+        /// @}
+
+        /// M: activity state notifier @{
+        mService.notifyActivityState(r.packageName, r.realActivity.getShortClassName(), IActivityStateNotifier.ActivityState.Resumed);
+        /// @}
+
         if (allResumedActivitiesComplete()) {
             ensureActivitiesVisibleLocked(null, 0);
             mWindowManager.executeAppTransition();
@@ -3151,6 +3644,27 @@ public final class ActivityStackSupervisor implements DisplayListener {
         pw.print(prefix); pw.println("mCurTaskId=" + mCurTaskId);
         pw.print(prefix); pw.println("mUserStackInFront=" + mUserStackInFront);
         pw.print(prefix); pw.println("mActivityContainers=" + mActivityContainers);
+
+        pw.println();
+        pw.println("[BMW]FLOATING STACK INFO:");
+        int numDisplays = mActivityDisplays.size();
+        for (int displayNdx = 0; displayNdx < numDisplays; ++displayNdx) {
+            ActivityDisplay activityDisplay = mActivityDisplays.valueAt(displayNdx);
+            pw.print(prefix);pw.println("Display Info:" + activityDisplay.toString());
+            pw.print(prefix);pw.println("Front Float Stacks(from top to bottom):");
+            ArrayList<ActivityStack> frontFloatstacks = 
+                    activityDisplay.mFrontFloatingStacks;
+            for (int stackNdx = frontFloatstacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                pw.print(prefix);pw.print(prefix);pw.println(frontFloatstacks.get(stackNdx).toString());
+            }
+            
+            pw.print(prefix);pw.println("Back Float Stacks:");
+            ArrayList<ActivityStack> backFloatstacks = 
+                    activityDisplay.mBackFloatingStacks;
+            for (int stackNdx = backFloatstacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                pw.print(prefix);pw.print(prefix);pw.println(backFloatstacks.get(stackNdx).toString());
+            }
+        }
     }
 
     ArrayList<ActivityRecord> getDumpActivitiesLocked(String name) {
@@ -3179,13 +3693,15 @@ public final class ActivityStackSupervisor implements DisplayListener {
         for (int displayNdx = 0; displayNdx < mActivityDisplays.size(); ++displayNdx) {
             ActivityDisplay activityDisplay = mActivityDisplays.valueAt(displayNdx);
             pw.print("Display #"); pw.print(activityDisplay.mDisplayId);
-                    pw.println(" (activities from top to bottom):");
+                    pw.println(" (activities from top to bottom)(size:" 
+                                + activityDisplay.mStacks.size() + "):");
             ArrayList<ActivityStack> stacks = activityDisplay.mStacks;
             for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
                 final ActivityStack stack = stacks.get(stackNdx);
                 StringBuilder stackHeader = new StringBuilder(128);
                 stackHeader.append("  Stack #");
                 stackHeader.append(stack.mStackId);
+                stackHeader.append("(isFloating:"+isFloatingStack(stack.mStackId)+")");
                 stackHeader.append(":");
                 printed |= stack.dumpActivitiesLocked(fd, pw, dumpAll, dumpClient, dumpPackage,
                         needSep, stackHeader.toString());
@@ -3670,6 +4186,48 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         }
                     }
                 } break;
+                /// M: ALPS00431397. When running window animation, halt the activity resuming @{
+                case HALT_RESUMING_TIMEOUT_MSG: {
+                    Slog.e(TAG, "WMS runs the animation too long");
+                    synchronized (mHaltActivityLock) {
+                        if (mHaltActivity) {
+                            mHaltActivity = false;
+                        }
+                    }
+
+                    synchronized (mService) {
+                        int numDisplays = mActivityDisplays.size();
+                        for (int displayNdx = 0; displayNdx < numDisplays; ++displayNdx) {
+                            ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+                            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                                ActivityStack stack = stacks.get(stackNdx);
+                                if (stack.mDidResume) {
+                                    stack.resumeTopActivityLocked(stack.mAnimationPrev, stack.mAnimationOptions);
+                                    stack.mDidResume = false;
+                                }
+                            }
+                        }
+                    }
+                } break;
+                /// @}
+
+                /// M: ALPS00431397. Without running window animation, restore the activity resuming @{
+                case RESTORE_RESUMING_MSG: {
+                    synchronized (mService) {
+                        int numDisplays = mActivityDisplays.size();
+                        for (int displayNdx = 0; displayNdx < numDisplays; ++displayNdx) {
+                            ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+                            for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+                                ActivityStack stack = stacks.get(stackNdx);
+                                if (stack.mDidResume) {
+                                    stack.resumeTopActivityLocked(stack.mAnimationPrev, stack.mAnimationOptions);
+                                    stack.mDidResume = false;
+                                }
+                            }
+                        }
+                    }
+                } break;
+                /// @}
             }
         }
     }
@@ -4013,7 +4571,11 @@ public final class ActivityStackSupervisor implements DisplayListener {
         /** All of the stacks on this display. Order matters, topmost stack is in front of all other
          * stacks, bottommost behind. Accessed directly by ActivityManager package classes */
         final ArrayList<ActivityStack> mStacks = new ArrayList<ActivityStack>();
-
+        
+        /// M: BMW, front floating stacks, which means visible floating stack
+        private final ArrayList<ActivityStack> mFrontFloatingStacks = new ArrayList<ActivityStack>();
+        /// M: BMW, back floating stacks which means the floating stack after "moveTaskToBack"
+        private final ArrayList<ActivityStack> mBackFloatingStacks = new ArrayList<ActivityStack>();
         ActivityRecord mVisibleBehindActivity;
 
         ActivityDisplay() {
@@ -4039,12 +4601,23 @@ public final class ActivityStackSupervisor implements DisplayListener {
             if (DEBUG_STACK) Slog.v(TAG, "attachActivities: attaching " + stack + " to displayId="
                     + mDisplayId);
             mStacks.add(stack);
+            /// M: BMW. @{
+            if (MultiWindowProxy.isFeatureSupport() && isFloatingStack(stack.mStackId)){
+                mFrontFloatingStacks.add(stack);
+            }
+            /// @}
         }
 
         void detachActivitiesLocked(ActivityStack stack) {
             if (DEBUG_STACK) Slog.v(TAG, "detachActivitiesLocked: detaching " + stack
                     + " from displayId=" + mDisplayId);
             mStacks.remove(stack);
+            /// M: BMW. @{
+            if (MultiWindowProxy.isFeatureSupport() && isFloatingStack(stack.mStackId)){
+                mFrontFloatingStacks.remove(stack);
+                mBackFloatingStacks.remove(stack);
+            }
+            /// @}
         }
 
         void getBounds(Point bounds) {
@@ -4063,7 +4636,10 @@ public final class ActivityStackSupervisor implements DisplayListener {
 
         @Override
         public String toString() {
-            return "ActivityDisplay={" + mDisplayId + " numStacks=" + mStacks.size() + "}";
+            return "ActivityDisplay={" + mDisplayId 
+                    + " numStacks=" + mStacks.size() 
+                    + " numFrontFloatStacks=" + mFrontFloatingStacks.size()
+                    + " numBackFloatStacks=" + mBackFloatingStacks.size()+ "}";
         }
     }
 
@@ -4114,4 +4690,462 @@ public final class ActivityStackSupervisor implements DisplayListener {
 
         return onLeanbackOnly;
     }
+
+    /// M: mediatek added functions start
+
+    /**
+    * M: ALPS00431397
+    * AMS can't launch any activiy after the function is called
+    * @param timeout When timeout, AMS will resume the top activity
+    * @return true: timeout is bigger than 0 and the function isn't called
+    *                   twice continuously. Otherwise, it returns false.
+    */
+    public boolean haltActivityResuming(int timeout) {
+        if (timeout < 0) {
+            return false;
+        }
+
+        synchronized (mHaltActivityLock) {
+            if (mHaltActivity) {
+                return false;
+            }
+            mHaltActivity = true;
+        }
+
+        Message msg = mHandler.obtainMessage(HALT_RESUMING_TIMEOUT_MSG);
+
+        if (timeout > MAX_TIMEOUT_HALT_ACTIVITY_RESUMING) {
+            timeout = MAX_TIMEOUT_HALT_ACTIVITY_RESUMING;
+        }
+
+        mHandler.sendMessageDelayed(msg, timeout);
+
+        return true;
+
+    }
+
+    /**
+    * M: ALPS00431397
+    * AMS can restore to launch the top activiy after the function is called
+    * @return true: the function isn't called twice continuously. Otherwise,
+    *                     it returns false.
+    */
+    public boolean restoreActivityResuming() {
+        synchronized (mHaltActivityLock) {
+            if (!mHaltActivity) {
+                return false;
+            }
+            mHaltActivity = false;
+        }
+
+        mHandler.removeMessages(HALT_RESUMING_TIMEOUT_MSG);
+
+        Message msg = mHandler.obtainMessage(RESTORE_RESUMING_MSG);
+        mHandler.sendMessage(msg);
+
+        return true;
+    }
+    /// @}
+
+    /// M: Fix side effect of ALPS00431397, check the orientation of Activity with system @{
+    boolean checkIfBlockResumeTop(ActivityRecord r) {
+        if (r == null) {
+            return false;
+        }
+
+        int preferConfig = 0;
+
+        switch (r.info.screenOrientation) {
+            case ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT:
+                preferConfig = Configuration.ORIENTATION_PORTRAIT;
+                break;
+
+            case ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
+                preferConfig = Configuration.ORIENTATION_LANDSCAPE;
+                break;
+
+            default:
+                // For USER, UNSPECIFIED, NOSENSOR, SENSOR and FULL_SENSOR,
+                // just return the preferred orientation we already calculated.
+                if (isTablet()) {
+                    preferConfig = Configuration.ORIENTATION_LANDSCAPE;
+                } else {
+                    preferConfig = Configuration.ORIENTATION_PORTRAIT;
+                }
+        }
+
+        if (preferConfig != 0) {
+            return (preferConfig == mService.mConfiguration.orientation) ? false : true;
+        }
+
+        return false;
+    }
+
+    private boolean isTablet() {
+        return (mService.mConfiguration.screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK)
+                >= Configuration.SCREENLAYOUT_SIZE_LARGE;
+    }
+    /// @}
+    
+    /// M: BMW, create a floating stack
+    private int createFloatingStackOnDisplay(int stackId, int displayId) {
+        ActivityDisplay activityDisplay = mActivityDisplays.get(displayId);
+        if (activityDisplay == null) {
+            return -1;
+        }
+
+        ActivityContainer activityContainer = new ActivityContainer(stackId);
+        mActivityContainers.put(stackId, activityContainer);
+        /// : set stack floating in MultiWindowService 
+        MultiWindowProxy.getInstance().setFloatingStack(stackId);
+        activityContainer.attachToDisplayLocked(activityDisplay);
+        // update sticky stack status
+        keepStickyStackLocked();
+        return stackId;
+    }
+
+    /// M: BMW, move floating stack to front, call by ActivityStack.moveTaskToFrontLocked()
+    void moveFloatingStackToFrontLocked(ActivityStack stack) {
+        if (!isFloatingStack(stack.mStackId)) {
+            return;
+        }
+
+        int displayId = stack.mDisplayId;
+        if (getFrontFloatStacks(displayId).contains(stack)) {
+            Slog.w(TAG, "[BMW] moveFloatingStackToFrontLocked: stack = " + stack);
+            getFrontFloatStacks(displayId).remove(stack);
+            getFrontFloatStacks(displayId).add(stack);
+            if (stack.mResumedActivity != null) {
+                mService.setFocusedActivityLocked(stack.mResumedActivity, "");
+            }
+        } else if (getBackFloatStacks(displayId).contains(stack)) {
+            Slog.w(TAG, "[BMW] moveFloatingStackToFrontLocked: stack = " + stack + " from mBackFloatingStacks");
+            getBackFloatStacks(displayId).remove(stack);
+            getFrontFloatStacks(displayId).add(stack);
+        }
+        stack.mStacks.remove(stack);
+        stack.mStacks.add(stack);
+        updateFocusStacks(stack);
+    }
+
+    /// M: BMW, called when want to move home stack to top
+    ///         At floating case, we should check if there is floating stack need to show before moving home to top
+    boolean moveNextFloatingStackToTopLocked(int returnTaskType, ActivityStack curTop) {
+        // find next
+        ActivityStack next = null;
+        
+        // get all float stacks of home display
+        ArrayList<ActivityStack> frontFloatStacks = getFrontFloatStacks(Display.DEFAULT_DISPLAY);
+        for (int i = frontFloatStacks.size()-1; i >= 0; i--) {
+            next = frontFloatStacks.get(i);
+            // ALPS01457502, if mFrontFloatingStacks has only curTop in list, make next = null, prevent move Home to top.
+            if (curTop != null && next == curTop) {
+                next = null;
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        Slog.d(TAG, "[BMW] moveNextFloatingStackToTopLocked next = " + next + " curTop = " + curTop );
+
+        if (next != null) {
+            // adjust WMS task order, home task and floating tasks, mStacks
+            final boolean homeInFront = isFrontStack(mHomeStack);
+            if (!homeInFront) {
+                if (DEBUG_STACK) Slog.d(TAG, "[BMW] moveNextFloatingStackToTopLocked");
+                // move home stack to front & adjust focus
+                moveHomeStack(true, "");
+            }
+
+            mHomeStack.moveHomeStackTaskToTop(returnTaskType);
+
+            /// adjust float stacks order
+            moveFloatingStackToFrontLocked(next);
+            
+            int displayId = next.mDisplayId;
+            int stackSize = getFrontFloatStacks(displayId).size();
+            for (int i = 0; i < stackSize; i++) {
+                ActivityStack floatingStack = getFrontFloatStacks(displayId).get(i);
+                ArrayList<TaskRecord> tasks = floatingStack.getAllTasks();
+                for (TaskRecord task : tasks) {
+                    mWindowManager.moveTaskToTop(task.taskId);
+                }
+            }
+            
+            return true;
+        }
+
+        return false;
+    }
+
+    /// M: BMW, move floating stack to back, call by ActivityStack.moveTaskToBackLocked()
+    void moveFloatingStackToBackLocked(ActivityStack stack) {
+        if (!isFloatingStack(stack.mStackId)) {
+            return;
+        }
+
+        Slog.v(TAG, "[BMW] moveFloatingStackToBackLocked: stack = " + stack);
+
+        // adjust stack array
+        int displayId = stack.mDisplayId;
+        ArrayList<ActivityStack> stacks = stack.mStacks;
+        ArrayList<ActivityStack> frontFloatStacks = getFrontFloatStacks(displayId);
+        ArrayList<ActivityStack> backFloatStacks = getBackFloatStacks(displayId);
+
+        frontFloatStacks.remove(stack);
+        backFloatStacks.remove(stack);
+        backFloatStacks.add(stack);
+        
+        stacks.remove(stack);
+        stacks.add(0, stack);
+
+        updateFocusStacks(stacks.get(stacks.size()-1));
+        
+        // update focus stack
+        int floatingCount = frontFloatStacks.size();
+        if (floatingCount > 0) {
+            ActivityStack topFloating = frontFloatStacks.get(floatingCount-1);
+            if (topFloating != null && topFloating.mResumedActivity != null) {
+                mService.setFocusedActivityLocked(topFloating.mResumedActivity, "");
+            }
+        } else {
+            for (int i = 0; i < stacks.size(); i++) {
+                ActivityStack tmp = stacks.get(i);
+                if (!isFloatingStack(tmp.mStackId) && tmp.mResumedActivity != null) {
+                    mService.setFocusedActivityLocked(tmp.mResumedActivity, "");
+                }
+            }
+        }
+    }
+
+    /// M: BMW, move all tasks of the floating stack to a normal stack (if there is not, create one)
+    ActivityStack moveFloatingStackToAppStackLocked(ActivityStack floatingStack, boolean doResumeTop) {
+        ActivityRecord targetActivity = floatingStack.mResumedActivity;
+        int displayId = floatingStack.mDisplayId;
+        
+        // find an app stack (none-floating) from top to buttom
+        ActivityStack appStack = null;
+        ArrayList<ActivityStack> stacks = floatingStack.mStacks;
+        for (int stackNdx=stacks.size()-1 ; stackNdx>=0; --stackNdx) {
+            ActivityStack tmp = stacks.get(stackNdx);
+            if (!isFloatingStack(tmp.mStackId) && !tmp.isHomeStack()) {
+                appStack = tmp;
+                break;
+            }
+        }
+
+        // if there is no app stack, create one
+        if (appStack == null) {
+            // Time to create an app stack for floating stack to move
+            int stackId = createStackOnDisplay(getNextStackId(), Display.DEFAULT_DISPLAY);
+            appStack = getStack(stackId);
+            if (DEBUG_FOCUS || DEBUG_STACK) {
+                Slog.d(TAG, "[BMW] moveFloatingStackToAppStackLocked: Create new stack stackId=" + stackId);
+            }
+        }
+
+        if (appStack != null) {
+            /// adjust stack order 
+            appStack.moveToFront("");
+            
+            // move all tasks of floating stack to app stack
+            ArrayList<TaskRecord> tasks = floatingStack.getAllTasks();
+            // clear resume activity
+            floatingStack.mResumedActivity = null;
+            for (int i = 0; i < tasks.size(); i++) {
+                TaskRecord task = tasks.get(i);
+                for (int j = 0; j < task.mActivities.size(); j++) {
+                    ActivityRecord act = task.mActivities.get(j);
+                    // update activity's status (ex: intent flag, fullscreen)
+                    act.updateFullscreen(true);
+                }
+                MultiWindowProxy.getInstance().miniMaxTask(task.taskId);
+                task.stack.removeTask(task,"");
+                appStack.addTask(task, true, true);
+                mWindowManager.addTask(task.taskId, appStack.mStackId, true);
+            }
+            // update sticky stack status
+            keepStickyStackLocked();
+
+            // remove floating stack from front and back floating list
+            Slog.d(TAG, "[BMW] ACT-remove floating stack = " + floatingStack);
+            getFrontFloatStacks(displayId).remove(floatingStack);
+            getBackFloatStacks(displayId).remove(floatingStack);
+
+            // remove stack 
+            stacks.remove(floatingStack);
+
+            if (targetActivity != null) {
+                // move home stack to back and update focus activity
+                mService.setFocusedActivityLocked(targetActivity,"");
+                adjustStackFocus(targetActivity, false);
+                moveHomeStack(false,"");
+                // update process status
+                targetActivity.app.inMaxOrRestore = true;
+                // use a Handler to reset the process staus.
+                mService.mMwActivityMonitor.resetProcessMiniMaxStatus(targetActivity, targetActivity.app);                
+                if(doResumeTop){
+                    // pause back and resume top
+                    resumeTargetTopActivitiesLocked(appStack, null, null);
+                }
+            }
+        }
+        return appStack;
+    }
+
+    /// M: BMW, move a normal task to a new floating stack
+    void moveActivityTaskToFloatingStackLocked(ActivityRecord targetActivity) {
+        // create floating stack
+        int stackId = createFloatingStackOnDisplay(getNextStackId(), Display.DEFAULT_DISPLAY);
+        if (DEBUG_FOCUS || DEBUG_STACK) {
+            Slog.d(TAG, "[BMW] moveActivityTaskToFloatingStackLocked: New floating stack:stackId=" + stackId);
+        }
+        ActivityStack floatingStack = getStack(stackId);
+        
+        if (floatingStack != null) {
+            // move the task to floating stack
+            for (int i = 0; i < targetActivity.task.mActivities.size(); i++) {
+                ActivityRecord act = targetActivity.task.mActivities.get(i);
+                // update activity's status (ex: intent flag, fullscreen)
+                act.updateFullscreen(false);
+            }
+            MultiWindowProxy.getInstance().miniMaxTask(targetActivity.task.taskId);
+            targetActivity.task.stack.removeTask(targetActivity.task,"");
+            floatingStack.addTask(targetActivity.task, true, true);
+            mWindowManager.addTask(targetActivity.task.taskId, floatingStack.mStackId, true);
+        }
+
+        if (targetActivity != null) {
+            // move home stack to back and update focus activity
+            mService.setFocusedActivityLocked(targetActivity,"");
+            adjustStackFocus(targetActivity, false);
+            moveHomeStack(false,"");
+            // set process max/restore status.
+            targetActivity.app.inMaxOrRestore = true;
+            // use a Handler to reset the process staus.
+            mService.mMwActivityMonitor.resetProcessMiniMaxStatus(targetActivity, targetActivity.app);
+            
+            // pause back and resume top
+            resumeTargetTopActivitiesLocked(floatingStack, null, null);
+        }
+    }
+
+    /// M: BMW, sticky stack feature
+    void keepStickyStackLocked() {
+        /// M: not to keep sticky stack, when top activity is recent activity.
+        if(topRunningActivityLocked() != null 
+                && topRunningActivityLocked().isRecentsActivity())
+            return;
+        
+        
+        for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
+            ActivityDisplay display  = mActivityDisplays.valueAt(displayNdx);
+            ArrayList<ActivityStack> frontFloatStacks = display.mFrontFloatingStacks;
+            ArrayList<ActivityStack> stacks = display.mStacks;
+            ArrayList<ActivityStack> stickyStacks = new ArrayList<ActivityStack>();
+            int displayId = display.mDisplayId;
+            for (int i = frontFloatStacks.size()-1; i >= 0; i--) {
+                ActivityStack floatingStack = frontFloatStacks.get(i);
+                if (isStickStack(floatingStack.mStackId)) {
+                    Slog.v(TAG, "[BMW] keepStickyStackLocked: stack = " + floatingStack + " topTask = " + floatingStack.topTask());
+                    frontFloatStacks.remove(i);
+                    stickyStacks.add(0, floatingStack);
+                    
+                }
+            }
+            for (int i = 0; i < stickyStacks.size(); i++) {
+                ActivityStack stickyStack = stickyStacks.get(i);
+                getFrontFloatStacks(displayId).add(stickyStack);
+                stacks.remove(stickyStack);
+                stacks.add(stickyStack);
+                ArrayList<TaskRecord> tasks = stickyStack.getAllTasks();
+                for (TaskRecord task : tasks) {
+                    mWindowManager.moveTaskToTop(task.taskId);
+                }
+            }
+
+        }
+    }
+
+    /// M: BMW, resume target stack top activity when move from floating to normal app or move from normal app to floating.
+    boolean resumeTargetTopActivitiesLocked(ActivityStack targetStack, ActivityRecord target,
+            Bundle targetOptions) {
+        if (targetStack == null) {
+            return false;
+        }
+
+        boolean result = false;
+        int displayId = targetStack.mDisplayId;
+        int taskToReturnTo = target==null? HOME_ACTIVITY_TYPE : target.task.getTaskToReturnTo();
+        
+        ArrayList<ActivityStack> stacks = mActivityDisplays.get(displayId).mStacks;
+        int stackSize = stacks.size();
+        
+        /// In order to keep lastActiveTime of TaskRecord as correct,
+        /// The resume sequence must be bottom to top.
+        for (int stackNdx = 0; stackNdx < stackSize; ++stackNdx) {
+            final ActivityStack stack = stacks.get(stackNdx);
+            boolean isFront = isFrontStack(stack);
+            
+            if (!isFloatingStack(stack.mStackId) && isFloatingStack(targetStack.mStackId) 
+                    && targetStack.topTask() != null 
+                    && targetStack.topTask().isOverHomeStack()) {
+                if (stack.isHomeStack()) {
+                    // move home task and floating task to top in order.
+                    moveNextFloatingStackToTopLocked(taskToReturnTo, null);
+                    isFront = true;
+                } else {
+                    isFront = false;
+                }
+            }
+
+            if (isFront) {
+                if (stack == targetStack) {
+                    result = stack.resumeTopActivityLocked(target, targetOptions);
+                } else {
+                    stack.resumeTopActivityLocked(null);
+                }
+            }
+        }
+        return result;
+    }
+
+    public void updateFocusStacks( ActivityStack newStack) {
+        mFocusedStack = newStack;
+        if (DEBUG_TASKS || DEBUG_STACK) {
+            Slog.v(TAG,"[BMW] updateFocusStacks, focus Stack changing from mLastFocusedStack = "+ mLastFocusedStack 
+                            + " to " + newStack, new Throwable("updateFocusStacks"));
+        }
+    }
+
+    public ArrayList<ActivityStack> getFrontFloatStacks(int displayId) {
+        return mActivityDisplays.get(displayId).mFrontFloatingStacks;
+    }
+
+    public ArrayList<ActivityStack> getBackFloatStacks(int displayId) {
+        return mActivityDisplays.get(displayId).mBackFloatingStacks;
+    }
+
+     /// M: BMW, floating flag
+    boolean isFloatingStack(int stackId) {
+        if(MultiWindowProxy.getInstance() != null){
+            return MultiWindowProxy.getInstance().isFloatingStack(stackId);
+        }
+        return false;
+    }
+    
+    /// M: BMW, sticky flag
+    boolean isStickStack(int stackId) {
+        if(MultiWindowProxy.getInstance() != null) {
+            return MultiWindowProxy.getInstance().isStickStack(stackId);
+        }
+        return false;
+    }
+
+    /// M: mediatek added functions end
 }

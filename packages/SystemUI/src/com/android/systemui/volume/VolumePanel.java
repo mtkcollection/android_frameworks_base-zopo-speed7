@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,6 +83,15 @@ import com.android.systemui.statusbar.policy.ZenModeController;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:01:47 +0800
+ */
+import com.android.featureoption.FeatureOption;
+import android.content.res.AssetFileDescriptor;
+import android.content.res.Resources.NotFoundException;
+import android.media.MediaPlayer;
+import java.io.IOException;
+// End of Vanzo:huangyanhui
+
 
 /**
  * Handles the user interface for the volume keys.
@@ -193,17 +207,29 @@ public class VolumePanel extends Handler implements DemoMode {
                 R.string.volume_icon_description_ringer,
                 com.android.systemui.R.drawable.ic_ringer_audible,
                 com.android.systemui.R.drawable.ic_ringer_mute,
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:26:30 +0800
                 false),
+ */
+               FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES),
+// End of Vanzo:huangyanhui
         VoiceStream(AudioManager.STREAM_VOICE_CALL,
                 R.string.volume_icon_description_incall,
                 com.android.systemui.R.drawable.ic_audio_phone,
                 com.android.systemui.R.drawable.ic_audio_phone,
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:26:30 +0800
                 false),
+ */
+                FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES),
+// End of Vanzo:huangyanhui
         AlarmStream(AudioManager.STREAM_ALARM,
                 R.string.volume_alarm,
                 com.android.systemui.R.drawable.ic_audio_alarm,
                 com.android.systemui.R.drawable.ic_audio_alarm_mute,
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:26:30 +0800
                 false),
+ */
+                FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES),
+// End of Vanzo:huangyanhui
         MediaStream(AudioManager.STREAM_MUSIC,
                 R.string.volume_icon_description_media,
                 IC_AUDIO_VOL,
@@ -213,7 +239,11 @@ public class VolumePanel extends Handler implements DemoMode {
                 R.string.volume_icon_description_notification,
                 com.android.systemui.R.drawable.ic_ringer_audible,
                 com.android.systemui.R.drawable.ic_ringer_mute,
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:26:30 +0800
                 true),
+ */
+                !FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES),
+// End of Vanzo:huangyanhui
         // for now, use media resources for master volume
         MasterStream(STREAM_MASTER,
                 R.string.volume_icon_description_media, //FIXME should have its own description
@@ -395,7 +425,14 @@ public class VolumePanel extends Handler implements DemoMode {
         final Window window = mDialog.getWindow();
         window.requestFeature(Window.FEATURE_NO_TITLE);
         mDialog.setCanceledOnTouchOutside(true);
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 16:03:41 +0800
+ * show other volumes
         mDialog.setContentView(com.android.systemui.R.layout.volume_dialog);
+ */
+        mDialog.setContentView(FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES?
+                com.android.systemui.R.layout.show_other_volume_dialog:
+                com.android.systemui.R.layout.volume_dialog);
+// End of Vanzo:huangyanhui
         mDialog.setOnDismissListener(new OnDismissListener() {
             @Override
             public void onDismiss(DialogInterface dialog) {
@@ -729,7 +766,31 @@ public class VolumePanel extends Handler implements DemoMode {
             updateTimeoutDelay();
             updateZenPanelVisible();
         }
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:06:40 +0800
+ * show other volumes
+ */
+        if(FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES)
+            addOtherVolumes();
+// End of Vanzo:huangyanhui
     }
+
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 17:11:05 +0800
+ * add other volumes
+ */
+    private void addOtherVolumes() {
+        for (int i = 0; i < STREAMS.length; i++) {
+            // Skip the phone specific ones and the active one
+            final int streamType = STREAMS[i].streamType;
+            if (!STREAMS[i].show || streamType == mActiveStreamType) {
+                continue;
+            }
+            StreamControl sc = mStreamControls.get(streamType);
+            mSliderPanel.addView(sc.group);
+            updateSlider(sc, true);
+        }
+    }
+// End of Vanzo:huangyanhui
+
 
     private void updateSliderProgress(StreamControl sc, int progress) {
         final boolean isRinger = isNotificationOrRing(sc.streamType);
@@ -1237,12 +1298,57 @@ public class VolumePanel extends Handler implements DemoMode {
         synchronized (this) {
             ToneGenerator toneGen = getOrCreateToneGenerator(streamType);
             if (toneGen != null) {
+/* Vanzo:hanshengpeng on: Thu, 11 Jun 2015 16:48:52 +0800
+ * replace volume key sound effect
                 toneGen.startTone(ToneGenerator.TONE_PROP_BEEP);
+ */
+                if (FeatureOption.VANZO_FEATURE_REPLACE_VOLUMEKEY_SOUND) {
+                    playVolumeAdjustTone();
+                } else {
+                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP);
+                }
+// End of Vanzo:hanshengpeng
                 sendMessageDelayed(obtainMessage(MSG_STOP_SOUNDS), BEEP_DURATION);
             }
         }
     }
 
+/* Vanzo:hanshengpeng on: Thu, 11 Jun 2015 16:50:35 +0800
+ * replace volume key sound effect
+ */
+    private void playVolumeAdjustTone() {
+        AssetFileDescriptor afd = mContext.getResources().openRawResourceFd(
+                com.android.internal.R.raw.volumekey);
+        MediaPlayer localPlayer = new MediaPlayer();
+        try {
+            if (afd != null) {
+                if (afd.getDeclaredLength() < 0) {
+                    localPlayer.setDataSource(afd.getFileDescriptor());
+                } else {
+                    localPlayer.setDataSource(afd.getFileDescriptor(),
+                            afd.getStartOffset(),
+                            afd.getDeclaredLength());
+                }
+                localPlayer.setAudioStreamType(AudioManager.STREAM_SYSTEM);
+                localPlayer.prepare();
+                localPlayer.start();
+                afd.close();
+            } else {
+                Log.e(TAG, "Could not load fallback ringtone");
+            }
+        } catch (IOException ioe) {
+            if (localPlayer != null) {
+                localPlayer.reset();
+                localPlayer.release();
+                localPlayer = null;
+            }
+            Log.e(TAG, "Failed to open fallback ringtone");
+        } catch (NotFoundException nfe) {
+            Log.e(TAG, "Fallback ringtone does not exist");
+        }
+
+    }
+// End of Vanzo:hanshengpeng
     protected void onStopSounds() {
 
         synchronized (this) {
@@ -1546,8 +1652,15 @@ public class VolumePanel extends Handler implements DemoMode {
             final Object tag = seekBar.getTag();
             if (fromUser && tag instanceof StreamControl) {
                 StreamControl sc = (StreamControl) tag;
+                /// M: Prevent slider bar to jump to wrong value
                 setStreamVolume(sc, progress,
-                        AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_VIBRATE);
+/* Vanzo:huangyanhui on: Tue, 10 Mar 2015 15:15:00 +0800
+ * forbid reorder silders when show other volumes
+                        AudioManager.FLAG_VIBRATE);
+ */
+                        !FeatureOption.VANZO_FEATURE_SHOW_OTHER_VOLUMES?
+                            AudioManager.FLAG_VIBRATE:0);
+// End of Vanzo:huangyanhui
             }
             resetTimeout();
         }

@@ -62,6 +62,17 @@ public class NetworkAgentInfo {
     // TODO: Fix the network scoring code, remove this, and rename everValidated to validated.
     public boolean lastValidated;
 
+    ///M: Support for ePDG support
+    public HandoverType handoverType;
+
+    /**
+      * State for handover connection phase.
+      *
+      */
+    public enum HandoverType {
+        NONE, CONNECT, DISCONNECT
+    }
+
     // This represents the last score received from the NetworkAgent.
     private int currentScore;
     // Penalty applied to scores of Networks that have not been validated.
@@ -98,6 +109,7 @@ public class NetworkAgentInfo {
         created = false;
         everValidated = false;
         lastValidated = false;
+        handoverType = HandoverType.NONE;
     }
 
     public void addRequest(NetworkRequest networkRequest) {
@@ -121,6 +133,12 @@ public class NetworkAgentInfo {
         // so they are not scattered about the transports.
 
         int score = currentScore;
+
+        ///M: Support for EPDG testing @{
+        if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+            return score;
+        }
+        ///@}
 
         if (!everValidated && !pretendValidated) score -= UNVALIDATED_SCORE_PENALTY;
         if (score < 0) score = 0;
@@ -153,7 +171,8 @@ public class NetworkAgentInfo {
                 networkCapabilities + "}  Score{" + getCurrentScore() + "}  " +
                 "everValidated{" + everValidated + "}  lastValidated{" + lastValidated + "}  " +
                 "created{" + created + "}  " +
-                "explicitlySelected{" + networkMisc.explicitlySelected + "} }";
+                "explicitlySelected{" + networkMisc.explicitlySelected + "}  " +
+                "subscriberId{" + networkMisc.subscriberId + "} }";
     }
 
     public String name() {

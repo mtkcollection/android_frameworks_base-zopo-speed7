@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,17 +122,21 @@ public class UsbDebuggingManager implements Runnable {
     }
 
     private void closeSocket() {
+        if (mOutputStream != null) {
         try {
             mOutputStream.close();
         } catch (IOException e) {
             Slog.e(TAG, "Failed closing output stream: " + e);
         }
+        }
 
+        if (mSocket != null) {
         try {
             mSocket.close();
         } catch (IOException ex) {
             Slog.e(TAG, "Failed closing socket: " + ex);
         }
+    }
     }
 
     private void sendResponse(String msg) {

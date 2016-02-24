@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +21,6 @@
 
 #define LOG_TAG "OpenGLRenderer"
 #define LOG_NDEBUG 1
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #define VERTEX_DEBUG 0
 
@@ -45,6 +49,7 @@
 #include <utils/Log.h>
 #include <utils/Trace.h>
 
+#include "Debug.h"
 #include "PathTessellator.h"
 #include "Matrix.h"
 #include "Vector.h"
@@ -724,7 +729,7 @@ void getStrokeVerticesFromPerimeterAA(const PaintInfo& paintInfo, const Vector<V
 
 void PathTessellator::tessellatePath(const SkPath &path, const SkPaint* paint,
         const mat4& transform, VertexBuffer& vertexBuffer) {
-    ATRACE_CALL();
+    ATRACE_CALL_L2();
 
     const PaintInfo paintInfo(paint, transform);
 
@@ -849,7 +854,7 @@ void PathTessellator::tessellatePoints(const float* points, int count, const SkP
 
 void PathTessellator::tessellateLines(const float* points, int count, const SkPaint* paint,
         const mat4& transform, VertexBuffer& vertexBuffer) {
-    ATRACE_CALL();
+    ATRACE_CALL_L2();
     const PaintInfo paintInfo(paint, transform);
 
     const int extra = paintInfo.capExtraDivisions();
@@ -916,7 +921,7 @@ void pushToVector(Vector<Vertex>& vertices, float x, float y) {
 bool PathTessellator::approximatePathOutlineVertices(const SkPath& path, bool forceClose,
         float sqrInvScaleX, float sqrInvScaleY, float thresholdSquared,
         Vector<Vertex>& outputVertices) {
-    ATRACE_CALL();
+    ATRACE_CALL_L2();
 
     // TODO: to support joins other than sharp miter, join vertices should be labelled in the
     // perimeter, or resolved into more vertices. Reconsider forceClose-ing in that case.

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +43,7 @@ PatchCache::PatchCache():
         INIT_LOGD("  Setting patch cache size to %skB", property);
         mMaxSize = KB(atoi(property));
     } else {
-        INIT_LOGD("  Using default patch cache size of %.2fkB", DEFAULT_PATCH_CACHE_SIZE);
+        INIT_LOGD("  Using default patch cache size of %dkB", DEFAULT_PATCH_CACHE_SIZE);
         mMaxSize = KB(DEFAULT_PATCH_CACHE_SIZE);
     }
 }
@@ -85,10 +90,13 @@ void PatchCache::clear() {
 
     if (mMeshBuffer) {
         Caches::getInstance().unbindMeshBuffer();
-        glDeleteBuffers(1, &mMeshBuffer);
+        TIME_LOG("glDeleteBuffers", glDeleteBuffers(1, &mMeshBuffer));
         mMeshBuffer = 0;
         mSize = 0;
     }
+
+    /// M: [ALPS01877772] Clear operation will need to update generation id as well because the status has changed.
+    mGenerationId++;
 }
 
 void PatchCache::clearCache() {
@@ -167,7 +175,7 @@ void PatchCache::clearGarbage() {
     }
 
 #if DEBUG_PATCHES
-    if (patchesToRemove.size() > 0) {
+    if (g_HWUI_debug_patches && patchesToRemove.size() > 0) {
         dumpFreeBlocks("Removed garbage");
     }
 #endif
@@ -263,7 +271,7 @@ const Patch* PatchCache::get(const AssetAtlas::Entry* entry,
         }
 
 #if DEBUG_PATCHES
-        dumpFreeBlocks("Adding patch");
+        if (g_HWUI_debug_patches) dumpFreeBlocks("Adding patch");
 #endif
 
         mCache.put(description, newMesh);

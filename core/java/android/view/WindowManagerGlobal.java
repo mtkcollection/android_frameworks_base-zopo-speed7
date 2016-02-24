@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +109,8 @@ public final class WindowManagerGlobal {
     public static final int ADD_PERMISSION_DENIED = -8;
     public static final int ADD_INVALID_DISPLAY = -9;
     public static final int ADD_INVALID_TYPE = -10;
+    /** M: [ALPS00044207] */
+    public static final int ADD_INPUTCHANNEL_NOT_ALLOWED = -11;
 
     private static WindowManagerGlobal sDefaultWindowManager;
     private static IWindowManager sWindowManagerService;
@@ -310,6 +317,19 @@ public final class WindowManagerGlobal {
             mParams.remove(index);
             mParams.add(index, wparams);
             root.setLayoutParams(wparams, false);
+        }
+    }
+
+    /// M: [App Launch Reponse Time Enhancement] Merge Traversal.
+    public void doTraversal(View view, boolean immediate) {
+        if (view == null) {
+            throw new IllegalArgumentException("view must not be null");
+        }
+
+        synchronized (mLock) {
+            int index = findViewLocked(view, true);
+            ViewRootImpl root = mRoots.get(index);
+            root.doTraversal();
         }
     }
 

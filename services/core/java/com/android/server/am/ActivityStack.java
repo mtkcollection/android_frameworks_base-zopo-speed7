@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +26,14 @@ import static com.android.server.am.ActivityManagerService.localLOGV;
 import static com.android.server.am.ActivityManagerService.DEBUG_CLEANUP;
 import static com.android.server.am.ActivityManagerService.DEBUG_CONFIGURATION;
 import static com.android.server.am.ActivityManagerService.DEBUG_PAUSE;
+import static com.android.server.am.ActivityManagerService.DEBUG_PROCESSES;
 import static com.android.server.am.ActivityManagerService.DEBUG_RESULTS;
 import static com.android.server.am.ActivityManagerService.DEBUG_STACK;
 import static com.android.server.am.ActivityManagerService.DEBUG_SWITCH;
 import static com.android.server.am.ActivityManagerService.DEBUG_TASKS;
+import static com.android.server.am.ActivityManagerService.DEBUG_THERMAL;
 import static com.android.server.am.ActivityManagerService.DEBUG_TRANSITION;
+import static com.android.server.am.ActivityManagerService.DEBUG_TASK_RETURNTO;
 import static com.android.server.am.ActivityManagerService.DEBUG_USER_LEAVING;
 import static com.android.server.am.ActivityManagerService.DEBUG_VISBILITY;
 import static com.android.server.am.ActivityManagerService.VALIDATE_TOKENS;
@@ -48,6 +56,7 @@ import com.android.internal.content.ReferrerIntent;
 import com.android.internal.os.BatteryStatsImpl;
 import com.android.server.Watchdog;
 import com.android.server.am.ActivityManagerService.ItemMatcher;
+import com.android.server.PerfService;
 import com.android.server.am.ActivityStackSupervisor.ActivityContainer;
 import com.android.server.wm.AppTransition;
 import com.android.server.wm.TaskGroup;
@@ -76,9 +85,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.Trace;
 import android.os.UserHandle;
+import android.os.SystemProperties;
 import android.service.voice.IVoiceInteractionSession;
 import android.util.EventLog;
 import android.util.Slog;
@@ -91,6 +102,11 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+
+import com.mediatek.common.thermal.MtkThermalSwitchManager;
+import com.mediatek.multiwindow.MultiWindowProxy; /// M: BMW
+import com.mediatek.perfservice.IPerfService; /// M: PerfService
+import com.mediatek.perfservice.IPerfServiceManager; /// M: PerfService
 
 /**
  * State and management of a single stack of activities.
@@ -233,6 +249,25 @@ final class ActivityStack {
 
     /** Run all ActivityStacks through this */
     final ActivityStackSupervisor mStackSupervisor;
+
+    /// M: mediatek added member start
+
+    /// M: Add for Activity Stack Parser @{
+    ActivityStackListener mStackListener;
+    /// @}
+
+    /// M: ALPS00431397. Member Declaration
+    ActivityRecord mAnimationPrev;
+    Bundle mAnimationOptions;
+    boolean mDidResume = false;
+
+    /// M: PerfBoost include @ {
+    IPerfService mPerfService = null;
+    private final boolean mEnhancedBoost =
+            "1".equals(SystemProperties.get("ro.mtk_perf_response_time"));
+    /// @}
+
+    /// M: mediatek added member end
 
     static final int PAUSE_TIMEOUT_MSG = ActivityManagerService.FIRST_ACTIVITY_STACK_MSG + 1;
     static final int DESTROY_TIMEOUT_MSG = ActivityManagerService.FIRST_ACTIVITY_STACK_MSG + 2;
@@ -475,11 +510,45 @@ final class ActivityStack {
 
     final void moveToFront(String reason) {
         if (isAttached()) {
-            if (isOnHomeDisplay()) {
+            /// M: BMW, floating stack shouldn't modify home stack state.
+            if (isOnHomeDisplay() && !(MultiWindowProxy.isFeatureSupport() && isFloatingStack())) {
                 mStackSupervisor.moveHomeStack(isHomeStack(), reason);
+            } 
+
+            /// M: BMW. adjust float stack order@{
+            if (MultiWindowProxy.isFeatureSupport() && isFloatingStack()) {
+                mStackSupervisor.getFrontFloatStacks(mDisplayId).remove(this);
+                mStackSupervisor.getBackFloatStacks(mDisplayId).remove(this);
+                mStackSupervisor.getFrontFloatStacks(mDisplayId).add(this);
             }
+            /// @}
             mStacks.remove(this);
             mStacks.add(this);
+            /// M:BMW. Move all float stack to back when home stack to front @{
+            if (isHomeStack()){
+                if (DEBUG_TASKS || DEBUG_STACK) {
+                    Slog.v(TAG, "[BMW] moveToFront(isHomeStack), move all float stack to back", 
+                                new Throwable("moveToFront"));
+                }
+                ArrayList<ActivityStack> frontFloatStacks = 
+                        mStackSupervisor.getFrontFloatStacks(Display.DEFAULT_DISPLAY);
+                ArrayList<ActivityStack> backFloatStacks = 
+                        mStackSupervisor.getBackFloatStacks(Display.DEFAULT_DISPLAY);
+                
+                int stackSize = frontFloatStacks.size();
+                for (int i=stackSize-1; i>=0; --i){
+                    ActivityStack stack = frontFloatStacks.get(i);
+                    if (!stack.isStickStack()){
+                        backFloatStacks.add(stack);
+                        mStacks.remove(stack);
+                        mStacks.add(0, stack);
+                        frontFloatStacks.remove(stack);
+                    }
+                }
+            }
+            /// adjust focus stack
+            mStackSupervisor.updateFocusStacks(mStacks.get(mStacks.size()-1));
+            /// @}
             final TaskRecord task = topTask();
             if (task != null) {
                 mWindowManager.moveTaskToTop(task.taskId);
@@ -625,6 +694,11 @@ final class ActivityStack {
                         " moving " + task + " to top");
                 mTaskHistory.remove(i);
                 mTaskHistory.add(task);
+                /// M: Add for Activity Stack Parser @{
+                if (null != mStackListener) {
+                    mStackListener.dumpStack(mTaskHistory);
+                }
+                /// @}
                 --index;
                 // Use same value for i.
             } else {
@@ -780,13 +854,19 @@ final class ActivityStack {
     final boolean startPausingLocked(boolean userLeaving, boolean uiSleeping, boolean resuming,
             boolean dontWait) {
         if (mPausingActivity != null) {
-            Slog.wtf(TAG, "Going to pause when pause is already pending for " + mPausingActivity);
+            /// M: Suppress AEE warning @{
+            Slog.e(TAG, "Going to pause when pause is already pending for " + mPausingActivity,
+                new RuntimeException("here").fillInStackTrace());
             completePauseLocked(false);
+            /// @}
         }
         ActivityRecord prev = mResumedActivity;
         if (prev == null) {
             if (!resuming) {
-                Slog.wtf(TAG, "Trying to pause when nothing is resumed");
+                /// M: Suppress AEE warning @{
+                Slog.e(TAG, "Trying to pause when nothing is resumed",
+                        new RuntimeException("here").fillInStackTrace());
+                /// @}
                 mStackSupervisor.resumeTopActivitiesLocked();
             }
             return false;
@@ -809,8 +889,15 @@ final class ActivityStack {
         clearLaunchTime(prev);
         final ActivityRecord next = mStackSupervisor.topRunningActivityLocked();
         if (mService.mHasRecents && (next == null || next.noDisplay || next.task != prev.task || uiSleeping)) {
-            prev.updateThumbnailLocked(screenshotActivities(prev), null);
+            /// M: Add for launch time enhancement @{
+            Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF, "amScreenCapture");
+            if (!prev.isHomeActivity()) {
+                prev.updateThumbnailLocked(screenshotActivities(prev), null);
+            }
+            Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF);
+            /// @}
         }
+
         stopFullyDrawnTraceIfNeeded();
 
         mService.updateCpuStats();
@@ -821,6 +908,10 @@ final class ActivityStack {
                 EventLog.writeEvent(EventLogTags.AM_PAUSE_ACTIVITY,
                         prev.userId, System.identityHashCode(prev),
                         prev.shortComponentName);
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD)
+                    Slog.d(TAG, "ACT-AM_PAUSE_ACTIVITY " + prev);
+                /// @}
                 mService.updateUsageStats(prev, false);
                 prev.app.thread.schedulePauseActivity(prev.appToken, prev.finishing,
                         userLeaving, prev.configChangeFlags, dontWait);
@@ -886,6 +977,10 @@ final class ActivityStack {
     final void activityPausedLocked(IBinder token, boolean timeout) {
         if (DEBUG_PAUSE) Slog.v(
             TAG, "Activity paused: token=" + token + ", timeout=" + timeout);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-paused: token=" + token + ", timeout=" + timeout);
+        /// @}
 
         final ActivityRecord r = isInStackLocked(token);
         if (r != null) {
@@ -899,12 +994,28 @@ final class ActivityStack {
                         r.userId, System.identityHashCode(r), r.shortComponentName,
                         mPausingActivity != null
                             ? mPausingActivity.shortComponentName : "(none)");
+                /// M: AMS log enhancement @{
+                if (!ActivityManagerService.IS_USER_BUILD)
+                    Slog.d(TAG, "ACT-AM_FAILED_TO_PAUSE " + r + " PausingActivity:" + mPausingActivity);
+                /// @}
             }
+            /// M:Notify thermal manager activity is paused.
+            if (SystemProperties.get("ro.mtk_benchmark_boost_tp").equals("1")) {
+                mService.mThermalManager.notifyAppState(r.packageName, MtkThermalSwitchManager.AppState.Paused);
+                if (DEBUG_THERMAL) Slog.v(
+                    TAG, "Notify Thermal Manager that Package = " + r.packageName + "is paused");
+            }
+            /// M: activity state notifier @{
+            mService.notifyActivityState(r.packageName, r.realActivity.getShortClassName(), IActivityStateNotifier.ActivityState.Paused);
+            /// @}
         }
     }
 
     final void activityStoppedLocked(ActivityRecord r, Bundle icicle,
             PersistableBundle persistentState, CharSequence description) {
+        /// M: activity state notifier @{
+        mService.notifyActivityState(r.packageName, r.realActivity.getShortClassName(), IActivityStateNotifier.ActivityState.Stopped);
+        /// @}
         if (r.state != ActivityState.STOPPING) {
             Slog.i(TAG, "Activity reported stop, but no longer stopping: " + r);
             mHandler.removeMessages(STOP_TIMEOUT_MSG, r);
@@ -981,6 +1092,10 @@ final class ActivityStack {
                         // will be empty and must be cleared immediately.
                         if (DEBUG_PAUSE) Slog.v(TAG, "To many pending stops, forcing idle");
                         mStackSupervisor.scheduleIdleLocked();
+                        /// M: AMS log enhancement @{
+                        if (!ActivityManagerService.IS_USER_BUILD)
+                            Slog.d(TAG, "ACT-IDLE_NOW_MSG from completePauseLocked for mStoppingActivities.size() > 3");
+                        /// @}
                     } else {
                         mStackSupervisor.checkReadyForSleepLocked();
                     }
@@ -1011,7 +1126,10 @@ final class ActivityStack {
         }
 
         if (prev != null) {
-            prev.resumeKeyDispatchingLocked();
+            /// M: it's to avoid deadlock in AMS/WMS, Ref: ALPS00231742 @{
+            //prev.resumeKeyDispatchingLocked();
+            new myThread(prev).start();
+            /// @}
 
             if (prev.app != null && prev.cpuTimeAtResume > 0
                     && mService.mBatteryStatsService.isOnBattery()) {
@@ -1042,6 +1160,8 @@ final class ActivityStack {
      * this function updates the rest of our state to match that fact.
      */
     private void completeResumeLocked(ActivityRecord next) {
+        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "amCompleteResume"); /// M: Add for LCA launch time debug
+
         next.idle = false;
         next.results = null;
         next.newIntents = null;
@@ -1062,6 +1182,14 @@ final class ActivityStack {
         mStackSupervisor.scheduleIdleTimeoutLocked(next);
 
         mStackSupervisor.reportResumedActivityLocked(next);
+        /// M: BMW. After KK, the ANR predump was not suitable any more. The code
+        /// should be removed in future. @{
+        if (!MultiWindowProxy.isFeatureSupport()) {
+            /// M: KeyDispatchingTimeout predump mechanism (Input dispatching timed out: No focused window) @{
+            mService.setFocusedActivityLocked(next, "completeResume");
+            /// @}
+        }
+        /// @}
 
         next.resumeKeyDispatchingLocked();
         mNoAnimActivities.clear();
@@ -1081,6 +1209,7 @@ final class ActivityStack {
             // When resuming an activity, require it to call requestVisibleBehind() again.
             mActivityContainer.mActivityDisplay.setVisibleBehindActivity(null);
         }
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER); /// M: Add for LCA launch time debug
     }
 
     private void setVisibile(ActivityRecord r, boolean visible) {
@@ -1179,6 +1308,75 @@ final class ActivityStack {
         return true;
     }
 
+    /// M: Porting from KK to check activity is over home stack or not @{
+    /**
+     * Determine if home should be visible below the passed record.
+     * @param record activity we are querying for.
+     * @return true if home is visible below the passed activity, false otherwise.
+     */
+    boolean isActivityOverHome(ActivityRecord record) {
+        // Start at record and go down, look for either home or a visible fullscreen activity.
+        final TaskRecord recordTask = record.task;
+        for (int taskNdx = mTaskHistory.indexOf(recordTask); taskNdx >= 0; --taskNdx) {
+            TaskRecord task = mTaskHistory.get(taskNdx);
+            final ArrayList<ActivityRecord> activities = task.mActivities;
+            final int startNdx =
+                    task == recordTask ? activities.indexOf(record) : activities.size() - 1;
+            for (int activityNdx = startNdx; activityNdx >= 0; --activityNdx) {
+                final ActivityRecord r = activities.get(activityNdx);
+                if (r.isHomeActivity()) {
+                    if (DEBUG_VISBILITY) Slog.v(TAG, "find home: " + r);
+                    return true;
+                }
+                if (!r.finishing && r.fullscreen) {
+                    // Passed activity is over a fullscreen activity.
+                    if (DEBUG_VISBILITY) Slog.v(TAG, "find fullscreen: " + r);
+                    return false;
+                }
+            }
+            if (task.isOverHomeStack()) {
+                // Got to the bottom of a task on top of home without finding a visible fullscreen
+                // activity. Home is visible.
+                if (DEBUG_VISBILITY) Slog.v(TAG, "find task over home: " + task);
+                return true;
+            }
+        }
+        // Got to the bottom of this stack and still don't know. If this is over the home stack
+        // then record is over home. May not work if we ever get more than two layers.
+        return mStackSupervisor.isFrontStack(this);
+    }
+    /// @}
+
+    /// M: To avoid starting activity during ensuring activity visibility for some scenario. @{
+    private boolean skipStartActivityInEnsureVisibleLocked(ActivityRecord top,
+            ActivityRecord cur) {
+        /// M: Fix ALPS01624446 @{
+        boolean realHaltActivity = (mStackSupervisor.mHaltActivity && top != null
+                                        && top.state != ActivityState.RESUMED
+                                        && mStackSupervisor.checkIfBlockResumeTop(top));
+
+        if (realHaltActivity) {
+            if (DEBUG_VISBILITY) Slog.d(TAG, "Skip by halt activity");
+            return true;
+        }
+        /// @}
+        /// M: ALPS01808519 @{
+        if (mService.mStartedUsers.get(cur.userId) == null) {
+            if (DEBUG_VISBILITY) Slog.d(TAG, "Skip by not existing user " + cur.userId);
+            return true;
+        }
+        /// @}
+        /// M: ALPS01937222 @{
+        if (PowerOffAlarmUtility.isAlarmBoot()) {
+            if (DEBUG_VISBILITY) Slog.d(TAG, "Skip by alarm boot");
+            return true;
+        }
+        /// @}
+
+        return false;
+    }
+    /// @}
+
     /**
      * Make sure that all activities that need to be visible (that is, they
      * currently can be seen by the user) actually are.
@@ -1206,7 +1404,12 @@ final class ActivityStack {
         // make sure any activities under it are now visible.
         boolean aboveTop = true;
         boolean behindFullscreen = !isStackVisible();
-
+        /// M: BMW @{
+        if (MultiWindowProxy.isFeatureSupport()
+                && isFloatingStack() && mResumedActivity != null) {
+            behindFullscreen = false;
+        }
+        /// @}
         for (int taskNdx = mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
             final TaskRecord task = mTaskHistory.get(taskNdx);
             final ArrayList<ActivityRecord> activities = task.mActivities;
@@ -1233,33 +1436,46 @@ final class ActivityStack {
                     }
 
                     if (r.app == null || r.app.thread == null) {
-                        // This activity needs to be visible, but isn't even
-                        // running...  get it started, but don't resume it
-                        // at this point.
-                        if (DEBUG_VISBILITY) Slog.v(TAG, "Start and freeze screen for " + r);
-                        if (r != starting) {
-                            r.startFreezingScreenLocked(r.app, configChanges);
-                        }
-                        if (!r.visible || r.mLaunchTaskBehind) {
-                            if (DEBUG_VISBILITY) Slog.v(
-                                    TAG, "Starting and making visible: " + r);
-                            setVisibile(r, true);
-                        }
-                        if (r != starting) {
-                            mStackSupervisor.startSpecificActivityLocked(r, false, false);
-                        }
-
-                    } else if (r.visible) {
-                        // If this activity is already visible, then there is nothing
-                        // else to do here.
-                        if (DEBUG_VISBILITY) Slog.v(TAG, "Skipping: already visible at " + r);
-                        r.stopFreezingScreenLocked(false);
-                        try {
-                            if (r.returningOptions != null) {
-                                r.app.thread.scheduleOnNewActivityOptions(r.appToken,
-                                        r.returningOptions);
+                        /// M: Avoid stating activity in some scenario. @{
+                        if (!skipStartActivityInEnsureVisibleLocked(top, r)) {
+                            // This activity needs to be visible, but isn't even
+                            // running...  get it started, but don't resume it
+                            // at this point.
+                            if (DEBUG_VISBILITY) Slog.v(TAG, "Start and freeze screen for " + r);
+                            if (r != starting) {
+                                r.startFreezingScreenLocked(r.app, configChanges);
                             }
-                        } catch(RemoteException e) {
+                            if (!r.visible || r.mLaunchTaskBehind) {
+                                if (DEBUG_VISBILITY) Slog.v(
+                                        TAG, "Starting and making visible: " + r);
+                                setVisibile(r, true);
+                            }
+                            if (r != starting) {
+                                mStackSupervisor.startSpecificActivityLocked(r, false, false);
+                            }
+                        }
+                        /// @}
+                    } else if (r.visible) {
+                        if (MultiWindowProxy.isFeatureSupport()
+                                && r.state != ActivityState.RESUMED   
+                                && r != starting && r.mPendingRestoreMax){
+                            /// M: BMW. If this activity is already visible, and doing restore or max,
+                            /// then relaunch it to pause+stop (but remain visible).
+                            relaunchActivityLocked(r, 0, false);
+                            if (DEBUG_VISBILITY) Slog.v(TAG, "[BMW] Restore/Max: already visible at " + r 
+                                                                + ", and relaunch it to stop.");
+                        }else{
+                            // If this activity is already visible, then there is nothing
+                            // else to do here.
+                            if (DEBUG_VISBILITY) Slog.v(TAG, "Skipping: already visible at " + r);
+                            r.stopFreezingScreenLocked(false);
+                            try {
+                                if (r.returningOptions != null) {
+                                    r.app.thread.scheduleOnNewActivityOptions(r.appToken,
+                                            r.returningOptions);
+                                }
+                            } catch(RemoteException e) {
+                            }
                         }
                     } else {
                         // This activity is not currently visible, but is running.
@@ -1299,6 +1515,17 @@ final class ActivityStack {
                     } else if (!isHomeStack() && r.frontOfTask && task.isOverHomeStack()) {
                         if (DEBUG_VISBILITY) Slog.v(TAG, "Showing home: at " + r);
                         behindFullscreen = true;
+                    } else if (!isHomeStack() && isActivityOverHome(r)) {
+                        /// M: Porting from KK to check activity is over home stack or not @{
+                        if (DEBUG_VISBILITY) Slog.v(TAG, "Showing home over activity: " + r);
+                        behindFullscreen = true;
+                        /// @}
+                        /// M: BMW, behindFullscreen is determined by floatingOrTranslucent @{
+                        if (MultiWindowProxy.isFeatureSupport() && isFloatingStack()) {
+                            behindFullscreen = !r.floating && !r.translucent;
+                            if (DEBUG_VISBILITY) Slog.v(TAG, "Full Float Window " + behindFullscreen);
+                        }
+                        /// @}
                     }
                 } else {
                     if (DEBUG_VISBILITY) Slog.v(
@@ -1487,16 +1714,39 @@ final class ActivityStack {
 
         final TaskRecord prevTask = prev != null ? prev.task : null;
         if (next == null) {
+            /// M: BMW, Skip to resume home activity, due to there is another running stack @{
+            if (MultiWindowProxy.isFeatureSupport() && isFloatingStack()) {
+                Slog.v(TAG, "[BMW] Skip to resume home activity, due to this is a floating stack");
+                return false;
+            }
+            /// @}
             // There are no more activities!  Let's just start up the
             // Launcher...
             ActivityOptions.abort(options);
+
+            /// M: Power off alarm feature:
+            /// If mAlarmBoot is TRUE, that means this is alarm boot-up
+            /// We will skip to resume home activity until the Alarm activity is destroyed. @{
+            if (PowerOffAlarmUtility.isAlarmBoot()) {
+                Slog.v(TAG, "Skip to resume home activity!!");
+                return false;
+            }
+            /// @}
+
             if (DEBUG_STATES) Slog.d(TAG, "resumeTopActivityLocked: No more activities go home");
             if (DEBUG_STACK) mStackSupervisor.validateTopActivitiesLocked();
             // Only resume home if on home display
             final int returnTaskType = prevTask == null || !prevTask.isOverHomeStack() ?
                     HOME_ACTIVITY_TYPE : prevTask.getTaskToReturnTo();
-            return isOnHomeDisplay() &&
-                    mStackSupervisor.resumeHomeStackTask(returnTaskType, prev, "noMoreActivities");
+
+            /// M: BMW, consider move next floating stack first @{
+            if (isOnHomeDisplay() && mStackSupervisor.moveNextFloatingStackToTopLocked(returnTaskType, null)) {
+                return true;
+            } else {
+                return isOnHomeDisplay() &&
+                        mStackSupervisor.resumeHomeStackTask(returnTaskType, prev, "noMoreActivities");
+            }
+            /// @}
         }
 
         next.delayedResume = false;
@@ -1504,6 +1754,16 @@ final class ActivityStack {
         // If the top activity is the resumed one, nothing to do.
         if (mResumedActivity == next && next.state == ActivityState.RESUMED &&
                     mStackSupervisor.allResumedActivitiesComplete()) {
+            /// M: BMW, [ALPS01640179] &  [ALPS01660736] 
+            /// Make sure we have pause all back stacks.
+            /// For Multi Window Feature, there will be two or more activities in RESUMED state.
+            /// So, we should pause these activites which are resumed, 
+            /// but have been put into back stacks before.@{
+            if (MultiWindowProxy.isFeatureSupport()) {
+                mStackSupervisor.pauseBackStacks(userLeaving, false, false);
+                mStackSupervisor.scheduleIdleLocked();
+            }
+            /// @}
             // Make sure we have executed any pending transitions, since there
             // should be nothing left to do at this point.
             mWindowManager.executeAppTransition();
@@ -1532,8 +1792,37 @@ final class ActivityStack {
                         "resumeTopActivityLocked: Launching home next");
                 final int returnTaskType = prevTask == null || !prevTask.isOverHomeStack() ?
                         HOME_ACTIVITY_TYPE : prevTask.getTaskToReturnTo();
-                return mStackSupervisor.resumeHomeStackTask(returnTaskType, prev, "prevFinished");
+                /// M: BMW, consider move next floating stack first @{
+                if (isOnHomeDisplay() 
+                        && mStackSupervisor.moveNextFloatingStackToTopLocked(returnTaskType, null)) {
+                    return true;
+                } else {
+                    return isOnHomeDisplay() &&
+                            mStackSupervisor.resumeHomeStackTask(returnTaskType, prev, "prevFinished");
+                }
+                /// @}
             }
+/* missing mOnTopOfHome: L removed TaskRecord.mOnTopOfHome
+            /// M: Fix ALPS01260522
+            /// If there are some task (must contain pending finishing activity) with mOnTopOfHome above next activity,
+            /// we should resume home activity @{
+            boolean needResumeHome = false;
+            for (int taskIndex = mTaskHistory.size() - 1; taskIndex >= 0; taskIndex--) {
+                TaskRecord task = mTaskHistory.get(taskIndex);
+                if (next.task == task || task.mMovingToFront) {
+                    break;
+                } else if (task.mOnTopOfHome) {
+                    Slog.d(TAG, "Find previous pending finishing task with mOnTopOfHome: " + task);
+                    needResumeHome = true;
+                    break;
+                }
+            }
+            if (needResumeHome) {
+                Slog.d(TAG, "resumeTopActivityLocked: Launching home due to previous pending finishing task");
+                return mStackSupervisor.resumeHomeActivity(prev);
+            }
+            /// @}
+*/
         }
 
         // If we are sleeping, and there is no resumed activity, and the top
@@ -1567,7 +1856,10 @@ final class ActivityStack {
         mStackSupervisor.mGoingToSleepActivities.remove(next);
         next.sleeping = false;
         mStackSupervisor.mWaitingVisibleActivities.remove(next);
-
+        ///M: ALPS01570469 AMS delayed the finishing process@{
+        if (DEBUG_STATES) Slog.v(TAG, "Resuming next, set waitingVisible false orignal " + next.waitingVisible);
+        next.waitingVisible = false;
+        /// @}
         if (DEBUG_SWITCH) Slog.v(TAG, "Resuming " + next);
 
         // If we are currently pausing an activity, then don't do anything
@@ -1608,6 +1900,10 @@ final class ActivityStack {
             }
         }
 
+        /// M: PerfBoost @{
+        perfBoostResume();
+        /// @}
+
         // We need to start pausing the current activity so the top one
         // can be resumed...
         boolean dontWaitForPause = (next.info.flags&ActivityInfo.FLAG_RESUME_WHILE_PAUSING) != 0;
@@ -1629,6 +1925,20 @@ final class ActivityStack {
             if (DEBUG_STACK) mStackSupervisor.validateTopActivitiesLocked();
             return true;
         }
+
+        /// M: ALPS00431397. Whan halting activity, it doesn't do any thing.
+        /// ALPS01942420  move it behind activity paused for multi user.@{
+        synchronized (mStackSupervisor.mHaltActivityLock) {
+            if (mStackSupervisor.mHaltActivity && mStackSupervisor.checkIfBlockResumeTop(next)) {
+                Slog.d(TAG, "ACT-Because running the window animation, can't resumeTopActivityLocked  mAnimationPrev = "
+                    + mAnimationPrev + " prev = " + prev);
+                mAnimationPrev = prev;
+                mAnimationOptions = options;
+                mDidResume = true;
+                return false;
+            }
+        }
+        /// @}
 
         // If the most recent activity was noHistory but was only stopped rather
         // than stopped+finished because the device went to sleep, we need to make
@@ -1801,36 +2111,65 @@ final class ActivityStack {
             }
 
             try {
-                // Deliver all pending results.
-                ArrayList<ResultInfo> a = next.results;
-                if (a != null) {
-                    final int N = a.size();
-                    if (!next.finishing && N > 0) {
-                        if (DEBUG_RESULTS) Slog.v(
-                                TAG, "Delivering results to " + next
-                                + ": " + a);
-                        next.app.thread.scheduleSendResult(next.appToken, a);
+                /// M: BMW. check the floating and normal switch. if changed, schedule
+                /// relaunch. Otherwise, do resume action. @{
+                if (MultiWindowProxy.isFeatureSupport() 
+                            && MultiWindowProxy.getInstance() != null && next.mPendingRestoreMax) {
+                    boolean toMax = !isFloatingStack();
+                    next.sleeping = false;
+                    mService.showAskCompatModeDialogLocked(next);
+                    next.app.pendingUiClean = true;
+                    next.app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_TOP);
+                    
+                    // the activity in MwDisableFloatAppList  should not be floating window
+                    // normal A ->B, restore B to floating . Then B back to A, A should not be floating window  
+                    if(!toMax && MultiWindowProxy.getInstance().matchDisableFloatActivityList(next.shortComponentName)){ 
+                        mStackSupervisor.moveFloatingStackToAppStackLocked(this, false);
+                        toMax = true;
+                    }    
+                    if (!ActivityManagerService.IS_USER_BUILD)
+                        Slog.d(TAG, "[BMW] ACT-AM_RESTORE_ACTIVITY " + next + " task:" + next.task.taskId);
+                    
+                    next.scheduleRestoreActivity(next.results, next.newIntents, 0, false , null, toMax);
+                    mStackSupervisor.checkReadyForSleepLocked();  
+                } else {
+                    // Deliver all pending results.
+                    ArrayList<ResultInfo> a = next.results;
+                    if (a != null) {
+                        final int N = a.size();
+                        if (!next.finishing && N > 0) {
+                            if (DEBUG_RESULTS) Slog.v(
+                                    TAG, "Delivering results to " + next
+                                    + ": " + a);
+                            next.app.thread.scheduleSendResult(next.appToken, a);
+                        }
                     }
+
+                    if (next.newIntents != null) {
+                        next.app.thread.scheduleNewIntent(next.newIntents, next.appToken);
+                    }
+
+                    EventLog.writeEvent(EventLogTags.AM_RESUME_ACTIVITY, next.userId,
+                            System.identityHashCode(next), next.task.taskId, next.shortComponentName);
+
+                    /// M: AMS log enhancement @{
+                    if (!ActivityManagerService.IS_USER_BUILD)
+                        Slog.d(TAG, "ACT-AM_RESUME_ACTIVITY " + next + " task:" + next.task.taskId);
+                    /// @}
+
+                    next.sleeping = false;
+                    mService.showAskCompatModeDialogLocked(next);
+                    next.app.pendingUiClean = true;
+                    next.app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_TOP);
+                    next.clearOptionsLocked();
+                    next.app.thread.scheduleResumeActivity(next.appToken, next.app.repProcState,
+                            mService.isNextTransitionForward(), resumeAnimOptions);
+
+                    mStackSupervisor.checkReadyForSleepLocked();
+
+                    if (DEBUG_STATES) Slog.d(TAG, "resumeTopActivityLocked: Resumed " + next);
+                
                 }
-
-                if (next.newIntents != null) {
-                    next.app.thread.scheduleNewIntent(next.newIntents, next.appToken);
-                }
-
-                EventLog.writeEvent(EventLogTags.AM_RESUME_ACTIVITY, next.userId,
-                        System.identityHashCode(next), next.task.taskId, next.shortComponentName);
-
-                next.sleeping = false;
-                mService.showAskCompatModeDialogLocked(next);
-                next.app.pendingUiClean = true;
-                next.app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_TOP);
-                next.clearOptionsLocked();
-                next.app.thread.scheduleResumeActivity(next.appToken, next.app.repProcState,
-                        mService.isNextTransitionForward(), resumeAnimOptions);
-
-                mStackSupervisor.checkReadyForSleepLocked();
-
-                if (DEBUG_STATES) Slog.d(TAG, "resumeTopActivityLocked: Resumed " + next);
             } catch (Exception e) {
                 // Whoops, need to restart this activity!
                 if (DEBUG_STATES) Slog.v(TAG, "Resume failed; resetting state to "
@@ -1900,13 +2239,46 @@ final class ActivityStack {
         // activity, set mOnTopOfHome accordingly.
         if (isOnHomeDisplay()) {
             ActivityStack lastStack = mStackSupervisor.getLastStack();
-            final boolean fromHome = lastStack.isHomeStack();
+            boolean fromHome = lastStack.isHomeStack();
+
+            // M: ALPS01902110 Debug task return to @{
+            if (ActivityManagerService.DEBUG_TASK_RETURNTO) {
+                Slog.d(TAG, "insertTaskAtTop() task " + task + " fromHome=" + fromHome +
+                        " isHomeStack=" + isHomeStack() + " topTask=" + topTask());
+                if (lastStack != null) {
+                    TaskRecord top = lastStack.topTask();
+                    Slog.d(TAG, "lastStack=" + lastStack + "lastTop=" + top);
+                    if (top != null) {
+                        Slog.d(TAG, "lastTopType=" + top.taskType);
+                    }
+                }
+            }
+            /// @}
+            
+            /// M: BMW, if floating AP is launched from Home, keep fromHome is true @{
+            Slog.d(TAG, "[BMW] insertTaskAtTop fromHome = " + fromHome 
+                            + " lastStack = " + lastStack 
+                            + " this = " + this 
+                            + " topTask() = " + topTask());
+            if (isFloatingStack() && (fromHome || task.isOverHomeStack())) {
+                task.mFloatingBackIsHome = true;
+            }
+            if (task.mFloatingBackIsHome) {
+                fromHome = true;
+            }
+            /// @}
+
             if (!isHomeStack() && (fromHome || topTask() != task)) {
                 task.setTaskToReturnTo(fromHome
                         ? lastStack.topTask() == null
                                 ? HOME_ACTIVITY_TYPE
                                 : lastStack.topTask().taskType
                         : APPLICATION_ACTIVITY_TYPE);
+                /// M: BMW, @{
+                if (isFloatingStack() && fromHome) {
+                    task.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
+                }
+                /// @}
             }
         } else {
             task.setTaskToReturnTo(APPLICATION_ACTIVITY_TYPE);
@@ -1926,6 +2298,12 @@ final class ActivityStack {
         }
         mTaskHistory.add(taskNdx, task);
         updateTaskMovement(task, true);
+        /// M: BMW. [ALPS01919473] update taskAdded info to MWS @{
+        if (MultiWindowProxy.isFeatureSupport() 
+                && MultiWindowProxy.getInstance() != null){
+            MultiWindowProxy.getInstance().taskAdded(task.taskId);
+        }
+        /// @}
     }
 
     final void startActivityLocked(ActivityRecord r, boolean newTask,
@@ -1959,6 +2337,11 @@ final class ActivityStack {
                                 + task, new RuntimeException("here").fillInStackTrace());
                         task.addActivityToTop(r);
                         r.putInHistory();
+                        /// M: Add for Activity Stack Parser @{
+                        if (null != mStackListener) {
+                            mStackListener.dumpStack(mTaskHistory);
+                        }
+                        /// @}
                         mWindowManager.addAppToken(task.mActivities.indexOf(r), r.appToken,
                                 r.task.taskId, mStackId, r.info.screenOrientation, r.fullscreen,
                                 (r.info.flags & ActivityInfo.FLAG_SHOW_ON_LOCK_SCREEN) != 0,
@@ -1998,6 +2381,11 @@ final class ActivityStack {
         task.setFrontOfTask();
 
         r.putInHistory();
+        /// M: Add for Activity Stack Parser @{
+        if (null != mStackListener) {
+            mStackListener.dumpStack(mTaskHistory);
+        }
+        /// @}
         if (!isHomeStack() || numActivities() > 0) {
             // We want to show the starting preview window if we are
             // switching to a new task, or the next activity's process is
@@ -2087,6 +2475,11 @@ final class ActivityStack {
         }
 
         if (doResume) {
+            /// M: BMW @{
+            if (MultiWindowProxy.isFeatureSupport ()){
+                mStackSupervisor.keepStickyStackLocked();
+            }
+            /// @}
             mStackSupervisor.resumeTopActivitiesLocked(this, r, options);
         }
     }
@@ -2198,7 +2591,15 @@ final class ActivityStack {
                 boolean noOptions = canMoveOptions;
                 final int start = replyChainEnd < 0 ? i : replyChainEnd;
                 for (int srcPos = start; srcPos >= i; --srcPos) {
-                    final ActivityRecord p = activities.get(srcPos);
+                    /// M: ALPS01236252, Fix KK google issue, when target.setTask it will remove activity from
+                    /// task.mActivities and make the index out of date. @{
+                    final ActivityRecord p;
+                    if (srcPos >= activities.size()) {
+                        p = target;
+                    } else {
+                        p = activities.get(srcPos);
+                    }
+                    /// @}
                     if (p.finishing) {
                         continue;
                     }
@@ -2243,6 +2644,15 @@ final class ActivityStack {
                 } else {
                     end = replyChainEnd;
                 }
+                /// M: ALPS01273881, Fix KK google issue, activities of task may have been moved to another task
+                /// Let the i and numActivities out of date. @{
+                int nowActivities = activities.size();
+                if (end >= nowActivities) {
+                    Slog.w(TAG, "resetTargetTaskIfNeededLocked: activity may have been removed, original activities num = " + numActivities
+                        + " now activities num = " + nowActivities);
+                    end = nowActivities - 1;
+                }
+                /// @}
                 boolean noOptions = canMoveOptions;
                 for (int srcPos = i; srcPos <= end; srcPos++) {
                     ActivityRecord p = activities.get(srcPos);
@@ -2343,13 +2753,27 @@ final class ActivityStack {
 
                     }
 
-                    final int start = replyChainEnd >= 0 ? replyChainEnd : i;
-                    if (DEBUG_TASKS) Slog.v(TAG, "Reparenting from task=" + affinityTask + ":"
-                            + start + "-" + i + " to task=" + task + ":" + taskInsertionPoint);
-                    for (int srcPos = start; srcPos >= i; --srcPos) {
+                    /// M: fix google KK issue, make wms add appToken in right order @{
+                    int start = replyChainEnd >= 0 ? replyChainEnd : i;
+                    if (!ActivityManagerService.IS_USER_BUILD) Slog.v(TAG, "Reparenting from task=" + affinityTask + ":"
+                            + i + "-" + start + " to task=" + task + ":" + taskInsertionPoint);
+
+                    int addTaskPosition = taskInsertionPoint;
+                    for (int srcPos = i; srcPos <= start; ++srcPos) {
+                    /// @}
                         final ActivityRecord p = activities.get(srcPos);
                         p.setTask(task, null);
-                        task.addActivityAtIndex(taskInsertionPoint, p);
+                        /// M: fix google KK issue, make wms add appToken in right order @{
+                        task.addActivityAtIndex(addTaskPosition, p);
+                        addTaskPosition++;
+                        start--;
+                        srcPos--;
+                        /// @}
+                        /// M: Add for Activity Stack Parser @{
+                        if (null != mStackListener) {
+                            mStackListener.dumpStack(mTaskHistory);
+                        }
+                        /// @}
 
                         if (DEBUG_ADD_REMOVE) Slog.i(TAG, "Removing and adding activity " + p
                                 + " to stack at " + task,
@@ -2471,8 +2895,11 @@ final class ActivityStack {
             if (next != r) {
                 final TaskRecord task = r.task;
                 if (r.frontOfTask && task == topTask() && task.isOverHomeStack()) {
-                    mStackSupervisor.moveHomeStackTaskToTop(task.getTaskToReturnTo(),
-                            reason + " adjustFocus");
+                    ///M: BMW [ALPS01879170]. Only setting focus activity , do not move home to top.
+                    if(!MultiWindowProxy.isFeatureSupport()){
+                        mStackSupervisor.moveHomeStackTaskToTop(task.getTaskToReturnTo(),
+                                reason + " adjustFocus");
+                    }
                 }
             }
             ActivityRecord top = mStackSupervisor.topRunningActivityLocked();
@@ -2549,6 +2976,31 @@ final class ActivityStack {
         if (r == null) {
             return false;
         }
+
+        /// M: ALPS00568422, Fix after using ChooserActivity can't consider previous app since it will auto finishing @{
+        if (reason.equals("app-request") &&
+            r.realActivity.getPackageName().equals("android") &&
+            r.realActivity.getClassName().equals("com.android.internal.app.ChooserActivity")) {
+            ArrayList<ActivityRecord> activities = r.task.mActivities;
+            int index = activities.indexOf(r);
+            if (index > 0) {
+                ActivityRecord prevAct = activities.get(index - 1);
+                if (prevAct.app == r.app) {
+                    // Now that this process has another activity just using ChooserActivity,
+                    // we may want to consider it to be the previous app
+                    final ActivityRecord topAct = topActivity();
+                    // check if not top process, home process, and last visible time
+                    if (prevAct.app != null && prevAct.app != topAct.app &&
+                        prevAct.lastVisibleTime > mService.mPreviousProcessVisibleTime &&
+                        prevAct.app != mService.mHomeProcess) {
+                        Slog.v(TAG, "Set previous process=" + prevAct.app);
+                        mService.mPreviousProcess = prevAct.app;
+                        mService.mPreviousProcessVisibleTime = prevAct.lastVisibleTime;
+                    }
+                }
+            }
+        }
+        /// @}
 
         finishActivityLocked(r, resultCode, resultData, reason, oomAdj);
         return true;
@@ -2690,6 +3142,10 @@ final class ActivityStack {
         EventLog.writeEvent(EventLogTags.AM_FINISH_ACTIVITY,
                 r.userId, System.identityHashCode(r),
                 task.taskId, r.shortComponentName, reason);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-AM_FINISH_ACTIVITY " + r + " task:" + r.task + " " + reason);
+        /// @}
         final ArrayList<ActivityRecord> activities = task.mActivities;
         final int index = activities.indexOf(r);
         if (index < (activities.size() - 1)) {
@@ -2733,7 +3189,13 @@ final class ActivityStack {
             // If the activity is PAUSING, we will complete the finish once
             // it is done pausing; else we can just directly finish it here.
             if (DEBUG_PAUSE) Slog.v(TAG, "Finish not pausing: " + r);
-            return finishCurrentActivityLocked(r, FINISH_AFTER_PAUSE, oomAdj) == null;
+            if (reason.equals("clear")) {
+                /// M: Fix ALPS01258913 clear task may cause a wrong ActivityStack status @{
+                return finishCurrentActivityLocked(r, FINISH_FROM_CLEARTASK, oomAdj) == null;
+                /// @}
+            } else {
+                return finishCurrentActivityLocked(r, FINISH_AFTER_PAUSE, oomAdj) == null;
+            }
         } else {
             if (DEBUG_PAUSE) Slog.v(TAG, "Finish waiting for pause of: " + r);
         }
@@ -2744,6 +3206,7 @@ final class ActivityStack {
     static final int FINISH_IMMEDIATELY = 0;
     static final int FINISH_AFTER_PAUSE = 1;
     static final int FINISH_AFTER_VISIBLE = 2;
+    static final int FINISH_FROM_CLEARTASK = 3;     /// M: Fix ALPS01258913 clear task may cause a wrong ActivityStack status
 
     final ActivityRecord finishCurrentActivityLocked(ActivityRecord r, int mode, boolean oomAdj) {
         // First things first: if this activity is currently visible,
@@ -2759,6 +3222,10 @@ final class ActivityStack {
                     // them out. Or if r is the last of activity of the last task the stack
                     // will be empty and must be cleared immediately.
                     mStackSupervisor.scheduleIdleLocked();
+                    /// M: AMS log enhancement @{
+                    if (!ActivityManagerService.IS_USER_BUILD)
+                        Slog.d(TAG, "ACT-IDLE_NOW_MSG from finishCurrentActivityLocked for mStoppingActivities.size() > 3");
+                    /// @}
                 } else {
                     mStackSupervisor.checkReadyForSleepLocked();
                 }
@@ -2776,6 +3243,10 @@ final class ActivityStack {
         mStackSupervisor.mStoppingActivities.remove(r);
         mStackSupervisor.mGoingToSleepActivities.remove(r);
         mStackSupervisor.mWaitingVisibleActivities.remove(r);
+        ///M: ALPS01570469 AMS delayed the finishing process@{
+    if (DEBUG_STATES) Slog.v(TAG, "Moving to FINISHING, set waitingVisible false orignal " + r.waitingVisible);
+        r.waitingVisible = false;
+        /// @}
         if (mResumedActivity == r) {
             mResumedActivity = null;
         }
@@ -2783,9 +3254,24 @@ final class ActivityStack {
         if (DEBUG_STATES) Slog.v(TAG, "Moving to FINISHING: " + r);
         r.state = ActivityState.FINISHING;
 
-        if (mode == FINISH_IMMEDIATELY
+        /// M: add debug switch message @{
+        if (DEBUG_SWITCH) {
+            Slog.v(TAG, "prevState = " + prevState);
+        }
+        /// @}
+
+        /// M: Fix ALPS01258913 clear task may cause a wrong ActivityStack status
+        /// If it is from clear task and app is null, it will destroy activity immediately and cause stack removed here @{
+        boolean canDestroyHere = true;
+        if (mode == FINISH_FROM_CLEARTASK && r.app == null) {
+            canDestroyHere = false;
+        }
+        /// @}
+
+        if (canDestroyHere &&
+            (mode == FINISH_IMMEDIATELY
                 || prevState == ActivityState.STOPPED
-                || prevState == ActivityState.INITIALIZING) {
+                || prevState == ActivityState.INITIALIZING)) {
             // If this activity is already stopped, we can just finish
             // it right now.
             r.makeFinishing();
@@ -2960,7 +3446,10 @@ final class ActivityStack {
         if (mPausingActivity == r) {
             mPausingActivity = null;
         }
-        mService.clearFocusedActivity(r);
+		
+        /// B: BMW. 
+        if (!mNeedKeepFocusActivity)
+            mService.clearFocusedActivity(r);
 
         r.configDestroy = false;
         r.frozenBeforeDestroy = false;
@@ -3033,7 +3522,37 @@ final class ActivityStack {
                     "removeActivityFromHistoryLocked: last activity removed from " + this);
             if (mStackSupervisor.isFrontStack(this) && task == topTask() &&
                     task.isOverHomeStack()) {
-                mStackSupervisor.moveHomeStackTaskToTop(task.getTaskToReturnTo(), reason);
+                /// M: BMW, consider whether need to resume the launcher @{
+                boolean needResumeHome = true;
+                if (MultiWindowProxy.isFeatureSupport()) {
+                    // When AP finish itself and App Stack is resumed, we do not resume home.
+                    ActivityStack appStack = getAppStackLocked();
+                    if (appStack != null && appStack.topActivity() != null 
+                            && appStack.topActivity().state == ActivityState.RESUMED) {
+                        Slog.d(TAG, "[BMW] ACT-removeActivityFromHistoryLocked : needResumeHome = false");
+                        needResumeHome = false;
+                    }
+                    ActivityStack homeStack = null;
+                    for (ActivityStack stack : mStacks) {
+                        if (stack.isHomeStack()) {
+                            homeStack = stack;
+                            break;
+                        }
+                    }
+                    // When clear AP from recent app list, we do not resume home.
+                    if (homeStack != null && homeStack.topActivity() != null 
+                            && homeStack.topActivity().isRecentsActivity()
+                            && homeStack.topActivity().state == ActivityState.RESUMED) {
+                        Slog.d(TAG, "[BMW] ACT-removeActivityFromHistoryLocked RecentsActivity : needResumeHome = false");
+                        needResumeHome = false;
+                    }
+                }
+                /// M: BMW, consider move next floating stack first
+                if (needResumeHome 
+                        && !mStackSupervisor.moveNextFloatingStackToTopLocked(task.getTaskToReturnTo(),this)) {
+                    mStackSupervisor.moveHomeStackTaskToTop(task.getTaskToReturnTo(), reason);
+                }
+                /// @}
             }
             removeTask(task, reason);
         }
@@ -3163,6 +3682,23 @@ final class ActivityStack {
         EventLog.writeEvent(EventLogTags.AM_DESTROY_ACTIVITY,
                 r.userId, System.identityHashCode(r),
                 r.task.taskId, r.shortComponentName, reason);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-Removing activity from " + reason + ": token=" + r
+              + ", app=" + (r.app != null ? r.app.processName : "(null)"));
+        /// @}
+
+        /// M: Notify Thermal Manager that activity will be destroyed. In case of being destroyed directly without pause, ex: IPO @{
+        if (SystemProperties.get("ro.mtk_benchmark_boost_tp").equals("1")) {
+            mService.mThermalManager.notifyAppState(r.packageName, MtkThermalSwitchManager.AppState.Destroyed);
+            if (DEBUG_THERMAL) Slog.v(
+                TAG, "Notify Thermal Manager that package = " + r.packageName + "will be destroyed");
+        }
+        /// @}
+
+        /// M: activity state notifier @{
+        mService.notifyActivityState(r.packageName, r.realActivity.getShortClassName(), IActivityStateNotifier.ActivityState.Destroyed);
+        /// @}
 
         boolean removedFromHistory = false;
 
@@ -3364,6 +3900,19 @@ final class ActivityStack {
                     TAG, "Record #" + i + " " + r + ": app=" + r.app);
                 if (r.app == app) {
                     boolean remove;
+                    /// M: BMW, If process is died when max/restore, re-start AP process once. @{
+                    boolean needRestart = false;
+                    mNeedKeepFocusActivity = false;
+                    if (MultiWindowProxy.isFeatureSupport()) {
+                        needRestart = r.app.inMaxOrRestore;
+                        //If Restart,change the launchCount to 1
+                        r.launchCount =1;
+                        //for Max/ Restore not clear the FocusActivity 
+                        if (needRestart){
+                            mNeedKeepFocusActivity = true; 
+                        }     
+                    }
+                    /// @}
                     if ((!r.haveState && !r.stateNotNeeded) || r.finishing) {
                         // Don't currently have state for the activity, or
                         // it is finishing -- always remove it.
@@ -3402,8 +3951,10 @@ final class ActivityStack {
                     } else {
                         // We have the current state for this activity, so
                         // it can be restarted later when needed.
-                        if (localLOGV) Slog.v(
+                        /// M: log enhancement, change localLOGV to DEBUG_PROCESSES @{
+                        if (DEBUG_PROCESSES) Slog.v(
                             TAG, "Keeping entry, setting app to null");
+                        /// @}
                         if (r.visible) {
                             hasVisibleActivities = true;
                         }
@@ -3469,6 +4020,10 @@ final class ActivityStack {
     final void moveTaskToFrontLocked(TaskRecord tr, ActivityRecord source, Bundle options,
             String reason) {
         if (DEBUG_SWITCH) Slog.v(TAG, "moveTaskToFront: " + tr);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-moveTaskToFront: " + tr);
+        /// @}
 
         final int numTasks = mTaskHistory.size();
         final int index = mTaskHistory.indexOf(tr);
@@ -3487,6 +4042,11 @@ final class ActivityStack {
         // of the stack, keeping them in the same internal order.
         insertTaskAtTop(tr);
         moveToFront(reason);
+        /// M: Add for Activity Stack Parser @{
+        if (null != mStackListener) {
+            mStackListener.dumpStack(mTaskHistory);
+        }
+        /// @}
 
         if (DEBUG_TRANSITION) Slog.v(TAG, "Prepare to front transition: task=" + tr);
         if (source != null &&
@@ -3500,13 +4060,32 @@ final class ActivityStack {
         } else {
             updateTransitLocked(AppTransition.TRANSIT_TASK_TO_FRONT, options);
         }
-
+        /// M: BMW, adjust floating stack order  & focus stack@{
+        if (MultiWindowProxy.isFeatureSupport() && isFloatingStack()) {
+            /// adjust floating stack order
+            mStackSupervisor.moveFloatingStackToFrontLocked(this);
+        }
+        /// @}
         mStackSupervisor.resumeTopActivitiesLocked();
         EventLog.writeEvent(EventLogTags.AM_TASK_TO_FRONT, tr.userId, tr.taskId);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-AM_TASK_TO_FRONT: " + tr);
+        /// @}
 
         if (VALIDATE_TOKENS) {
             validateAppTokensLocked();
         }
+        /// M: BMW, update focus activity @{
+        if (MultiWindowProxy.isFeatureSupport()) {
+            mService.setFocusedActivityLocked(tr.topRunningActivityLocked(null), reason);
+
+            /// ALPS01459787 : In order to run ActivityMangerService.getTasks
+            /// well. When moving task to front, update the touch active
+            /// time.
+            tr.touchActiveTime();
+        }
+        /// @}
     }
 
     /**
@@ -3559,21 +4138,48 @@ final class ActivityStack {
 
         mTaskHistory.remove(tr);
         mTaskHistory.add(0, tr);
+        /// M: Add for Activity Stack Parser @{
+        if (null != mStackListener) {
+            mStackListener.dumpStack(mTaskHistory);
+        }
+        /// @}
         updateTaskMovement(tr, false);
 
         // There is an assumption that moving a task to the back moves it behind the home activity.
         // We make sure here that some activity in the stack will launch home.
         int numTasks = mTaskHistory.size();
-        for (int taskNdx = numTasks - 1; taskNdx >= 1; --taskNdx) {
+        int numValidTasks = 0;
+        TaskRecord validTask = null;
+        // M: ALPS01902110 Loop all tasks to find the bottom one.
+        for (int taskNdx = numTasks - 1; taskNdx >= 0; --taskNdx) {
             final TaskRecord task = mTaskHistory.get(taskNdx);
+            if (task.mActivities != null && task.mActivities.size() > 0) {
+                validTask = task;
+                numValidTasks++;
+            }
             if (task.isOverHomeStack()) {
-                break;
+                /// M: ALPS01848059 Avoid reference to zombie task @{
+                if (task.mActivities != null && task.mActivities.size() > 0) {
+                    if (DEBUG_TASKS) Slog.w(TAG, "Find task " + task + " over home");
+                    break;
+                } else {
+                    if (DEBUG_TASKS) Slog.w(TAG, "Ignore empty task " +
+                            task + " when finding home");
+                }
+                /// @}
             }
             if (taskNdx == 1) {
                 // Set the last task before tr to go to home.
                 task.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
             }
         }
+        /// M: ALPS01858368 Can back to home in single valid task with zombies.
+        if (!isHomeStack() && numValidTasks == 1) {
+            if (DEBUG_TASKS) Slog.w(TAG, "Single valid task " +
+                    validTask + ", set over home.");
+            validTask.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
+        }
+        /// @}
 
         mWindowManager.prepareAppTransition(AppTransition.TRANSIT_TASK_TO_BACK, false);
         mWindowManager.moveTaskToBottom(taskId);
@@ -3581,8 +4187,15 @@ final class ActivityStack {
         if (VALIDATE_TOKENS) {
             validateAppTokensLocked();
         }
+        /// M: BMW, adjust floating stack order @{
+        if (MultiWindowProxy.isFeatureSupport() && isFloatingStack()) {
+            mStackSupervisor.moveFloatingStackToBackLocked(this);
+        }
+        /// @}
 
+        /// M: BMW.
         final TaskRecord task = mResumedActivity != null ? mResumedActivity.task : null;
+        boolean isOverHome = task != null ? task.isOverHomeStack() : false;
         if (task == tr && tr.isOverHomeStack() || numTasks <= 1 && isOnHomeDisplay()) {
             if (!mService.mBooting && !mService.mBooted) {
                 // Not ready yet!
@@ -3590,7 +4203,25 @@ final class ActivityStack {
             }
             final int taskToReturnTo = tr.getTaskToReturnTo();
             tr.setTaskToReturnTo(APPLICATION_ACTIVITY_TYPE);
-            return mStackSupervisor.resumeHomeStackTask(taskToReturnTo, null, "moveTaskToBack");
+            /// M: BMW, find next floating stack and move it to top @{
+            if (MultiWindowProxy.isFeatureSupport()) {
+                if (isOverHome && mStackSupervisor.moveNextFloatingStackToTopLocked(taskToReturnTo, null)) {
+                    if (mResumedActivity != null) {
+                        startPausingLocked(false, false, false, false);
+                    }
+                    return true;
+                } else {
+                    if (isFloatingStack()&& mResumedActivity != null) {
+                        startPausingLocked(false, false, false, false);
+                        return true;
+                    } else {
+                        return mStackSupervisor.resumeHomeStackTask(taskToReturnTo, null, "moveTaskToBack");
+                    }
+                }
+            } else {
+                return mStackSupervisor.resumeHomeStackTask(taskToReturnTo, null, "moveTaskToBack");
+            }
+            /// @}
         }
 
         mStackSupervisor.resumeTopActivitiesLocked();
@@ -3677,6 +4308,15 @@ final class ActivityStack {
                     + ", newConfig=" + newConfig);
         }
         if ((changes&(~r.info.getRealConfigChanged())) != 0 || r.forceNewConfig) {
+
+            /// M: BMW. Floating window doesn't run configuration change for rotation@{
+            if (MultiWindowProxy.isFeatureSupport()
+                    && (r.intent.getFlags() & Intent.FLAG_ACTIVITY_FLOATING) != 0
+                    && (changes & ActivityInfo.CONFIG_ORIENTATION) != 0){
+                return true;
+            }
+            ///@}
+            
             // Aha, the activity isn't handling the change, so DIE DIE DIE.
             r.configChangeFlags |= changes;
             r.startFreezingScreenLocked(r.app, globalChanges);
@@ -3743,6 +4383,12 @@ final class ActivityStack {
         if (DEBUG_SWITCH) Slog.v(TAG, "Relaunching: " + r
                 + " with results=" + results + " newIntents=" + newIntents
                 + " andResume=" + andResume);
+        /// M: AMS log enhancement @{
+        if (!ActivityManagerService.IS_USER_BUILD)
+            Slog.d(TAG, "ACT-Relaunching: " + r
+                + " with results=" + results + " newIntents=" + newIntents
+                + " andResume=" + andResume);
+        /// @}
         EventLog.writeEvent(andResume ? EventLogTags.AM_RELAUNCH_RESUME_ACTIVITY
                 : EventLogTags.AM_RELAUNCH_ACTIVITY, r.userId, System.identityHashCode(r),
                 r.task.taskId, r.shortComponentName);
@@ -3756,8 +4402,16 @@ final class ActivityStack {
                     (andResume ? "Relaunching to RESUMED " : "Relaunching to PAUSED ")
                     + r);
             r.forceNewConfig = false;
-            r.app.thread.scheduleRelaunchActivity(r.appToken, results, newIntents,
-                    changes, !andResume, new Configuration(mService.mConfiguration));
+            /// M: BMW. check the floating and normal switch. if changed, 
+            /// scheduleRestoreActivity. Otherwise, do scheduleRelaunchActivity
+            /// action. @{
+            if (MultiWindowProxy.isFeatureSupport() && r.mPendingRestoreMax) {
+                r.scheduleRestoreActivity(results, newIntents, changes,!andResume,
+                        new Configuration(mService.mConfiguration), !isFloatingStack());
+            } else {
+                r.app.thread.scheduleRelaunchActivity(r.appToken, results, newIntents,
+                    changes, !andResume, new Configuration(mService.mConfiguration));   
+            }
             // Note: don't need to call pauseIfSleepingLocked() here, because
             // the caller will only pass in 'andResume' if this activity is
             // currently resumed, which implies we aren't sleeping.
@@ -4066,16 +4720,31 @@ final class ActivityStack {
                 task.removedFromRecents();
             }
         }
-
+        /// M: BMW. Update taskRemoved info to MWS. @{
+        MultiWindowProxy mMWProxy = MultiWindowProxy.getInstance();
+        if (MultiWindowProxy.isFeatureSupport() 
+                && mMWProxy != null && !mMWProxy.isInMiniMax(task.taskId)){
+            MultiWindowProxy.getInstance().taskRemoved(task.taskId);
+        }
+        /// @}
         if (mTaskHistory.isEmpty()) {
             if (DEBUG_STACK) Slog.i(TAG, "removeTask: moving to back stack=" + this);
-            if (isOnHomeDisplay()) {
+            /// M: BMW. float stack shouldn't modify home stack state
+            if (isOnHomeDisplay() && !isFloatingStack()) {
                 mStackSupervisor.moveHomeStack(!isHomeStack(), reason + " leftTaskHistoryEmpty");
             }
             if (mStacks != null) {
                 mStacks.remove(this);
                 mStacks.add(0, this);
             }
+            /// M: BMW, remove stack @{
+            if (isFloatingStack()) {
+                mStackSupervisor.getFrontFloatStacks(this.mDisplayId).remove(this);
+                mStackSupervisor.getBackFloatStacks(this.mDisplayId).remove(this);
+            }
+            
+            mStackSupervisor.updateFocusStacks(mStacks.get(mStacks.size()-1));
+            /// @}
             mActivityContainer.onTaskListEmptyLocked();
         }
     }
@@ -4107,6 +4776,12 @@ final class ActivityStack {
             } catch (RemoteException e) {
             }
         }
+        /// M: BMW. update taskAdded info to MWS @{
+        if (MultiWindowProxy.isFeatureSupport() 
+                && MultiWindowProxy.getInstance() != null ){
+            MultiWindowProxy.getInstance().taskAdded(task.taskId);
+        }
+        /// @}
     }
 
     public int getStackId() {
@@ -4118,4 +4793,97 @@ final class ActivityStack {
         return "ActivityStack{" + Integer.toHexString(System.identityHashCode(this))
                 + " stackId=" + mStackId + ", " + mTaskHistory.size() + " tasks}";
     }
+
+    /// M: mediatek added functions start
+
+    private class myThread extends Thread {
+        ActivityRecord mTargetActivityRecord;
+
+        myThread(ActivityRecord target) {
+            super();
+            mTargetActivityRecord = target;
+        }
+
+        public void run() {
+            synchronized (mService) {
+                mTargetActivityRecord.resumeKeyDispatchingLocked();
+            }
+        }
+    }
+    /// M: BMW, for Max/ Restore not clear the FocusActivity.
+    boolean mNeedKeepFocusActivity = false;       
+
+    /// M: BMW, floating flag
+    boolean isFloatingStack() {
+        if(MultiWindowProxy.getInstance() != null){
+            return MultiWindowProxy.getInstance().isFloatingStack(mStackId);
+        }
+        return false;
+    }
+    
+    /// M: BMW, sticky flag.
+    boolean isStickStack() {
+        if(MultiWindowProxy.getInstance() != null) {
+            return MultiWindowProxy.getInstance().isStickStack(mStackId);
+        }
+        return false;
+    }
+    
+
+    /// M: BMW, get the normal App Stack in current display if exists.
+    ActivityStack getAppStackLocked() {
+        ActivityStack appStack = null;
+        for (int i = 0; i < mStacks.size(); i++) {
+            ActivityStack tmp = mStacks.get(i);
+            if (!tmp.isFloatingStack()&& !tmp.isHomeStack()) {
+                appStack = tmp;
+                break;
+            }
+        }
+        return appStack;
+    }
+
+    /// M: PerfBoost feature @{
+    private void perfBoostResume() {
+        if (!mStackSupervisor.mIsPerfBoostEnable) {
+            mStackSupervisor.mIsPerfBoostEnable = true;
+
+            if (mPerfService == null) {
+                mPerfService = IPerfService.Stub.asInterface(
+                        ServiceManager.getService("mtk-perfservice"));
+            }
+
+            if (mPerfService != null) {
+                Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "amPerfBoost");
+                ActivityStack lastStack = mStackSupervisor.getLastStack();
+                if (mEnhancedBoost && lastStack != null && lastStack.isHomeStack()) {
+                    try {
+                        if (DEBUG_TRANSITION) {
+                            Slog.d(TAG, "boostEnableTimeoutMs(" +
+                                    IPerfServiceManager.SCN_APP_LAUNCH + ") from home");
+                        }
+                        mPerfService.boostEnableTimeoutMs(IPerfServiceManager.SCN_APP_LAUNCH, 100);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "boostEnableTimeoutMs fail for launch", e);
+                    }
+                } else {
+                    try {
+                        if (DEBUG_TRANSITION) {
+                            Slog.d(TAG, "boostEnableTimeoutMs(" +
+                                    IPerfServiceManager.SCN_APP_SWITCH + ") cross app");
+                        }
+                        mPerfService.boostEnableTimeoutMs(IPerfServiceManager.SCN_APP_SWITCH, 300);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "boostEnableTimeoutMs fail for switch", e);
+                    }
+                }
+                Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+            } else {
+                Slog.e(TAG, "PerfService is not ready!");
+            }
+        }
+    }
+    /// @}
+
+    /// M: mediatek added functions end
 }

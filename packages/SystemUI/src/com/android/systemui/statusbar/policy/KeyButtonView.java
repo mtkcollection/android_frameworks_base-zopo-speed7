@@ -212,7 +212,13 @@ public class KeyButtonView extends ImageView {
                     if (doIt) {
                         sendEvent(KeyEvent.ACTION_UP, 0);
                         sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED);
-                        playSoundEffect(SoundEffectConstants.CLICK);
+
+                        /// M: [ALPS01858901] Do not play sound for MENU
+                        // The PhoneWindow will play sound sometimes
+                        // Thus, do not play this sound for duplicate sound issue
+                        if (mCode != KeyEvent.KEYCODE_MENU) {
+                            playSoundEffect(SoundEffectConstants.CLICK);
+                        }
                     } else {
                         sendEvent(KeyEvent.ACTION_UP, KeyEvent.FLAG_CANCELED);
                     }

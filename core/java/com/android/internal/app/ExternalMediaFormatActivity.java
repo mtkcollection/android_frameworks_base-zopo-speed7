@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +30,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
+import android.os.storage.StorageManager;
+import android.os.storage.StorageVolume;
 import android.util.Log;
 
 /**
@@ -34,6 +41,7 @@ import android.util.Log;
 public class ExternalMediaFormatActivity extends AlertActivity implements DialogInterface.OnClickListener {
 
     private static final int POSITIVE_BUTTON = AlertDialog.BUTTON_POSITIVE;
+    private static final String TAG = "ExternalMediaFormatActivity";
 
     /** Used to detect when the media state changes, in case we need to call finish() */
     private BroadcastReceiver mStorageReceiver = new BroadcastReceiver() {
@@ -94,6 +102,21 @@ public class ExternalMediaFormatActivity extends AlertActivity implements Dialog
         if (which == POSITIVE_BUTTON) {
             Intent intent = new Intent(ExternalStorageFormatter.FORMAT_ONLY);
             intent.setComponent(ExternalStorageFormatter.COMPONENT_NAME);
+
+            String path = getIntent().getStringExtra("PATH");
+            Log.d(TAG, "get format path: " + path);
+            if (path != null) {
+                StorageManager storageManager =
+                    (StorageManager) getSystemService(Context.STORAGE_SERVICE);
+                StorageVolume[] volumes = storageManager.getVolumeList();
+                for (int i = 0; i < volumes.length; i++) {
+                    if (volumes[i].getPath().equals(path)) {
+                        intent.putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, volumes[i]);
+                        break;
+                    }
+                }
+            }
+
             startService(intent);
         }
 

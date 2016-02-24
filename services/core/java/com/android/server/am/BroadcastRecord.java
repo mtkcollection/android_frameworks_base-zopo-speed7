@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +57,9 @@ final class BroadcastRecord extends Binder {
     final int appOp;        // an app op that is associated with this broadcast
     final List receivers;   // contains BroadcastFilter and ResolveInfo
     IIntentReceiver resultTo; // who receives final result if non-null
+    /// M: broadcast log enhancement @{
+    long enqueueTime;
+    /// @}
     long dispatchTime;      // when dispatch started on this set of receivers
     long dispatchClockTime; // the clock time the dispatch started
     long receiverTime;      // when current receiver started for timeouts.
@@ -104,7 +112,11 @@ final class BroadcastRecord extends Binder {
         }
         pw.print(prefix); pw.print("dispatchClockTime=");
                 pw.println(new Date(dispatchClockTime));
-        pw.print(prefix); pw.print("dispatchTime=");
+        /// M: broadcast log enhancement @{
+        pw.print(prefix); pw.print("enqueueTime=");
+                TimeUtils.formatDuration(enqueueTime, now, pw);
+        pw.print(" dispatchTime=");
+        /// @}
                 TimeUtils.formatDuration(dispatchTime, now, pw);
         if (finishTime != 0) {
             pw.print(" finishTime="); TimeUtils.formatDuration(finishTime, now, pw);
@@ -112,6 +124,13 @@ final class BroadcastRecord extends Binder {
             pw.print(" receiverTime="); TimeUtils.formatDuration(receiverTime, now, pw);
         }
         pw.println("");
+        /// M: broadcast log enhancement @{
+        pw.print(prefix);
+        pw.print("Total: "); TimeUtils.formatDuration(finishTime, enqueueTime, pw);
+        pw.print(" Waiting: "); TimeUtils.formatDuration(dispatchTime, enqueueTime, pw);
+        pw.print(" Processing: "); TimeUtils.formatDuration(finishTime, dispatchTime, pw);
+        pw.println("");
+        /// @}
         if (anrCount != 0) {
             pw.print(prefix); pw.print("anrCount="); pw.println(anrCount);
         }

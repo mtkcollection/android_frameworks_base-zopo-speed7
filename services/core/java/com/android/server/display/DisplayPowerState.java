@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +22,8 @@
 package com.android.server.display;
 
 import com.android.server.lights.Light;
+
+import static com.android.server.display.DisplayManagerService.DEBUG_POWER;
 
 import android.content.Context;
 import android.os.AsyncTask;
@@ -52,7 +59,7 @@ import java.io.PrintWriter;
 final class DisplayPowerState {
     private static final String TAG = "DisplayPowerState";
 
-    private static boolean DEBUG = false;
+    private static boolean DEBUG = true;
 
     private final Handler mHandler;
     private final Choreographer mChoreographer;
@@ -72,6 +79,8 @@ final class DisplayPowerState {
     private boolean mColorFadeDrawPending;
 
     private Runnable mCleanListener;
+
+    private int mDelay = 0;
 
     public DisplayPowerState(DisplayBlanker blanker, Light backlight, ColorFade electronBeam) {
         mHandler = new Handler(true /*async*/);
@@ -122,6 +131,16 @@ final class DisplayPowerState {
             return object.getScreenBrightness();
         }
     };
+
+    /**
+     * set IPO screen on delay
+     */
+    public void setIPOScreenOnDelay(int delay_msec){
+        if (DEBUG) {
+            Slog.d(TAG, "setIPOScreenOnDelay: delay_msec=" + delay_msec);
+        }
+        mDelay = delay_msec;
+    }
 
     /**
      * Sets whether the screen is on, off, or dozing.
@@ -269,6 +288,8 @@ final class DisplayPowerState {
 
         mPhotonicModulator.dump(pw);
         mColorFade.dump(pw);
+
+        DEBUG = DEBUG_POWER;
     }
 
     private void scheduleScreenUpdate() {
@@ -410,13 +431,19 @@ final class DisplayPowerState {
                 // Apply pending change.
                 if (DEBUG) {
                     Slog.d(TAG, "Updating screen state: state="
-                            + Display.stateToString(state) + ", backlight=" + backlight);
+                            + Display.stateToString(state) + ", backlight=" + backlight
+                            + ", backlightChanged=" + backlightChanged);
                 }
                 boolean suspending = Display.isSuspendedState(state);
                 if (stateChanged && !suspending) {
                     requestDisplayState(state);
                 }
                 if (backlightChanged) {
+                    if (mDelay > 0) {
+                        try {
+                            Thread.sleep(mDelay);
+                        } catch (InterruptedException e) {}
+                    }
                     setBrightness(backlight);
                 }
                 if (stateChanged && suspending) {

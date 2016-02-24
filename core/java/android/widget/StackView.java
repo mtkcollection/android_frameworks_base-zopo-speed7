@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +51,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.LinearInterpolator;
 import android.widget.RemoteViews.RemoteView;
 
+import com.mediatek.xlog.Xlog;
 @RemoteView
 /**
  * A view that displays its children in a stack and allows users to discretely swipe
@@ -53,6 +59,9 @@ import android.widget.RemoteViews.RemoteView;
  */
 public class StackView extends AdapterViewAnimator {
     private final String TAG = "StackView";
+    private static final boolean DBG = true;
+    private static final boolean DBG_MOTION = false;
+    private static final boolean DBG_SHOW = false;
 
     /**
      * Default animation parameters
@@ -150,6 +159,12 @@ public class StackView extends AdapterViewAnimator {
     private int mFramePadding;
     private final Rect stackInvalidateRect = new Rect();
 
+    /// M: [ALPS01833447] Since ObjectAnimator reference to the target object with
+    /// WeakReference, we should use member variable instead of local variable to avoid
+    /// target object is GC. Need to use a StackSlider array for each active view.
+    private StackSlider[] mAnimatedStackSlider = new StackSlider[NUM_ACTIVE_VIEWS];
+    private int mAnimatedStackSliderIndex = 0;
+
     /**
      * {@inheritDoc}
      */
@@ -231,6 +246,12 @@ public class StackView extends AdapterViewAnimator {
      * Animate the views between different relative indexes within the {@link AdapterViewAnimator}
      */
     void transformViewForTransition(int fromIndex, int toIndex, final View view, boolean animate) {
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "transformViewForTransition: fromIndex = " + fromIndex + ",toIndex = "
+                    + toIndex + ",view = " + view + ",child index = " + indexOfChild(view)
+                    + ",animate = " + animate);
+        }
+
         if (!animate) {
             ((StackFrame) view).cancelSliderAnimator();
             view.setRotationX(0f);
@@ -249,7 +270,13 @@ public class StackView extends AdapterViewAnimator {
             view.setVisibility(VISIBLE);
 
             int duration = Math.round(mStackSlider.getDurationForNeutralPosition(mYVelocity));
-            StackSlider animationSlider = new StackSlider(mStackSlider);
+            /// M: [ALPS01833447] Since ObjectAnimator reference to the target object with
+            /// WeakReference, we should use member variable instead of local variable to avoid
+            /// target object is GC. Need to use a StackSlider array for each active view.
+            mAnimatedStackSlider[mAnimatedStackSliderIndex] = new StackSlider(mStackSlider);
+            StackSlider animationSlider = mAnimatedStackSlider[mAnimatedStackSliderIndex];
+            mAnimatedStackSliderIndex = mAnimatedStackSliderIndex >= NUM_ACTIVE_VIEWS - 1 ?
+                    0 : mAnimatedStackSliderIndex + 1;
             animationSlider.setView(view);
 
             if (animate) {
@@ -270,7 +297,13 @@ public class StackView extends AdapterViewAnimator {
             ((StackFrame) view).cancelSliderAnimator();
             int duration = Math.round(mStackSlider.getDurationForOffscreenPosition(mYVelocity));
 
-            StackSlider animationSlider = new StackSlider(mStackSlider);
+            /// M: [ALPS01833447] Since ObjectAnimator reference to the target object with
+            /// WeakReference, we should use member variable instead of local variable to avoid
+            /// target object is GC. Need to use a StackSlider array for each active view.
+            mAnimatedStackSlider[mAnimatedStackSliderIndex] = new StackSlider(mStackSlider);
+            StackSlider animationSlider = mAnimatedStackSlider[mAnimatedStackSliderIndex];
+            mAnimatedStackSliderIndex = mAnimatedStackSliderIndex >= NUM_ACTIVE_VIEWS - 1 ?
+                    0 : mAnimatedStackSliderIndex + 1;
             animationSlider.setView(view);
             if (animate) {
                 PropertyValuesHolder slideOutY = PropertyValuesHolder.ofFloat("YProgress", 1.0f);
@@ -320,6 +353,12 @@ public class StackView extends AdapterViewAnimator {
     private void transformViewAtIndex(int index, final View view, boolean animate) {
         final float maxPerspectiveShiftY = mPerspectiveShiftY;
         final float maxPerspectiveShiftX = mPerspectiveShiftX;
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "transformViewAtIndex 1: index = " + index + ",child index = "
+                    + indexOfChild(view) + ",animate = " + animate + ",mPerspectiveShiftX = "
+                    + mPerspectiveShiftX + ",mPerspectiveShiftY = " + mPerspectiveShiftX
+                    + ",mStackMode = " + mStackMode + ",view = " + view);
+        }
 
         if (mStackMode == ITEMS_SLIDE_DOWN) {
             index = mMaxNumActiveViews - index - 1;
@@ -342,6 +381,13 @@ public class StackView extends AdapterViewAnimator {
         float scaleShiftCorrectionX =  (1 - scale) *
                 (getMeasuredWidth() * (1 - PERSPECTIVE_SHIFT_FACTOR_X) / 2.0f);
         final float transX = perspectiveTranslationX + scaleShiftCorrectionX;
+
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "transformViewAtIndex 2: r = " + r + ",scale = " + scale
+                    + ",perspectiveTranslationY = " + perspectiveTranslationY
+                    + ",scaleShiftCorrectionY = " + scaleShiftCorrectionY + ",transY = " + transY
+                    + ",scaleShiftCorrectionX = " + scaleShiftCorrectionX + ",transX = " + transX);
+        }
 
         // If this view is currently being animated for a certain position, we need to cancel
         // this animation so as not to interfere with the new transformation.
@@ -424,6 +470,11 @@ public class StackView extends AdapterViewAnimator {
     @Override
     void showOnly(int childIndex, boolean animate) {
         super.showOnly(childIndex, animate);
+        if (DBG) {
+            Xlog.d(TAG, "showOnly: childIndex = " + childIndex + ",mCurrentWindowStart = "
+                    + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                    + ",mWhichChild = " + mWhichChild + ",mHighlight = " + mHighlight);
+        }
 
         // Here we need to make sure that the z-order of the children is correct
         for (int i = mCurrentWindowEnd; i >= mCurrentWindowStart; i--) {
@@ -535,6 +586,11 @@ public class StackView extends AdapterViewAnimator {
 
         canvas.getClipBounds(stackInvalidateRect);
         final int childCount = getChildCount();
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "StackFrame dispatchDraw: stackInvalidateRect = " + stackInvalidateRect
+                    + ",childCount = " + childCount + ",this = " + this);
+        }
+
         for (int i = 0; i < childCount; i++) {
             final View child =  getChildAt(i);
             LayoutParams lp = (LayoutParams) child.getLayoutParams();
@@ -567,6 +623,11 @@ public class StackView extends AdapterViewAnimator {
         }
 
         final int newSlideAmount = Math.round(SLIDE_UP_RATIO * getMeasuredHeight());
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "onLayout: mFirstLayoutHappened = " + mFirstLayoutHappened
+                    + ",newSlideAmount = " + newSlideAmount + ",mSlideAmount = " + mSlideAmount);
+        }
+
         if (mSlideAmount != newSlideAmount) {
             mSlideAmount = newSlideAmount;
             mSwipeThreshold = Math.round(SWIPE_THRESHOLD_RATIO * newSlideAmount);
@@ -652,6 +713,11 @@ public class StackView extends AdapterViewAnimator {
             }
         }
 
+        if (DBG) {
+            Log.d(TAG, "onInterceptTouchEvent end: action = " + action + ", x = " + ev.getX()
+                    + ", y = " + ev.getY() + ", mSwipeGestureType = " + mSwipeGestureType);
+        }
+
         return mSwipeGestureType != GESTURE_NONE;
     }
 
@@ -697,6 +763,13 @@ public class StackView extends AdapterViewAnimator {
 
             setupStackSlider(v, stackMode);
 
+            if (DBG_MOTION) {
+                Xlog.d(TAG, "beginGestureIfNeeded: deltaY = " + deltaY
+                        + ", mSwipeGestureType = " + mSwipeGestureType
+                        + ", swipeGestureType = " + swipeGestureType
+                        + ", stackMode = " + stackMode);
+            }
+
             // We only register this gesture if we've made it this far without a problem
             mSwipeGestureType = swipeGestureType;
             cancelHandleClick();
@@ -727,6 +800,11 @@ public class StackView extends AdapterViewAnimator {
         }
         mVelocityTracker.addMovement(ev);
 
+        if (DBG_MOTION) {
+            Xlog.d(TAG, "onTouchEvent: action = " + action + ",x = " + newX + ",y = "
+                    + newY + ",mSwipeGestureType = " + mSwipeGestureType);
+        }
+
         switch (action & MotionEvent.ACTION_MASK) {
             case MotionEvent.ACTION_MOVE: {
                 beginGestureIfNeeded(deltaY);
@@ -756,6 +834,8 @@ public class StackView extends AdapterViewAnimator {
                 break;
             }
             case MotionEvent.ACTION_CANCEL: {
+                /// M: [ALPS01833447] Up action need to do be done.
+                handlePointerUp(ev);
                 mActivePointerId = INVALID_POINTER;
                 mSwipeGestureType = GESTURE_NONE;
                 break;
@@ -861,7 +941,13 @@ public class StackView extends AdapterViewAnimator {
                 duration = Math.round(mStackSlider.getDurationForOffscreenPosition());
             }
 
-            StackSlider animationSlider = new StackSlider(mStackSlider);
+            /// M: [ALPS01833447] Since ObjectAnimator reference to the target object with
+            /// WeakReference, we should use member variable instead of local variable to avoid
+            /// target object is GC. Need to use a StackSlider array for each active view.
+            mAnimatedStackSlider[mAnimatedStackSliderIndex] = new StackSlider(mStackSlider);
+            StackSlider animationSlider = mAnimatedStackSlider[mAnimatedStackSliderIndex];
+            mAnimatedStackSliderIndex = mAnimatedStackSliderIndex >= NUM_ACTIVE_VIEWS - 1 ?
+                    0 : mAnimatedStackSliderIndex + 1;
             PropertyValuesHolder snapBackY = PropertyValuesHolder.ofFloat("YProgress", finalYProgress);
             PropertyValuesHolder snapBackX = PropertyValuesHolder.ofFloat("XProgress", 0.0f);
             ObjectAnimator pa = ObjectAnimator.ofPropertyValuesHolder(animationSlider,
@@ -879,7 +965,13 @@ public class StackView extends AdapterViewAnimator {
                 duration = Math.round(mStackSlider.getDurationForOffscreenPosition());
             }
 
-            StackSlider animationSlider = new StackSlider(mStackSlider);
+            /// M: [ALPS01833447] Since ObjectAnimator reference to the target object with
+            /// WeakReference, we should use member variable instead of local variable to avoid
+            /// target object is GC. Need to use a StackSlider array for each active view.
+            mAnimatedStackSlider[mAnimatedStackSliderIndex] = new StackSlider(mStackSlider);
+            StackSlider animationSlider = mAnimatedStackSlider[mAnimatedStackSliderIndex];
+            mAnimatedStackSliderIndex = mAnimatedStackSliderIndex >= NUM_ACTIVE_VIEWS - 1 ?
+                    0 : mAnimatedStackSliderIndex + 1;
             PropertyValuesHolder snapBackY =
                     PropertyValuesHolder.ofFloat("YProgress",finalYProgress);
             PropertyValuesHolder snapBackX = PropertyValuesHolder.ofFloat("XProgress", 0.0f);

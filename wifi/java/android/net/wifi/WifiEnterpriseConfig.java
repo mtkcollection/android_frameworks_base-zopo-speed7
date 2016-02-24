@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +43,8 @@ import java.util.Map;
  * and any associated credentials.
  */
 public class WifiEnterpriseConfig implements Parcelable {
+    private static final String TAG = "WifiEnterpriseConfig";
+    private static final boolean DBG = false;
 
     /** @hide */
     public static final String EMPTY_VALUE         = "NULL";
@@ -81,6 +88,13 @@ public class WifiEnterpriseConfig implements Parcelable {
 
     /** @hide */
     public static final String CA_CERT_PREFIX = KEYSTORE_URI + Credentials.CA_CERTIFICATE;
+    ///M: @{
+        /** @hide */
+    public static final String CA_CERT2_PREFIX = KEYSTORE_URI + Credentials.WAPI_SERVER_CERTIFICATE;
+    private static final String CLIENT_CERT2_PREFIX = KEYSTORE_URI + Credentials.WAPI_USER_CERTIFICATE;
+    /** @hide */
+    public static final String USER_PRIVATE_KEY2_PREFIX =  KEYSTORE_URI + Credentials.WAPI_USER_CERTIFICATE;
+    ///@}
     /** @hide */
     public static final String CLIENT_CERT_PREFIX = KEYSTORE_URI + Credentials.USER_CERTIFICATE;
     /** @hide */
@@ -89,10 +103,15 @@ public class WifiEnterpriseConfig implements Parcelable {
     public static final String CA_CERT_KEY         = "ca_cert";
     /** @hide */
     public static final String ENGINE_KEY          = "engine";
+
     /** @hide */
     public static final String ENGINE_ID_KEY       = "engine_id";
     /** @hide */
     public static final String PRIVATE_KEY_ID_KEY  = "key_id";
+
+    ///M: @{
+    private static final String CA_CERT2_KEY         = "ca_cert2";
+    ///@}
 
     private HashMap<String, String> mFields = new HashMap<String, String>();
     private X509Certificate mCaCert;
@@ -228,8 +247,20 @@ public class WifiEnterpriseConfig implements Parcelable {
         public static final int SIM     = 4;
         /** EAP-Authentication and Key Agreement */
         public static final int AKA     = 5;
+
+
+        /**
+            *EAP-FAST.
+            * @hide
+            * @internal
+            */
+        public static final int FAST     = 6;
+        ///@}
+
         /** @hide */
-        public static final String[] strings = { "PEAP", "TLS", "TTLS", "PWD", "SIM", "AKA" };
+        public static final String[] strings = {"PEAP", "TLS", "TTLS", "PWD",
+            "SIM", "AKA", "FAST" };
+
 
         /** Prevent initialization */
         private Eap() {}
@@ -279,6 +310,9 @@ public class WifiEnterpriseConfig implements Parcelable {
             case Eap.TTLS:
             case Eap.SIM:
             case Eap.AKA:
+            ///M: @{
+            case Eap.FAST:
+            ///@}
                 mFields.put(EAP_KEY, Eap.strings[eapMethod]);
                 mFields.put(OPP_KEY_CACHING, "1");
                 break;
@@ -645,4 +679,68 @@ public class WifiEnterpriseConfig implements Parcelable {
         }
         return sb.toString();
     }
+    ///M: add
+     /**
+       * For WAPI
+       * Set CA certificate 2  alias.
+       *
+       * <p> See the {@link android.security.KeyChain} for details on installing or choosing
+       * a certificate
+       * </p>
+       * @param alias identifies the certificate
+       * @hide
+       * @internal
+       */
+    public void setCaCertificateWapiAlias(String alias) {
+        setFieldValue(CA_CERT2_KEY, alias, CA_CERT2_PREFIX);
+    }
+
+      /**
+       * For WAPI
+       * Get CA certificate 2 alias
+       * @return alias to the CA certificate
+       * @hide
+       * @internal
+       */
+    public String getCaCertificateWapiAlias() {
+        return getFieldValue(CA_CERT2_KEY, CA_CERT2_PREFIX);
+    }
+
+
+      /**
+       * For WAPI
+       * Set Client certificate 2 alias.
+       *
+       * <p> See the {@link android.security.KeyChain} for details on installing or choosing
+       * a certificate
+       * </p>
+       * @param alias identifies the certificate
+       * @hide
+       * @internal
+       */
+      public void setClientCertificateWapiAlias(String alias) {
+
+          setFieldValue(CLIENT_CERT_KEY, alias, CLIENT_CERT2_PREFIX);
+          setFieldValue(PRIVATE_KEY_ID_KEY, alias, USER_PRIVATE_KEY2_PREFIX);
+          // Also, set engine parameters
+          if (TextUtils.isEmpty(alias)) {
+              mFields.put(ENGINE_KEY, ENGINE_DISABLE);
+              mFields.put(ENGINE_ID_KEY, EMPTY_VALUE);
+          } else {
+              mFields.put(ENGINE_KEY, ENGINE_ENABLE);
+              mFields.put(ENGINE_ID_KEY, convertToQuotedString(ENGINE_ID_KEYSTORE));
+          }
+      }
+
+      /**
+       * For WAPI
+       * Get client certificate 2 alias
+       * @return alias to the client certificate
+       * @hide
+       * @internal
+       */
+      public String getClientCertificateWapiAlias() {
+          return getFieldValue(CLIENT_CERT_KEY, CLIENT_CERT2_PREFIX);
+      }
+
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -202,6 +207,8 @@ final class BackStackState implements Parcelable {
 final class BackStackRecord extends FragmentTransaction implements
         FragmentManager.BackStackEntry, Runnable {
     static final String TAG = FragmentManagerImpl.TAG;
+    ///M:add a string for return
+    static final CharSequence mTmpTitle = "MTK";
 
     final FragmentManagerImpl mManager;
 
@@ -417,6 +424,15 @@ final class BackStackRecord extends FragmentTransaction implements
 
     public CharSequence getBreadCrumbTitle() {
         if (mBreadCrumbTitleRes != 0) {
+            /// M: mManager.mActivity will be null when window rotation. Refer to ALPS00439485.
+            if (null == mManager) {
+                Log.e(TAG, "(getBreadCrumbTitle)mManager is null");
+                return mTmpTitle;
+            } else if (null == mManager.mActivity) {
+                Log.e(TAG, "(getBreadCrumbTitle)mManager.mActivity is null");
+                return mTmpTitle;
+            }
+            /// M:@}
             return mManager.mActivity.getText(mBreadCrumbTitleRes);
         }
         return mBreadCrumbTitleText;
@@ -760,8 +776,10 @@ final class BackStackRecord extends FragmentTransaction implements
                 case OP_REPLACE: {
                     Fragment f = op.fragment;
                     if (mManager.mAdded != null) {
-                        for (int i = 0; i < mManager.mAdded.size(); i++) {
-                            Fragment old = mManager.mAdded.get(i);
+                        /// M: it may remove mManager.mAdded items in mManager.removeFragment()
+                        final ArrayList<Fragment> added = new ArrayList<Fragment>(mManager.mAdded);
+                        for (int i = 0; i < added.size(); i++) {
+                            Fragment old = added.get(i);
                             if (FragmentManagerImpl.DEBUG) {
                                 Log.v(TAG,
                                         "OP_REPLACE: adding=" + f + " old=" + old);

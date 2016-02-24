@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +52,9 @@ public class LocationProviderProxy implements LocationProviderInterface {
     private Object mLock = new Object();
 
     // cached values set by the location manager, synchronized on mLock
-    private ProviderProperties mProperties;
+    //MTK changed: pass CTS test when no NetworkLocation package is binded. see ALPS00433320
+    private ProviderProperties mProperties = new ProviderProperties(false, false, false, false, false, false, false, -1, -1);
+    //MTK changed end
     private boolean mEnabled = false;
     private ProviderRequest mRequest = null;
     private WorkSource mWorksource = new WorkSource();
@@ -75,6 +82,30 @@ public class LocationProviderProxy implements LocationProviderInterface {
                 defaultServicePackageNameResId, initialPackageNamesResId,
                 mNewServiceWork, handler);
     }
+
+
+    //MTK add to pass CTS test when no NetworkLocation package is binded. see ALPS00433320
+    public static LocationProviderProxy create(Context context, String name, String action,
+            int overlaySwitchResId, int defaultServicePackageNameResId,
+            int initialPackageNamesResId, Handler handler) {
+        LocationProviderProxy proxy = new LocationProviderProxy(context, name, action,
+                overlaySwitchResId, defaultServicePackageNameResId, initialPackageNamesResId,
+                handler);
+        return proxy;
+    }
+
+    public static void close(LocationProviderProxy proxy) {
+        if (proxy != null) {
+            proxy.unbind();
+        }
+    }
+
+    private void unbind() {
+        mServiceWatcher.stop();
+    }
+    //MTK add end
+
+
 
     private boolean bind () {
         return mServiceWatcher.start();

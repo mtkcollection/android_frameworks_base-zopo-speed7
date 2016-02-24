@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +33,12 @@ import android.util.Log;
 
 import java.util.ArrayList;
 
+/// M: Added for USB Develpment debug, more log for more debuging help @{
+import com.mediatek.xlog.SXlog;
+import com.mediatek.xlog.Xlog;
+import java.lang.Integer;
+/// M: @}
+
 class MtpPropertyGroup {
 
     private static final String TAG = "MtpPropertyGroup";
@@ -52,6 +63,8 @@ class MtpPropertyGroup {
     private final String mPackageName;
     private final String mVolumeName;
     private final Uri mUri;
+    /// M: Added Modification for ALPS00255822, bug from WHQL test
+    private String mPathHandelDepthQuery;
 
     // list of all properties in this group
     private final Property[]    mProperties;
@@ -64,6 +77,11 @@ class MtpPropertyGroup {
     private static final String ID_FORMAT_WHERE = ID_WHERE + " AND " + FORMAT_WHERE;
     private static final String PARENT_WHERE = Files.FileColumns.PARENT + "=?";
     private static final String PARENT_FORMAT_WHERE = PARENT_WHERE + " AND " + FORMAT_WHERE;
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    //private static final String DEPTH_DATA_WHERE = Files.FileColumns.DATA + "=?";
+    private static final String DEPTH_DATA_WHERE = Files.FileColumns.DATA;
+    private static final String ID_DEPTH_DATA_WHERE = ID_WHERE + " AND " + DEPTH_DATA_WHERE;
+    /// M: @}
     // constructs a property group for a list of properties
     public MtpPropertyGroup(MtpDatabase database, IContentProvider provider, String packageName,
             String volume, int[] properties) {
@@ -189,6 +207,9 @@ class MtpPropertyGroup {
                 break;
         }
 
+        /// M: Added Modification for ALPS00255822, bug from WHQL test
+        SXlog.d(TAG, "createProperty: code = 0x" + Integer.toHexString(code) + ", type = 0x" + Integer.toHexString(type));
+
         if (column != null) {
             columns.add(column);
             return new Property(code, type, columns.size() - 1);
@@ -294,7 +315,7 @@ class MtpPropertyGroup {
     }
 
     MtpPropertyList getPropertyList(int handle, int format, int depth) {
-        //Log.d(TAG, "getPropertyList handle: " + handle + " format: " + format + " depth: " + depth);
+        Log.d(TAG, "getPropertyList handle: " + Integer.toHexString(handle) + ", format: " + Integer.toHexString(format) + ", depth: " + Integer.toHexString(depth));
         if (depth > 1) {
             // we only support depth 0 and 1
             // depth 0: single object, depth 1: immediate children
@@ -309,12 +330,24 @@ class MtpPropertyGroup {
                 where = null;
                 whereArgs = null;
             } else {
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                if(handle == 0x00 && depth == 0xFFFFFFFF) {
+                    //select all object from root -> select all object
+                    SXlog.d(TAG, "getPropertyList handle: 0x" + Integer.toHexString(handle) + ", depth: 0x" + Integer.toHexString(depth) + ", select all object!!");
+                    where = null;
+                    whereArgs = null;
+                } else {
+                /// M: @}
                 whereArgs = new String[] { Integer.toString(handle) };
                 if (depth == 1) {
                     where = PARENT_WHERE;
-                } else {
+                } 
+                else {
                     where = ID_WHERE;
                 }
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                }
+                /// M: @}
             }
         } else {
             if (handle == 0xFFFFFFFF) {
@@ -322,12 +355,25 @@ class MtpPropertyGroup {
                 where = FORMAT_WHERE;
                 whereArgs = new String[] { Integer.toString(format) };
             } else {
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                if(handle == 0x00 && depth == 0xFFFFFFFF) {
+                    //equal to handle == 0xFFFFFFFF, MTP spec p.252, // select all objects with given format
+                    SXlog.d(TAG, "getPropertyList handle: 0x" + Integer.toHexString(handle) + ", depth: 0x" + Integer.toHexString(depth) + ", select all object with given format!!");
+                    /*change the handle for fix the next operation*/
+                    handle = 0xFFFFFFFF;
+                    where = FORMAT_WHERE;
+                    whereArgs = new String[] { Integer.toString(format) };
+                } else {
+                /// M: @}
                 whereArgs = new String[] { Integer.toString(handle), Integer.toString(format) };
                 if (depth == 1) {
                     where = PARENT_FORMAT_WHERE;
                 } else {
                     where = ID_FORMAT_WHERE;
                 }
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                }
+                /// M: @}
             }
         }
 
@@ -335,11 +381,24 @@ class MtpPropertyGroup {
         try {
             // don't query if not necessary
             if (depth > 0 || handle == 0xFFFFFFFF || mColumns.length > 1) {
+                /// M: Added Modification for ALPS00255822, bug from WHQL test
+                SXlog.d(TAG, "getPropertyList handle: 0x" + Integer.toHexString(handle) + ", depth: 0x" + Integer.toHexString(depth) + ", don't query if not necessary!!");
                 c = mProvider.query(mPackageName, mUri, mColumns, where, whereArgs, null, null);
                 if (c == null) {
                     return new MtpPropertyList(0, MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
                 }
             }
+            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            // Special case of depth = -1 with handle id
+            // don't query if not necessary
+            else if (depth < 0 && handle > 0) {
+                Xlog.d(TAG, "getPropertyList handle: 0x" + Integer.toHexString(handle) + ", depth: 0x" + Integer.toHexString(depth) + ", depth < 0 && handle > 0!!");
+                c = mProvider.query(mPackageName, mUri, mColumns, where, whereArgs, null, null);
+                if (c == null) {
+                    return new MtpPropertyList(0, MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
+                }
+            }
+            /// M: @}
 
             int count = (c == null ? 1 : c.getCount());
             MtpPropertyList result = new MtpPropertyList(count * mProperties.length,
@@ -396,6 +455,10 @@ class MtpPropertyGroup {
                         case MtpConstants.PROPERTY_DATE_MODIFIED:
                         case MtpConstants.PROPERTY_DATE_ADDED:
                             // convert from seconds to DateTime
+                            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                            int seconds = c.getInt(column);
+ 			    Log.w(TAG, "getPropertyList handle: 0x" + Integer.toHexString(handle) + ", c.getInt(column) = " + seconds);
+                            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
                             result.append(handle, propertyCode, format_date_time(c.getInt(column)));
                             break;
                         case MtpConstants.PROPERTY_ORIGINAL_RELEASE_DATE:
@@ -466,6 +529,43 @@ class MtpPropertyGroup {
         }
         // impossible to get here, so no return statement
     }
+
+    /// M: Added Modification for ALPS00255822, bug from WHQL test to get the path. @{
+    private boolean getFilePathWithHandle(int handle) {
+        SXlog.d(TAG, "getFilePathWithHandle handle = " + Integer.toHexString(handle));
+        final String[] PATH_SIZE_FORMAT_PROJECTION = new String[] {
+                Files.FileColumns._ID, // 0
+                Files.FileColumns.DATA, // 1
+                Files.FileColumns.SIZE, // 2
+                Files.FileColumns.FORMAT, // 3
+        };
+
+        Cursor c = null;
+        try {
+            c = mProvider.query(mPackageName, mUri, PATH_SIZE_FORMAT_PROJECTION,
+                            ID_WHERE, new String[] {  Integer.toString(handle) }, null, null);
+            if (c != null && c.moveToNext()) {
+                mPathHandelDepthQuery = c.getString(1);
+
+                SXlog.d(TAG, "getFilePathWithHandle mPathHandelDepthQuery = " + mPathHandelDepthQuery);
+                SXlog.d(TAG, "getFilePathWithHandle mPathHandelDepthQuery.length = " + mPathHandelDepthQuery.length());
+
+                return true;
+
+            } else {
+                return false;
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in getObjectFilePath", e);
+            return false;
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+            return false;
+        }
+    }
+    /// M: @}
 
     private native String format_date_time(long seconds);
 }

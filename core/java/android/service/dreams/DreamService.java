@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /**
  * Copyright (C) 2012 The Android Open Source Project
  *
@@ -912,6 +917,17 @@ public class DreamService extends Service implements Window.Callback {
             // the following will print a log message if it finds any other leaked windows
             WindowManagerGlobal.getInstance().closeAll(mWindowToken,
                     this.getClass().getName(), "Dream");
+            /// M: ALPS00446494 Daydream BeanFlinger show once again after press back key to exit @{
+            if (mSandman != null) {
+                try {
+                    mSandman.removeToken(mWindowToken);
+                } catch (RemoteException ex) {
+                    // system server died
+                }
+            } else {
+                Slog.w(TAG, "No dream manager found");
+            }
+            /// @}
             mWindowToken = null;
             mCanDoze = false;
         }

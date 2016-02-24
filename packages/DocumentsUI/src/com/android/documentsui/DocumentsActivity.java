@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,6 +174,9 @@ public class DocumentsActivity extends Activity {
         mToolbar = (Toolbar) findViewById(R.id.toolbar);
         mToolbar.setTitleTextAppearance(context,
                 android.R.style.TextAppearance_DeviceDefault_Widget_ActionBar_Title);
+        /// M: add log to print intent info
+        Intent intent = getIntent();
+        Log.d(TAG, "onCreate: intent = " + intent + ", extra = " + (intent != null ? intent.getExtras() : null));
 
         mToolbarStack = (Spinner) findViewById(R.id.stack);
         mToolbarStack.setOnItemSelectedListener(mStackListener);
@@ -209,6 +217,8 @@ public class DocumentsActivity extends Activity {
         }
 
         if (!mState.restored) {
+            /// M: If show ad ACTION_MANAGE, hide default title to avoid show to user
+            setTitle(null);
             if (mState.action == ACTION_MANAGE) {
                 final Uri rootUri = getIntent().getData();
                 new RestoreRootTask(rootUri).executeOnExecutor(getCurrentExecutor());
@@ -218,8 +228,38 @@ public class DocumentsActivity extends Activity {
         } else {
             onCurrentDirectoryChanged(ANIM_NONE);
         }
+        /// M: update action bar when roots are reloaded @{
+        mRoots.addCallback(mRootUpdatedListener);
     }
 
+    @Override
+    protected void onDestroy() {
+        mRoots.removeCallBack(mRootUpdatedListener);
+        super.onDestroy();
+    }
+
+    private RootsCache.RootUpdatedListener mRootUpdatedListener = new RootsCallback();
+
+    private class RootsCallback implements RootsCache.RootUpdatedListener {
+        @Override
+        public void callback() {
+            final RootInfo root = mState.stack.root;
+            if (root != null) {
+                final RootInfo newRoot = mRoots.getRootOneshot(root.authority, root.rootId);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Log.w(TAG, "RootsCallback root: " + root + ", newRoot: " + newRoot);
+                        if (newRoot != null) {
+                            mState.stack.root = newRoot;
+                        }
+                        updateActionBar();
+                    }
+                });
+            }
+        }
+    }
+     /// @}
     private void buildDefaultState() {
         mState = new State();
 
@@ -293,6 +333,10 @@ public class DocumentsActivity extends Activity {
     private class RestoreStackTask extends AsyncTask<Void, Void, Void> {
         private volatile boolean mRestoredStack;
         private volatile boolean mExternal;
+        /// M: modify stack on UI thread @{
+        private DocumentStack mStack = new DocumentStack();
+        private boolean mShouldReset = false;
+        /// @}
 
         @Override
         protected Void doInBackground(Void... params) {
@@ -305,33 +349,43 @@ public class DocumentsActivity extends Activity {
                     mExternal = cursor.getInt(cursor.getColumnIndex(ResumeColumns.EXTERNAL)) != 0;
                     final byte[] rawStack = cursor.getBlob(
                             cursor.getColumnIndex(ResumeColumns.STACK));
-                    DurableUtils.readFromArray(rawStack, mState.stack);
+                    /// M: modify stack on UI thread @{
+                    DurableUtils.readFromArray(rawStack, mStack);
                     mRestoredStack = true;
+                    mShouldReset = true;
+                    /// @}
                 }
             } catch (IOException e) {
                 Log.w(TAG, "Failed to resume: " + e);
             } finally {
                 IoUtils.closeQuietly(cursor);
             }
-
+            /// M: modify stack on UI thread @{
             if (mRestoredStack) {
                 // Update the restored stack to ensure we have freshest data
                 final Collection<RootInfo> matchingRoots = mRoots.getMatchingRootsBlocking(mState);
                 try {
-                    mState.stack.updateRoot(matchingRoots);
-                    mState.stack.updateDocuments(getContentResolver());
+                    mStack.updateRoot(matchingRoots);
+                    mStack.updateDocuments(getContentResolver());
                 } catch (FileNotFoundException e) {
                     Log.w(TAG, "Failed to restore stack: " + e);
-                    mState.stack.reset();
+                    mStack.reset();
                     mRestoredStack = false;
                 }
             }
-
+            /// @}
             return null;
         }
 
         @Override
         protected void onPostExecute(Void result) {
+            /// M: modify stack on UI thread @{
+            if (mShouldReset) {
+                mState.stack.reset();
+                mState.stack = mStack;
+                mShouldReset = false;
+            }
+            /// @}
             if (isDestroyed()) return;
             mState.restored = true;
 
@@ -386,7 +440,13 @@ public class DocumentsActivity extends Activity {
         if (mDrawerToggle != null) {
             mDrawerToggle.syncState();
         }
-        updateActionBar();
+        /// M: Google update activity title to actionbar in L in this callback, we need update
+        /// actionbar again to correct it, if show in ACTION_MANAGE we need skip when
+        /// not load out current root(get current as recent).
+        RootInfo root = getCurrentRoot();
+        if (!(mState.action == ACTION_MANAGE && root.isRecents())) {
+            updateActionBar();
+        }
     }
 
     public void setRootsDrawerOpen(boolean open) {
@@ -564,6 +624,13 @@ public class DocumentsActivity extends Activity {
             mSearchView.clearFocus();
             mSearchView.setQuery(mState.currentSearch, false);
         } else {
+            /// M: refresh action bar(mToolbar/mToolbarStack) when search view will be close. @{
+            if (mSearchExpanded) {
+                mSearchExpanded = false;
+                updateActionBar();
+            }
+            /// @}
+
             mIgnoreNextClose = true;
             mSearchView.setIconified(true);
             mSearchView.clearFocus();
@@ -589,7 +656,13 @@ public class DocumentsActivity extends Activity {
             }
 
             if (mState.action == ACTION_CREATE) {
-                SaveFragment.get(fm).setSaveEnabled(cwd != null && cwd.isCreateSupported());
+                /// M: add to avoid seldom NullPointerException
+                SaveFragment saveFragment = SaveFragment.get(fm);
+                if (null != saveFragment) {
+                    saveFragment.setSaveEnabled(cwd != null && cwd.isCreateSupported());
+                } else {
+                    Log.e(TAG, "onPrepareOptionsMenu, SaveFragment is null");
+                }
             }
         } else {
             createDir.setVisible(false);
@@ -606,7 +679,8 @@ public class DocumentsActivity extends Activity {
         fileSize.setTitle(LocalPreferences.getDisplayFileSize(this)
                 ? R.string.menu_file_size_hide : R.string.menu_file_size_show);
 
-        advanced.setVisible(mState.action != ACTION_MANAGE);
+        /// M: If in force show advance mode, need hide advance menu
+        advanced.setVisible(mState.action != ACTION_MANAGE && !mState.forceAdvanced);
         fileSize.setVisible(fileSizeVisible);
 
         return true;
@@ -679,7 +753,13 @@ public class DocumentsActivity extends Activity {
      */
     private void setUserSortOrder(int sortOrder) {
         mState.userSortOrder = sortOrder;
-        DirectoryFragment.get(getFragmentManager()).onUserSortOrderChanged();
+        /// M: Check the fragment get from FragmentManager whether is null.
+        DirectoryFragment directory = DirectoryFragment.get(getFragmentManager());
+        if (directory != null) {
+            directory.onUserSortOrderChanged();
+        } else {
+            Log.w(TAG, "setUserSortOrder with null DirectoryFragment in activity:" + this.hashCode());
+        }
     }
 
     /**
@@ -687,7 +767,13 @@ public class DocumentsActivity extends Activity {
      */
     private void setUserMode(int mode) {
         mState.userMode = mode;
-        DirectoryFragment.get(getFragmentManager()).onUserModeChanged();
+        /// M: Check the fragment get from FragmentManager whether is null.
+        DirectoryFragment directory = DirectoryFragment.get(getFragmentManager());
+        if (directory != null) {
+            directory.onUserModeChanged();
+        } else {
+            Log.w(TAG, "setUserMode with null DirectoryFragment in activity:" + this.hashCode());
+        }
     }
 
     public void setPending(boolean pending) {
@@ -699,7 +785,8 @@ public class DocumentsActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (!mState.stackTouched) {
+        /// M: When search view expand, call super onBackPressed to close search view
+        if (!mState.stackTouched || mSearchExpanded) {
             super.onBackPressed();
             return;
         }
@@ -725,6 +812,8 @@ public class DocumentsActivity extends Activity {
     @Override
     protected void onRestoreInstanceState(Bundle state) {
         super.onRestoreInstanceState(state);
+        /// M: move update actionbar in onPostCreate
+        //updateActionBar();
     }
 
     private BaseAdapter mStackAdapter = new BaseAdapter() {
@@ -852,11 +941,17 @@ public class DocumentsActivity extends Activity {
             } else {
                 DirectoryFragment.showRecentsOpen(fm, anim);
 
-                // Start recents in grid when requesting visual things
-                final boolean visualMimes = MimePredicate.mimeMatches(
-                        MimePredicate.VISUAL_MIMES, mState.acceptMimes);
-                mState.userMode = visualMimes ? MODE_GRID : MODE_LIST;
-                mState.derivedMode = mState.userMode;
+                /// M: When state has stored, we need use store state to init fragment(this may happen when activity
+                /// re-create, in this case we need use the userMode store in saveInstance, and only when activity
+                /// first created we need follow the below design. {@
+                if (!mState.restored) {
+                    // Start recents in grid when requesting visual things
+                    final boolean visualMimes = MimePredicate.mimeMatches(
+                            MimePredicate.VISUAL_MIMES, mState.acceptMimes);
+                    mState.userMode = visualMimes ? MODE_GRID : MODE_LIST;
+                    mState.derivedMode = mState.userMode;
+                }
+                /// @}
             }
         } else {
             if (mState.currentSearch != null) {
@@ -950,7 +1045,17 @@ public class DocumentsActivity extends Activity {
             if (result != null) {
                 mState.stack.push(result);
                 mState.stackTouched = true;
+                /// M: if activity is destoryed, skip it @{
+                if (isDestroyed()) {
+                    Log.d(TAG, "PickRootTask actiivty is already destoryed");
+                    return;
+                }
+                /// @}
                 onCurrentDirectoryChanged(ANIM_SIDE);
+            } else {
+                /// M: Get root information fail, change mState.restored statue to default value(false), so that
+                /// when activity re-create, documentui can force loading root again(old logic will show recent).
+                mState.restored = false;
             }
         }
     }
@@ -965,7 +1070,7 @@ public class DocumentsActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        Log.d(TAG, "onActivityResult() code=" + resultCode);
+        Log.d(TAG, "onActivityResult() resultCode=" + resultCode + ", data=" + data);
 
         // Only relay back results when not canceled; otherwise stick around to
         // let the user pick another app/backend.
@@ -1014,7 +1119,8 @@ public class DocumentsActivity extends Activity {
                 try {
                     startActivity(view);
                 } catch (ActivityNotFoundException ex2) {
-                    Toast.makeText(this, R.string.toast_no_application, Toast.LENGTH_SHORT).show();
+                    /// M: Show toast with enhance way.
+                    showToast(R.string.toast_no_application);
                 }
             }
         }
@@ -1067,8 +1173,6 @@ public class DocumentsActivity extends Activity {
     }
 
     private void onFinished(Uri... uris) {
-        Log.d(TAG, "onFinished() " + Arrays.toString(uris));
-
         final Intent intent = new Intent();
         if (uris.length == 1) {
             intent.setData(uris[0]);
@@ -1096,6 +1200,7 @@ public class DocumentsActivity extends Activity {
 
         setResult(Activity.RESULT_OK, intent);
         finish();
+        Log.d(TAG, "onFinished: uri=" + Arrays.toString(uris) + ", data=" + intent);
     }
 
     private class CreateFinishTask extends AsyncTask<Void, Void, Uri> {
@@ -1142,8 +1247,8 @@ public class DocumentsActivity extends Activity {
             if (result != null) {
                 onFinished(result);
             } else {
-                Toast.makeText(DocumentsActivity.this, R.string.save_error, Toast.LENGTH_SHORT)
-                        .show();
+                /// M: Show toast with enhance way.
+                showToast(R.string.save_error);
             }
 
             setPending(false);
@@ -1209,6 +1314,9 @@ public class DocumentsActivity extends Activity {
         public boolean showAdvanced = false;
         public boolean stackTouched = false;
         public boolean restored = false;
+
+        /// M: is activity in background, use it to decide whether need refresh UI when resume from background.
+        public boolean background = false;
 
         /** Current user navigation stack; empty implies recents. */
         public DocumentStack stack = new DocumentStack();
@@ -1295,4 +1403,19 @@ public class DocumentsActivity extends Activity {
     public static DocumentsActivity get(Fragment fragment) {
         return (DocumentsActivity) fragment.getActivity();
     }
+
+    /// M: use a class member variable to show toast to avoid show toast too many times. {@
+    private Toast mToast;
+    /**
+     * M: Show toast with given string.
+     * @param resId res id to get string.
+     */
+    public void showToast(int resId) {
+        if (mToast == null) {
+            mToast = Toast.makeText(DocumentsActivity.this, resId, Toast.LENGTH_SHORT);
+        }
+        mToast.setText(resId);
+        mToast.show();
+    }
+    /// @}
 }

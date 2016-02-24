@@ -17,6 +17,7 @@
 package android.net.wifi.p2p;
 
 import android.os.Messenger;
+import android.net.wifi.p2p.fastconnect.WifiP2pFastConnectInfo;
 
 /**
  * Interface that WifiP2pService implements
@@ -28,5 +29,12 @@ interface IWifiP2pManager
     Messenger getMessenger();
     Messenger getP2pStateMachineMessenger();
     void setMiracastMode(int mode);
+    ///M: Add by MTK  @{
+    void setMiracastModeEx(int mode, int freq);
+    WifiP2pFastConnectInfo fastConnectAsGo(in WifiP2pFastConnectInfo info);
+    String getMacAddress();
+    String getPeerIpAddress(in String peerMacAddress);
+    byte[] getP2pHandoverSelectToken();
+    ///@}
 }
 

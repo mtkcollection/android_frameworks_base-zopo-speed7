@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +57,7 @@ import android.os.OperationCanceledException;
 import android.os.Parcelable;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
+import android.provider.MediaStore;
 import android.text.format.DateUtils;
 import android.text.format.Formatter;
 import android.text.format.Time;
@@ -83,8 +89,16 @@ import com.android.documentsui.model.DocumentInfo;
 import com.android.documentsui.model.RootInfo;
 import com.google.android.collect.Lists;
 
+import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.List;
+
+/// M: Add to support ct with plugin
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.documentsui.IDocumentsUIExtension;
+/// M: Add to support drm
+import com.mediatek.drm.OmaDrmStore;
+import com.mediatek.drm.OmaDrmUtils;
 
 /**
  * Display the documents inside a single directory.
@@ -128,6 +142,12 @@ public class DirectoryFragment extends Fragment {
     private static final String EXTRA_IGNORE_STATE = "ignoreState";
 
     private final int mLoaderId = 42;
+
+    /// M: add a loading view to notify user we are loading item background.
+    private View mLoadingView;
+    /// M: restore action mode @{
+    private ActionMode mActionMode;
+    /// @}
 
     public static void showNormal(FragmentManager fm, RootInfo root, DocumentInfo doc, int anim) {
         show(fm, TYPE_NORMAL, root, doc, null, anim);
@@ -191,6 +211,12 @@ public class DirectoryFragment extends Fragment {
         final View view = inflater.inflate(R.layout.fragment_directory, container, false);
 
         mEmptyView = view.findViewById(android.R.id.empty);
+
+        /// M: add a loading view to notify user we are loading item background. @{
+        mLoadingView = view.findViewById(R.id.loading);
+        TextView loadingTextView = (TextView) mLoadingView.findViewById(R.id.loading_text);
+        loadingTextView.setText(com.mediatek.internal.R.string.contact_widget_loading);
+        /// @}
 
         mListView = (ListView) view.findViewById(R.id.list);
         mListView.setOnItemClickListener(mItemListener);
@@ -313,6 +339,11 @@ public class DirectoryFragment extends Fragment {
                 // Restore any previous instance state
                 final SparseArray<Parcelable> container = state.dirState.remove(mStateKey);
                 if (container != null && !getArguments().getBoolean(EXTRA_IGNORE_STATE, false)) {
+                    /// M: restore action mode @{
+                    if (mActionMode != null) {
+                        mActionMode.finish();
+                    }
+                    /// @}
                     getView().restoreHierarchyState(container);
                 } else if (mLastSortOrder != state.derivedSortOrder) {
                     mListView.smoothScrollToPosition(0);
@@ -348,12 +379,28 @@ public class DirectoryFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        /// M: When activity resume from background, invalidate view to refresh UI. {@
+        final State state = getDisplayState(this);
+        if (state.background) {
+            Log.v(TAG, "DirectoryFragment resume from background invalidate to refresh UI");
+            mCurrentView.invalidateViews();
+        }
+        state.background = false;
+        /// @}
         updateDisplayState();
     }
 
     public void onDisplayStateChanged() {
         updateDisplayState();
     }
+
+    /// M: store activity go to background. {@
+    @Override
+    public void onPause() {
+        super.onPause();
+        getDisplayState(this).background = true;
+    }
+    /// @}
 
     public void onUserSortOrderChanged() {
         // Sort order change always triggers reload; we'll trigger state change
@@ -366,7 +413,19 @@ public class DirectoryFragment extends Fragment {
         final State state = getDisplayState(this);
 
         final RootInfo root = getArguments().getParcelable(EXTRA_ROOT);
-        final DocumentInfo doc = getArguments().getParcelable(EXTRA_DOC);
+        DocumentInfo doc = getArguments().getParcelable(EXTRA_DOC);
+
+        /// M: query document info when in search mode. {@
+        if (mType == DirectoryFragment.TYPE_SEARCH) {
+            final Uri docUri = DocumentsContract.buildDocumentUri(
+                    root.authority, root.documentId);
+            try {
+                doc = DocumentInfo.fromUri(resolver, docUri);
+            } catch (FileNotFoundException e) {
+                Log.w(TAG, "Failed to query", e);
+            }
+        }
+        /// @}
 
         if (root != null && doc != null) {
             final Uri stateUri = RecentsProvider.buildState(
@@ -450,6 +509,9 @@ public class DirectoryFragment extends Fragment {
     private MultiChoiceModeListener mMultiListener = new MultiChoiceModeListener() {
         @Override
         public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+            /// M: restore action mode @{
+            mActionMode = mode;
+            /// @}
             mode.getMenuInflater().inflate(R.menu.mode_directory, menu);
             mode.setTitle(getResources()
                     .getString(R.string.mode_selected_count, mCurrentView.getCheckedItemCount()));
@@ -469,6 +531,28 @@ public class DirectoryFragment extends Fragment {
             share.setVisible(manageMode);
             delete.setVisible(manageMode);
 
+            /// M: update mode title to show right select item count when activity re-create.
+            mode.setTitle(getResources().getString(R.string.mode_selected_count, mCurrentView.getCheckedItemCount()));
+            /// M: When select DRM file has been deleted, disable share menu.
+            final SparseBooleanArray checked = mCurrentView.getCheckedItemPositions();
+            final int size = checked.size();
+            boolean enabled = true;
+            for (int i = 0; i < size; i++) {
+                if (checked.valueAt(i)) {
+                    final Cursor cursor = mAdapter.getItem(checked.keyAt(i));
+                    if (cursor == null) {
+                        break;
+                    }
+                    final boolean isDrm = getCursorInt(cursor, MediaStore.MediaColumns.IS_DRM) > 0;
+                    final int drmMethod = getCursorInt(cursor, MediaStore.MediaColumns.DRM_METHOD);
+                    if (isDrm && drmMethod < 0) {
+                        enabled = false;
+                        Log.d(TAG, "The select drm file has been deleted, disable share menu");
+                        break;
+                    }
+                }
+            }
+            share.setEnabled(enabled);
             return true;
         }
 
@@ -477,15 +561,31 @@ public class DirectoryFragment extends Fragment {
             final SparseBooleanArray checked = mCurrentView.getCheckedItemPositions();
             final ArrayList<DocumentInfo> docs = Lists.newArrayList();
             final int size = checked.size();
+            final int id = item.getItemId();
             for (int i = 0; i < size; i++) {
                 if (checked.valueAt(i)) {
                     final Cursor cursor = mAdapter.getItem(checked.keyAt(i));
+                    /// M: if position large than cursor count, getItem will return null, we need skip this wrong item.
+                    if (cursor == null) {
+                        Log.w(TAG, "onActionItemClicked: getItem with wrong position " + checked.keyAt(i)
+                                + " large than cursor count " + mAdapter.mCursorCount);
+                        continue;
+                    }
                     final DocumentInfo doc = DocumentInfo.fromDirectoryCursor(cursor);
+                    /// M: add to support drm, only METHOD_SD type drm can be forwarded, so if user choose other type
+                    /// drm file to shared, we need make a toast to notify user. {@
+                    if ((id == R.id.menu_share) && doc.isDrm
+                            && (doc.drmMethod >= 0 && doc.drmMethod != OmaDrmStore.DrmMethod.METHOD_SD)) {
+                        showToast(com.mediatek.internal.R.string.drm_forwardforbidden_message);
+                        Log.d(TAG, "Choose drm file '" + doc.displayName + "' is " + doc.drmMethod + " cann't shared!");
+                        return false;
+                    }
+                    /// @{
                     docs.add(doc);
                 }
             }
 
-            final int id = item.getItemId();
+
             if (id == R.id.menu_open) {
                 DocumentsActivity.get(DirectoryFragment.this).onDocumentsPicked(docs);
                 mode.finish();
@@ -497,6 +597,10 @@ public class DirectoryFragment extends Fragment {
                 return true;
 
             } else if (id == R.id.menu_delete) {
+                /// M: remove state @{
+                final State state = getDisplayState(DirectoryFragment.this);
+                state.dirState.remove(mStateKey);
+                /// @}
                 onDeleteDocuments(docs);
                 mode.finish();
                 return true;
@@ -508,6 +612,9 @@ public class DirectoryFragment extends Fragment {
 
         @Override
         public void onDestroyActionMode(ActionMode mode) {
+            /// M: restore action mode @{
+            mActionMode = null;
+            /// @}
             // ignored
         }
 
@@ -534,6 +641,8 @@ public class DirectoryFragment extends Fragment {
 
             mode.setTitle(getResources()
                     .getString(R.string.mode_selected_count, mCurrentView.getCheckedItemCount()));
+            /// M: Refresh action mode because some select file can not be shared.
+            mode.invalidate();
         }
     };
 
@@ -589,6 +698,11 @@ public class DirectoryFragment extends Fragment {
         final Context context = getActivity();
         final ContentResolver resolver = context.getContentResolver();
 
+        /// M: Delete downloading item need finish current activity on CT load
+        final RootInfo root = getArguments().getParcelable(EXTRA_ROOT);
+        final boolean isDownload = root.isDownloads();
+        boolean hasDownloadingItem = false;
+
         boolean hadTrouble = false;
         for (DocumentInfo doc : docs) {
             if (!doc.isDeleteSupported()) {
@@ -596,6 +710,17 @@ public class DirectoryFragment extends Fragment {
                 hadTrouble = true;
                 continue;
             }
+
+            /// M: check whether has downloading item with plugin. @{
+            if (isDownload && !hasDownloadingItem) {
+                /// M: add for ct feature, quit after delete downloading item
+                IDocumentsUIExtension extension = (IDocumentsUIExtension) MPlugin.createInstance(
+                        IDocumentsUIExtension.class.getName(), context);
+                if (extension != null) {
+                    hasDownloadingItem = extension.checkIsDownloadingItem(doc.documentId);
+                }
+            }
+            /// @}
 
             ContentProviderClient client = null;
             try {
@@ -611,7 +736,13 @@ public class DirectoryFragment extends Fragment {
         }
 
         if (hadTrouble) {
-            Toast.makeText(context, R.string.toast_failed_delete, Toast.LENGTH_SHORT).show();
+            /// M: Show toast with enhance way.
+            showToast(R.string.toast_failed_delete);
+        }
+
+        /// M: Delete downloading item need finish current activity on CT load
+        if (isDownload && hasDownloadingItem) {
+            getActivity().finish();
         }
     }
 
@@ -701,6 +832,9 @@ public class DirectoryFragment extends Fragment {
         public void swapResult(DirectoryResult result) {
             mCursor = result != null ? result.cursor : null;
             mCursorCount = mCursor != null ? mCursor.getCount() : 0;
+
+            /// M: When finish loading, disable loading view.
+            mLoadingView.setVisibility(View.GONE);
 
             mFooters.clear();
 
@@ -793,6 +927,37 @@ public class DirectoryFragment extends Fragment {
             final TextView date = (TextView) convertView.findViewById(R.id.date);
             final TextView size = (TextView) convertView.findViewById(R.id.size);
 
+            /// M: add to support drm, show drm lock refer to drm right except fl drm file. we don't show drm lock icon
+            /// with drm mothod is invilid(-1), this may happen when drm file has been delete and download want to show
+            /// them to users. {@
+            final ImageView iconDrm = (ImageView) convertView.findViewById(R.id.icon_drm);
+            boolean isDrm = getCursorInt(cursor, MediaStore.MediaColumns.IS_DRM) > 0;
+            int drmMethod = getCursorInt(cursor, MediaStore.MediaColumns.DRM_METHOD);
+            boolean showDrmThumbnail = true;
+            if (DocumentsFeatureOption.IS_SUPPORT_DRM && isDrm
+                    && (drmMethod > 0 && drmMethod != OmaDrmStore.DrmMethod.METHOD_FL)) {
+                int actionId = OmaDrmUtils.getMediaActionType(docMimeType);
+                String data = getCursorString(cursor, MediaStore.MediaColumns.DATA);
+                /// Only data is not null can get drm real right status.
+                int right = OmaDrmStore.RightsStatus.RIGHTS_INVALID;
+                if (data != null) {
+                    right = DocumentsApplication.getDrmClient(context).checkRightsStatus(data,
+                            actionId);
+                }
+                /// Only valid right need show open lock icon and thumbnail.
+                int lockResId = com.mediatek.internal.R.drawable.drm_red_lock;
+                showDrmThumbnail = false;
+                if (right == OmaDrmStore.RightsStatus.RIGHTS_VALID) {
+                    lockResId = com.mediatek.internal.R.drawable.drm_green_lock;
+                    showDrmThumbnail = true;
+                }
+                iconDrm.setVisibility(View.VISIBLE);
+                iconDrm.setImageResource(lockResId);
+            } else {
+                iconDrm.setVisibility(View.GONE);
+            }
+            /// @}
+
             final ThumbnailAsyncTask oldTask = (ThumbnailAsyncTask) iconThumb.getTag();
             if (oldTask != null) {
                 oldTask.preempt();
@@ -805,7 +970,9 @@ public class DirectoryFragment extends Fragment {
             final boolean supportsThumbnail = (docFlags & Document.FLAG_SUPPORTS_THUMBNAIL) != 0;
             final boolean allowThumbnail = (state.derivedMode == MODE_GRID)
                     || MimePredicate.mimeMatches(MimePredicate.VISUAL_MIMES, docMimeType);
-            final boolean showThumbnail = supportsThumbnail && allowThumbnail && !mSvelteRecents;
+            /// M: Control drm thumbnail, only valid right need show it.
+            final boolean showThumbnail = supportsThumbnail && allowThumbnail && !mSvelteRecents
+                    && showDrmThumbnail;
 
             final boolean enabled = isDocumentEnabled(docMimeType, docFlags);
             final float iconAlpha = (state.derivedMode == MODE_LIST && !enabled) ? 0.5f : 1f;
@@ -1017,7 +1184,7 @@ public class DirectoryFragment extends Fragment {
         @Override
         protected Bitmap doInBackground(Uri... params) {
             if (isCancelled()) return null;
-
+            Log.d(TAG, "Loading thumbnail for " + mUri);
             final Context context = mIconThumb.getContext();
             final ContentResolver resolver = context.getContentResolver();
 
@@ -1129,4 +1296,15 @@ public class DirectoryFragment extends Fragment {
 
         return MimePredicate.mimeMatches(state.acceptMimes, docMimeType);
     }
+
+    /// M:show toast with enhance way. {@
+    /**
+     * M: Show toast with given string.
+     * @param resId res id to get string.
+     */
+    private void showToast(int resId) {
+        ((DocumentsActivity) getActivity()).showToast(resId);
+    }
+    /// @}
+
 }

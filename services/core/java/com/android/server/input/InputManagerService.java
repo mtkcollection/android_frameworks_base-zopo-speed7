@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,6 +158,9 @@ public class InputManagerService extends IInputManager.Stub
     IInputFilter mInputFilter; // guarded by mInputFilterLock
     InputFilterHost mInputFilterHost; // guarded by mInputFilterLock
 
+    ///M:[ALPS01762006]Delay the keyboard change notification until NotificationBar is ready
+    ArrayList<Message> mPendingMessages = new ArrayList<Message>();
+
     private static native long nativeInit(InputManagerService service,
             Context context, MessageQueue messageQueue);
     private static native void nativeStart(long ptr);
@@ -179,12 +187,16 @@ public class InputManagerService extends IInputManager.Stub
             int policyFlags);
     private static native void nativeSetInputWindows(long ptr, InputWindowHandle[] windowHandles);
     private static native void nativeSetInputDispatchMode(long ptr, boolean enabled, boolean frozen);
+/// M:[SmartBook] Pass SmartBook plug status
+    private static native void nativeSetSmartBookPlugIn(long ptr, boolean plugin);
     private static native void nativeSetSystemUiVisibility(long ptr, int visibility);
     private static native void nativeSetFocusedApplication(long ptr,
             InputApplicationHandle application);
     private static native boolean nativeTransferTouchFocus(long ptr,
             InputChannel fromChannel, InputChannel toChannel);
     private static native void nativeSetPointerSpeed(long ptr, int speed);
+    /// M:[SmartBook] Primary key control
+    private static native void nativeSetPointerPrimaryKey(long ptr, boolean changePrimaryKey);
     private static native void nativeSetShowTouches(long ptr, boolean enabled);
     private static native void nativeSetInteractive(long ptr, boolean interactive);
     private static native void nativeReloadCalibration(long ptr);
@@ -288,17 +300,23 @@ public class InputManagerService extends IInputManager.Stub
 
         registerPointerSpeedSettingObserver();
         registerShowTouchesSettingObserver();
+        /// M:[SmartBook] Primary key control
+        registerPointerPrimaryKeySettingObserver();
 
         mContext.registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 updatePointerSpeedFromSettings();
                 updateShowTouchesFromSettings();
+                /// M:[SmartBook] Primary key control
+                updatePointerPrimaryKeyFromSettings();
             }
         }, new IntentFilter(Intent.ACTION_USER_SWITCHED), null, mHandler);
 
         updatePointerSpeedFromSettings();
         updateShowTouchesFromSettings();
+        /// M:[SmartBook] Primary key control
+        updatePointerPrimaryKeyFromSettings();
     }
 
     // TODO(BT) Pass in paramter for bluetooth system
@@ -336,6 +354,18 @@ public class InputManagerService extends IInputManager.Stub
         if (mWiredAccessoryCallbacks != null) {
             mWiredAccessoryCallbacks.systemReady();
         }
+
+        ///M:[ALPS01762006]Delay the keyboard change notification until NotificationBar is ready @{
+        synchronized (mInputDevicesLock) {
+            if (!mPendingMessages.isEmpty()) {
+                Slog.d(TAG, "Input Manager has " + mPendingMessages.size() + " pending messages");
+                for (int i = 0 ; i < mPendingMessages.size() ; i++) {
+                    mPendingMessages.get(i).sendToTarget();
+                }
+                mPendingMessages.clear();
+            }
+        }
+        /// @}
     }
 
     private void reloadKeyboardLayouts() {
@@ -1181,6 +1211,11 @@ public class InputManagerService extends IInputManager.Stub
         nativeSetInputDispatchMode(mPtr, enabled, frozen);
     }
 
+    /// M:[SmartBook] Pass SmartBook plug status
+    public void setSmartBookPlugIn(boolean plugin) {
+        nativeSetSmartBookPlugIn(mPtr, plugin);
+    }
+
     public void setSystemUiVisibility(int visibility) {
         nativeSetSystemUiVisibility(mPtr, visibility);
     }
@@ -1227,6 +1262,12 @@ public class InputManagerService extends IInputManager.Stub
         setPointerSpeedUnchecked(speed);
     }
 
+    /// M:[SmartBook] Primary key control
+    public void updatePointerPrimaryKeyFromSettings() {
+        boolean changePrimaryKey = getPointerPrimaryKeySetting();
+        nativeSetPointerPrimaryKey(mPtr, changePrimaryKey);
+    }
+
     private void setPointerSpeedUnchecked(int speed) {
         speed = Math.min(Math.max(speed, InputManager.MIN_POINTER_SPEED),
                 InputManager.MAX_POINTER_SPEED);
@@ -1244,6 +1285,18 @@ public class InputManagerService extends IInputManager.Stub
                 }, UserHandle.USER_ALL);
     }
 
+    /// M:[SmartBook] Primary key control
+    private void registerPointerPrimaryKeySettingObserver() {
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.CHANGE_POINTER_PRIMARY_KEY), true,
+                new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        updatePointerPrimaryKeyFromSettings();
+                    }
+                }, UserHandle.USER_ALL);
+    }
+
     private int getPointerSpeedSetting() {
         int speed = InputManager.DEFAULT_POINTER_SPEED;
         try {
@@ -1252,6 +1305,18 @@ public class InputManagerService extends IInputManager.Stub
         } catch (SettingNotFoundException snfe) {
         }
         return speed;
+    }
+
+    /// M:[SmartBook] Primary key control
+    private boolean getPointerPrimaryKeySetting() {
+        boolean changePrimaryKey = false;
+        try {
+            changePrimaryKey = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.CHANGE_POINTER_PRIMARY_KEY, UserHandle.USER_CURRENT) != 0;
+        } catch (SettingNotFoundException snfe) {
+        }
+
+        return changePrimaryKey;
     }
 
     public void updateShowTouchesFromSettings() {
@@ -1390,8 +1455,18 @@ public class InputManagerService extends IInputManager.Stub
         synchronized (mInputDevicesLock) {
             if (!mInputDevicesChangedPending) {
                 mInputDevicesChangedPending = true;
-                mHandler.obtainMessage(MSG_DELIVER_INPUT_DEVICES_CHANGED,
-                        mInputDevices).sendToTarget();
+                ///M:[ALPS01762006]Delay the keyboard change notification
+                ///   until NotificationBar is ready @{
+                if (mNotificationManager != null) {
+                    mHandler.obtainMessage(MSG_DELIVER_INPUT_DEVICES_CHANGED,
+                            mInputDevices).sendToTarget();
+                } else {
+                    Slog.d(TAG, "Notification manager is not ready, set message pending");
+                    Message msg = mHandler.obtainMessage(MSG_DELIVER_INPUT_DEVICES_CHANGED,
+                            mInputDevices);
+                    mPendingMessages.add(msg);
+                }
+                /// @}
             }
 
             mInputDevices = inputDevices;
@@ -1425,6 +1500,12 @@ public class InputManagerService extends IInputManager.Stub
     private void notifyInputChannelBroken(InputWindowHandle inputWindowHandle) {
         mWindowManagerCallbacks.notifyInputChannelBroken(inputWindowHandle);
     }
+
+    /// M: Enhance keydispatching predump @{
+    private void notifyPredump(InputApplicationHandle inputApplicationHandle, InputWindowHandle inputWindowHandle, int pid, int message) {
+        mWindowManagerCallbacks.notifyPredump(inputApplicationHandle, inputWindowHandle, pid, message);
+    }
+    /// @}
 
     // Native callback.
     private long notifyANR(InputApplicationHandle inputApplicationHandle,
@@ -1628,6 +1709,9 @@ public class InputManagerService extends IInputManager.Stub
                 KeyEvent event, int policyFlags);
 
         public int getPointerLayer();
+
+        /// M: Enhance keydispatching predump
+        public void notifyPredump(InputApplicationHandle inputApplicationHandle, InputWindowHandle inputWindowHandle, int pid, int message);
     }
 
     /**

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +39,7 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Process;
 import android.os.RemoteException;
+import android.os.Trace;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.util.Slog;
@@ -228,7 +234,11 @@ final class Session extends IWindowSession.Stub
     public void finishDrawing(IWindow window) {
         if (WindowManagerService.localLOGV) Slog.v(
             WindowManagerService.TAG, "IWindow finishDrawing called for " + window);
+        /// M: add systrace @{
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "wmFinishDrawing");
         mService.finishDrawingWindow(this, window);
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        /// @}
     }
 
     public void setInTouchMode(boolean mode) {

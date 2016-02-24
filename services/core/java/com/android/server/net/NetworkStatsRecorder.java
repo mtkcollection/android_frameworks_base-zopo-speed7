@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,8 +64,8 @@ import libcore.io.IoUtils;
  */
 public class NetworkStatsRecorder {
     private static final String TAG = "NetworkStatsRecorder";
-    private static final boolean LOGD = false;
-    private static final boolean LOGV = false;
+    private static final boolean LOGD = true;
+    private static final boolean LOGV = true;
 
     private static final String TAG_NETSTATS_DUMP = "netstats_dump";
 
@@ -148,7 +153,8 @@ public class NetworkStatsRecorder {
             mRotator.readMatching(res, start, end);
             res.recordCollection(mPending);
         } catch (IOException e) {
-            Log.wtf(TAG, "problem completely reading network stats", e);
+            ///M: modefied remove wtf
+                Log.e(TAG, "problem completely reading network stats", e);
             recoverFromWtf();
         } catch (OutOfMemoryError e) {
             Log.wtf(TAG, "problem completely reading network stats", e);
@@ -185,6 +191,13 @@ public class NetworkStatsRecorder {
         NetworkStats.Entry entry = null;
         for (int i = 0; i < delta.size(); i++) {
             entry = delta.getValues(i, entry);
+
+
+            //M: add to avoid Null pointer exception @{
+            String ifaceName = entry.iface;
+            if (ifaceName == null) continue;
+            ///@}
+
             final NetworkIdentitySet ident = ifaceIdent.get(entry.iface);
             if (ident == null) {
                 unknownIfaces.add(entry.iface);
@@ -197,7 +210,7 @@ public class NetworkStatsRecorder {
             // only record tag data when requested
             if ((entry.tag == TAG_NONE) != mOnlyTags) {
                 mPending.recordData(ident, entry.uid, entry.set, entry.tag, start, end, entry);
-
+                Slog.i(TAG, "recordSnapshotLocked: ident[" + ident + "]");
                 // also record against boot stats when present
                 if (mSinceBoot != null) {
                     mSinceBoot.recordData(ident, entry.uid, entry.set, entry.tag, start, end, entry);
@@ -241,7 +254,8 @@ public class NetworkStatsRecorder {
                 mRotator.maybeRotate(currentTimeMillis);
                 mPending.reset();
             } catch (IOException e) {
-                Log.wtf(TAG, "problem persisting pending stats", e);
+            ///M: modefied revmove wtf
+                Log.e(TAG, "problem persisting pending stats", e);
                 recoverFromWtf();
             } catch (OutOfMemoryError e) {
                 Log.wtf(TAG, "problem persisting pending stats", e);
@@ -259,7 +273,8 @@ public class NetworkStatsRecorder {
             // Rewrite all persisted data to migrate UID stats
             mRotator.rewriteAll(new RemoveUidRewriter(mBucketDuration, uids));
         } catch (IOException e) {
-            Log.wtf(TAG, "problem removing UIDs " + Arrays.toString(uids), e);
+            ///M: modefied revmove wtf
+            Log.e(TAG, "problem removing UIDs " + Arrays.toString(uids), e);
             recoverFromWtf();
         } catch (OutOfMemoryError e) {
             Log.wtf(TAG, "problem removing UIDs " + Arrays.toString(uids), e);

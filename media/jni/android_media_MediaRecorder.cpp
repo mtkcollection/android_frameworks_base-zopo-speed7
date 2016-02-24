@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -252,6 +257,30 @@ android_media_MediaRecorder_setParameter(JNIEnv *env, jobject thiz, jstring para
 }
 
 static void
+android_media_MediaRecorder_setParametersExtra(JNIEnv *env, jobject thiz, jstring params)
+{
+#ifndef ANDROID_DEFAULT_CODE
+    ALOGE("setParametersExtra() ");
+    if (params == NULL)
+    {
+        ALOGE("Invalid or empty params string.  This parameter will be ignored.");
+        return;
+    }
+
+    sp<MediaRecorder> mr = getMediaRecorder(env, thiz);
+
+    const char* params8 = env->GetStringUTFChars(params, NULL);
+    if (params8 == NULL)
+    {
+        ALOGE("Failed to covert jstring to String8.  This parameter will be ignored.");
+        return;
+    }
+    process_media_recorder_call(env, mr->setParametersExtra(String8(params8)), "java/lang/RuntimeException", "setParametersExtra failed.");
+    env->ReleaseStringUTFChars(params,params8);
+#endif
+}
+
+static void
 android_media_MediaRecorder_setOutputFileFD(JNIEnv *env, jobject thiz, jobject fileDescriptor, jlong offset, jlong length)
 {
     ALOGV("setOutputFile");
@@ -485,7 +514,9 @@ android_media_MediaRecorder_native_finalize(JNIEnv *env, jobject thiz)
 
 static JNINativeMethod gMethods[] = {
     {"setCamera",            "(Landroid/hardware/Camera;)V",    (void *)android_media_MediaRecorder_setCamera},
-    {"setVideoSource",       "(I)V",                            (void *)android_media_MediaRecorder_setVideoSource},
+    /// M: Add to mark the current recording whether camera record for CTA @{
+    {"_setVideoSource",       "(I)V",                            (void *)android_media_MediaRecorder_setVideoSource},
+    /// @}
     {"setAudioSource",       "(I)V",                            (void *)android_media_MediaRecorder_setAudioSource},
     {"setOutputFormat",      "(I)V",                            (void *)android_media_MediaRecorder_setOutputFormat},
     {"setVideoEncoder",      "(I)V",                            (void *)android_media_MediaRecorder_setVideoEncoder},
@@ -506,6 +537,7 @@ static JNINativeMethod gMethods[] = {
     {"native_init",          "()V",                             (void *)android_media_MediaRecorder_native_init},
     {"native_setup",         "(Ljava/lang/Object;Ljava/lang/String;)V", (void *)android_media_MediaRecorder_native_setup},
     {"native_finalize",      "()V",                             (void *)android_media_MediaRecorder_native_finalize},
+    {"setParametersExtra",   "(Ljava/lang/String;)V",           (void *)android_media_MediaRecorder_setParametersExtra},
 };
 
 static const char* const kClassPathName = "android/media/MediaRecorder";

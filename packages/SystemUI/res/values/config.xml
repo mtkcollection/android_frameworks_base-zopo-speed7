@@ -117,9 +117,16 @@
     <integer name="quick_settings_user_time_settings_tile_span">1</integer>
 
     <!-- The default tiles to display in QuickSettings -->
+<!-- Vanzo:yinjun on: Thu, 19 Mar 2015 10:16:13 +0800
+for timeout tile
     <string name="quick_settings_tiles_default" translatable="false">
-        wifi,bt,inversion,cell,airplane,rotation,flashlight,location,cast,hotspot
+        wifi,bt,inversion,cell,airplane,rotation,flashlight,location,cast,hotspot,hotknot,audioprofile
     </string>
+-->
+    <string name="quick_settings_tiles_default" translatable="false">
+        wifi,bt,inversion,cell,airplane,rotation,flashlight,location,cast,hotspot,hotknot,audioprofile,dataconnection,timeout
+    </string>
+<!-- End of Vanzo: yinjun -->
 
     <!-- The tiles to display in QuickSettings -->
     <string name="quick_settings_tiles" translatable="false">default</string>
@@ -216,7 +223,7 @@
 
     <!-- The maximum count of notifications on Keyguard. The rest will be collapsed in an overflow
      card. -->
-    <integer name="keyguard_max_notification_count">3</integer>
+    <integer name="keyguard_max_notification_count">2</integer>
 
     <!-- Defines the implementation of the velocity tracker to be used for the panel expansion. Can
          be 'platform' or 'noisy' (i.e. for noisy touch screens). -->
@@ -225,7 +232,7 @@
     <!-- Set to true to enable the classic notification ticker that scrolls
          Notification.tickerText across the status bar for what seems like an
          eternity. -->
-    <bool name="enable_ticker">false</bool>
+    <bool name="enable_ticker">true</bool>
 
     <!-- Set to true to enable the user switcher on the keyguard. -->
     <bool name="config_keyguardUserSwitcher">false</bool>
@@ -295,5 +302,7 @@
 
     <!-- Enable the default volume dialog -->
     <bool name="enable_volume_ui">true</bool>
+    <!-- M: Add for multi-window , The number of columns in float panel. -->
+    <integer name="float_panel_num_columns">8</integer>
 </resources>
 

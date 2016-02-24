@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +29,7 @@ import android.content.res.TypedArray;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -104,6 +110,7 @@ import android.widget.ListView;
 public abstract class PreferenceFragment extends Fragment implements
         PreferenceManager.OnPreferenceTreeClickListener {
 
+    private static final String TAG = "PreferenceFragment";
     private static final String PREFERENCES_TAG = "android:preferences";
 
     private PreferenceManager mPreferenceManager;
@@ -155,6 +162,9 @@ public abstract class PreferenceFragment extends Fragment implements
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        Log.d(TAG, "onCreate, this = " + this);
+
         mPreferenceManager = new PreferenceManager(getActivity(), FIRST_REQUEST_CODE);
         mPreferenceManager.setFragment(this);
     }
@@ -162,6 +172,7 @@ public abstract class PreferenceFragment extends Fragment implements
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState) {
+        Log.d(TAG, "onCreateView, this = " + this);
 
         TypedArray a = getActivity().obtainStyledAttributes(null,
                 com.android.internal.R.styleable.PreferenceFragment,
@@ -179,6 +190,8 @@ public abstract class PreferenceFragment extends Fragment implements
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
+
+        Log.d(TAG, "onActivityCreated, mHavePrefs = " + mHavePrefs + ", this = " + this);
 
         if (mHavePrefs) {
             bindPreferences();
@@ -200,11 +213,15 @@ public abstract class PreferenceFragment extends Fragment implements
     @Override
     public void onStart() {
         super.onStart();
+
+        Log.d(TAG, "onStart, this = " + this);
+
         mPreferenceManager.setOnPreferenceTreeClickListener(this);
     }
 
     @Override
     public void onStop() {
+        Log.d(TAG, "onStop, this = " + this);
         super.onStop();
         mPreferenceManager.dispatchActivityStop();
         mPreferenceManager.setOnPreferenceTreeClickListener(null);
@@ -212,6 +229,7 @@ public abstract class PreferenceFragment extends Fragment implements
 
     @Override
     public void onDestroyView() {
+        Log.d(TAG, "onDestroyView, this = " + this);
         mList = null;
         mHandler.removeCallbacks(mRequestFocus);
         mHandler.removeMessages(MSG_BIND_PREFERENCES);
@@ -220,6 +238,7 @@ public abstract class PreferenceFragment extends Fragment implements
 
     @Override
     public void onDestroy() {
+        Log.d(TAG, "onDestroy, this = " + this);
         super.onDestroy();
         mPreferenceManager.dispatchActivityDestroy();
     }
@@ -227,6 +246,8 @@ public abstract class PreferenceFragment extends Fragment implements
     @Override
     public void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
+
+        Log.d(TAG, "onSaveInstanceState, this = " + this);
 
         final PreferenceScreen preferenceScreen = getPreferenceScreen();
         if (preferenceScreen != null) {
@@ -282,6 +303,8 @@ public abstract class PreferenceFragment extends Fragment implements
      * @param intent The {@link Intent} to query activities.
      */
     public void addPreferencesFromIntent(Intent intent) {
+        Log.d(TAG, "addPreferencesFromIntent, intent = " + intent + ", this = " + this);
+
         requirePreferenceManager();
 
         setPreferenceScreen(mPreferenceManager.inflateFromIntent(intent, getPreferenceScreen()));
@@ -294,6 +317,8 @@ public abstract class PreferenceFragment extends Fragment implements
      * @param preferencesResId The XML resource ID to inflate.
      */
     public void addPreferencesFromResource(int preferencesResId) {
+        Log.d(TAG, "addPreferencesFromResource, resId = " + preferencesResId + ", this = " + this);
+
         requirePreferenceManager();
 
         setPreferenceScreen(mPreferenceManager.inflateFromResource(getActivity(),
@@ -334,11 +359,15 @@ public abstract class PreferenceFragment extends Fragment implements
     }
 
     private void postBindPreferences() {
+        Log.d(TAG, "postBindPreferences, this = " + this);
+
         if (mHandler.hasMessages(MSG_BIND_PREFERENCES)) return;
         mHandler.obtainMessage(MSG_BIND_PREFERENCES).sendToTarget();
     }
 
     private void bindPreferences() {
+        Log.d(TAG, "bindPreferences, this = " + this);
+
         final PreferenceScreen preferenceScreen = getPreferenceScreen();
         if (preferenceScreen != null) {
             preferenceScreen.bind(getListView());
@@ -408,6 +437,15 @@ public abstract class PreferenceFragment extends Fragment implements
 
         @Override
         public boolean onKey(View v, int keyCode, KeyEvent event) {
+            Log.d(TAG, "onKey, keyCode = " + keyCode + ", event = " + event +
+                    ", this = " + PreferenceFragment.this);
+
+            // Fragment is destroyed, but its view is still in the view tree,
+            // e.g., to animate away. Ignore key events in this case.
+            if (mList == null) {
+                return false;
+            }
+
             Object selectedItem = mList.getSelectedItem();
             if (selectedItem instanceof Preference) {
                 View selectedView = mList.getSelectedView();

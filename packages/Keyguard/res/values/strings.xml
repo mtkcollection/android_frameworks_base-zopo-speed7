@@ -67,7 +67,7 @@
     <string name="keyguard_low_battery">Connect your charger.</string>
 
     <!-- On the keyguard screen, when pattern lock is disabled, only tell them to press menu to unlock.  This is shown in small font at the bottom. -->
-    <string name="keyguard_instructions_when_pattern_disabled">Press Menu to unlock.</string>
+    <string name="keyguard_instructions_when_pattern_disabled">Press Menu to unlock</string>
 
     <!-- SIM messages --><skip />
     <!-- When the user inserts a sim card from an unsupported network, it becomes network locked -->
@@ -75,22 +75,22 @@
     <!-- Shown when there is no SIM card. -->
     <string name="keyguard_missing_sim_message_short">No SIM card</string>
     <!-- Shown when there is no SIM card. -->
-    <string name="keyguard_missing_sim_message" product="tablet">No SIM card in tablet.</string>
+    <string name="keyguard_missing_sim_message" product="tablet">No SIM card in tablet</string>
     <!-- Shown when there is no SIM card. -->
-    <string name="keyguard_missing_sim_message" product="default">No SIM card in phone.</string>
+    <string name="keyguard_missing_sim_message" product="default">No SIM card in phone</string>
     <!-- Shown to ask the user to insert a SIM card. -->
-    <string name="keyguard_missing_sim_instructions">Insert a SIM card.</string>
+    <string name="keyguard_missing_sim_instructions">Insert a SIM card</string>
     <!-- Shown to ask the user to insert a SIM card when sim is missing or not readable. -->
     <string name="keyguard_missing_sim_instructions_long">The SIM card is missing or not readable. Insert a SIM card.</string>
     <!-- Shown when SIM card is permanently disabled. -->
-    <string name="keyguard_permanent_disabled_sim_message_short">Unusable SIM card.</string>
+    <string name="keyguard_permanent_disabled_sim_message_short">Unusable SIM card</string>
     <!-- Shown to inform the user to SIM card is permanently disabled. -->
     <string name="keyguard_permanent_disabled_sim_instructions">Your SIM card has been permanently disabled.\n
     Contact your wireless service provider for another SIM card.</string>
     <!-- Shown to tell the user that their SIM is locked and they must unlock it. -->
-    <string name="keyguard_sim_locked_message">SIM card is locked.</string>
+    <string name="keyguard_sim_locked_message">SIM card is locked</string>
     <!-- When the user enters a wrong sim pin too many times, it becomes PUK locked (Pin Unlock Kode) -->
-    <string name="keyguard_sim_puk_locked_message">SIM card is PUK-locked.</string>
+    <string name="keyguard_sim_puk_locked_message">SIM card is PUK-locked</string>
     <!-- For the unlock screen, When the user enters a sim unlock code, it takes a little while to check
          whether it is valid, and to unlock the sim if it is valid.  we display a
          progress dialog in the meantime.  this is the emssage. -->
@@ -431,7 +431,14 @@
 
     <!-- On the keyguard screen, it shows the carrier the phone is connected to.
         This is displayed if the phone is not connected to a carrier.-->
-    <string name="keyguard_carrier_default">No service.</string>
+    <string name="keyguard_carrier_default">No service</string>
+
+    <!-- Slot id in SIM pin/puk unlock view -->
+    <string name="kg_slot_id">Slot <xliff:g id="number">%d</xliff:g>:\u0020</string>
+    <!-- New SIM card string in SIM pin/puk unlock view -->
+    <string name="kg_new_simcard">New SIM card</string>
+    <!-- SIM card name detecting string in When get SIM display name  -->
+    <string name="kg_detecting_simcard">Detecting...</string>
 
     <!-- Content description of the switch input method button for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_ime_switch_button" msgid="5032926134740456424">Switch input method button.</string>

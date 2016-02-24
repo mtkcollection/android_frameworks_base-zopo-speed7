@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +53,7 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.util.EventLog;
 import android.util.Log;
@@ -60,12 +66,21 @@ import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Objects;
+
+/// M: BMW. @{
+import com.mediatek.multiwindow.MultiWindowProxy;
+import java.util.List;
+import android.os.Debug;
+/// @}
 
 /**
  * An entry in the history stack, representing an activity.
@@ -352,6 +367,16 @@ final class ActivityRecord {
             return 0;
         }
 
+        /// M:20120712 ALPS00317478 KeyDispatchingTimeout predump mechanism @{
+        @Override public int getFocusAppPid() throws RemoteException {
+            ActivityRecord activity = weakActivity.get();
+            if (activity != null) {
+                return activity.getFocusAppPid();
+            }
+            return -1;
+        }
+        /// @}
+
         @Override
         public String toString() {
             StringBuilder sb = new StringBuilder(128);
@@ -478,6 +503,23 @@ final class ActivityRecord {
                     com.android.internal.R.styleable.Window_windowIsFloating, false)
                     && !ent.array.getBoolean(
                     com.android.internal.R.styleable.Window_windowIsTranslucent, false);
+
+            /// M: BMW @{
+            if (MultiWindowProxy.isFeatureSupport()){
+                floating = ent != null && ent.array.getBoolean(
+                        com.android.internal.R.styleable.Window_windowIsFloating, false);
+                translucent = ent != null && ent.array.getBoolean(
+                        com.android.internal.R.styleable.Window_windowIsTranslucent, false);
+                
+                // If this activity is in disable list ,do not modify fullscreen flag. 
+                if ((intent.getFlags()&Intent.FLAG_ACTIVITY_FLOATING) != 0 
+                        && MultiWindowProxy.getInstance() != null 
+                        && MultiWindowProxy.getInstance().matchDisableFloatActivityList(info.name)){
+                        fullscreen = false;
+                }
+            }
+            /// @}
+            
             noDisplay = ent != null && ent.array.getBoolean(
                     com.android.internal.R.styleable.Window_windowNoDisplay, false);
 
@@ -510,10 +552,19 @@ final class ActivityRecord {
             noDisplay = false;
             mActivityType = APPLICATION_ACTIVITY_TYPE;
             immersive = false;
+            /// M: BMW. @{
+            if(MultiWindowProxy.isFeatureSupport()){
+                floating = false;
+                translucent = false;
+            }
+            /// @}
         }
     }
 
     void setTask(TaskRecord newTask, TaskRecord taskToAffiliateWith) {
+        /// M: ALPS01240134, Fix KK google issue, did not setTask when original task
+        /// is equal to new task, prevent stack supervisor removing task from task history. @{
+        if (newTask != task) {
         if (task != null && task.removeActivity(this)) {
             if (task != newTask) {
                 task.stack.removeTask(task, "setTask");
@@ -522,7 +573,10 @@ final class ActivityRecord {
                         (newTask == null ? null : newTask.stack));
             }
         }
-        task = newTask;
+            task = newTask;
+        }
+        /// @}
+
         setTaskToAffiliateWith(taskToAffiliateWith);
     }
 
@@ -543,6 +597,11 @@ final class ActivityRecord {
         task.numFullscreen += toOpaque ? +1 : -1;
 
         fullscreen = toOpaque;
+        /// M: BMW. @{
+        if(MultiWindowProxy.isFeatureSupport()){
+            translucent = !toOpaque;
+        }
+        /// @}
         return true;
     }
 
@@ -905,6 +964,7 @@ final class ActivityRecord {
                     thisTime, totalTime);
             StringBuilder sb = service.mStringBuilder;
             sb.setLength(0);
+            sb.append("[AppLaunch] Displayed ");    /// M: Add for app launch time analyze
             sb.append("Displayed ");
             sb.append(shortComponentName);
             sb.append(": ");
@@ -915,6 +975,38 @@ final class ActivityRecord {
                 sb.append(")");
             }
             Log.i(ActivityManagerService.TAG, sb.toString());
+
+            /// M: Add systrace for app launch time @{
+            Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "logAppLaunchTime : " + sb);
+            Log.d(ActivityManagerService.TAG, "AP_PROF:AppLaunch_LaunchTime:" + shortComponentName + ":" + thisTime + ":" + curTime);
+            Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+            /// @}
+
+            /// M: Boot time profiling @{
+            mtProf(new String("0"));
+            /// @}
+
+            /// M: Trigger Memory Log @{
+            if (SystemProperties.get("ro.mtk_mem_comp_support").equals("1")) {
+                // trigger mlog
+                FileOutputStream fos = null;
+                String path = "/sys/module/mlog/parameters/do_mlog";
+                try {
+                    String data = "3";
+                    fos = new FileOutputStream(path);
+                    fos.write(data.getBytes());
+                } catch (IOException e) {
+                    Slog.w(ActivityManagerService.TAG, "Unable to write " + path);
+                } finally {
+                    if (fos != null) {
+                        try {
+                            fos.close();
+                        } catch (IOException e) {
+        }
+                    }
+                }
+            }
+            /// @}
         }
         mStackSupervisor.reportActivityLaunchedLocked(false, this, thisTime, totalTime);
         if (totalTime > 0) {
@@ -925,6 +1017,7 @@ final class ActivityRecord {
     }
 
     public void windowsDrawn() {
+        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "amWindowsDrawnCallback"); /// M: Add for LCA launch time debug
         synchronized(service) {
             if (displayStartTime != 0) {
                 reportLaunchTimeLocked(SystemClock.uptimeMillis());
@@ -936,6 +1029,7 @@ final class ActivityRecord {
                 task.hasBeenVisible = true;
             }
         }
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER); /// M: Add for LCA launch time debug
     }
 
     public void windowsVisible() {
@@ -943,6 +1037,10 @@ final class ActivityRecord {
             mStackSupervisor.reportActivityVisibleLocked(this);
             if (ActivityManagerService.DEBUG_SWITCH) Log.v(
                     ActivityManagerService.TAG, "windowsVisible(): " + this);
+            /// M: Log for debugging @{
+            if (!ActivityManagerService.IS_USER_BUILD)
+               Slog.d(ActivityManagerService.TAG, "ACT-windowsVisible(): " + this);
+            /// @}
             if (!nowVisible) {
                 nowVisible = true;
                 lastVisibleTime = SystemClock.uptimeMillis();
@@ -968,6 +1066,9 @@ final class ActivityRecord {
                         }
                         mStackSupervisor.mWaitingVisibleActivities.clear();
                         mStackSupervisor.scheduleIdleLocked();
+                        /// M: Log for debugging @{
+                        Slog.d(ActivityManagerService.TAG, "ACT-IDLE_NOW_MSG from windowsVisible() for idle: " + this);
+                        /// @}
                     }
                 }
                 service.scheduleAppGcsLocked();
@@ -1019,6 +1120,16 @@ final class ActivityRecord {
             return ActivityManagerService.getInputDispatchingTimeoutLocked(r);
         }
     }
+
+    /// M: 20120712 ALPS00317478 KeyDispatchingTimeout predump mechanism @{
+    public int getFocusAppPid() {
+        ActivityRecord r = this;
+        if (r != null && r.app != null) {
+            return r.app.pid;
+        }
+        return -1;
+    }
+    /// @}
 
     /**
      * This method will return true if the activity is either visible, is becoming visible, is
@@ -1249,4 +1360,79 @@ final class ActivityRecord {
         stringName = sb.toString();
         return toString();
     }
+
+    /*
+     * M:
+     * MT profiling interface:
+     * arg: start, 1 for start profiling; 0 for stop profiling
+     */
+    public static void mtProf(String bootevent) {
+        if (ActivityManagerService.mMTPROFDisabled) {
+            return;
+        }
+        try {
+            FileInputStream fprofsts_in = new FileInputStream("/proc/mtprof/status");
+            /* 1. Check if we are in profiling status*/
+            if (fprofsts_in.read() != '0') {
+                /* 2. We are in profiling status, than trigger or stop kernel profiling */
+                Log.d("MTPROF", "Stop MT profiling");
+                FileOutputStream fcputime = new FileOutputStream("/proc/mtprof/cputime");
+                FileOutputStream fprofsts_out = new FileOutputStream("/proc/mtprof/status");
+
+                fcputime.write(bootevent.getBytes());
+                fprofsts_out.write(bootevent.getBytes());
+
+                fcputime.close();
+                fprofsts_out.close();
+            }
+            fprofsts_in.close();
+        } catch (FileNotFoundException e) {
+            Slog.e(ActivityManagerService.TAG, "mtprof entry can not found!", e);
+        } catch (java.io.IOException e) {
+            Slog.e(ActivityManagerService.TAG, "mtprof entry open fail", e);
+        }
+    }
+    
+    /// M: BMW. Multi window feature @{
+    void updateFullscreen(boolean maxWindow) {
+        if (maxWindow) {
+            intent.setFlags(intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+            task.intent.setFlags(intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+            fullscreen = !floating && !translucent;
+            if (fullscreen) task.numFullscreen++;
+        } else {
+            intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+            task.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+            fullscreen = false;
+            task.numFullscreen--;
+        }
+
+        mPendingRestoreMax = true;
+    }
+
+    public void scheduleRestoreActivity(List<ResultInfo> pendingResults,
+                List<ReferrerIntent> pendingNewIntents,
+                int configChanges, boolean notResumed,
+                Configuration config, boolean toMax) {
+        if (DEBUG_SAVED_STATE) {
+            Slog.d(TAG, "[BMW] scheduleRestoreActivity " + this + " toMax:" + toMax
+                        + ", mPendingRestoreMax = " + mPendingRestoreMax
+                        +", caller = " + Debug.getCallers(4));
+        }
+        
+        if (mPendingRestoreMax) {
+            try {
+                app.thread.scheduleRestoreActivity(appToken, pendingResults, pendingNewIntents,
+                        configChanges, notResumed, config, toMax);
+                mPendingRestoreMax = false;
+            } catch (RemoteException e) {
+                Slog.e(TAG, "[BMW] scheduleRestoreActivity activity failed", e);
+            }
+        }
+    }
+    boolean floating;                     //used for floating window
+    boolean translucent;                  //used for floating window
+    boolean mPendingRestoreMax = false;   //for max/restore floating activity
+    
+    /// @}
 }

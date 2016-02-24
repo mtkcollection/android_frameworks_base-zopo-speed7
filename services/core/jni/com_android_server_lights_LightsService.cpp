@@ -41,6 +41,14 @@ enum {
     LIGHT_INDEX_ATTENTION = 5,
     LIGHT_INDEX_BLUETOOTH = 6,
     LIGHT_INDEX_WIFI = 7,
+
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 14:54:13 +0800
+ * add breathlight support
+ */
+#ifdef VANZO_FEATURE_BREATH_LIGHT_SUPPORT
+    LIGHT_INDEX_BREATH = 8,
+#endif
+// End of Vanzo:luanshijun
     LIGHT_COUNT
 };
 
@@ -86,6 +94,15 @@ static jlong init_native(JNIEnv *env, jobject clazz)
                 = get_device(module, LIGHT_ID_BLUETOOTH);
         devices->lights[LIGHT_INDEX_WIFI]
                 = get_device(module, LIGHT_ID_WIFI);
+
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 14:55:14 +0800
+ * add breathlight support
+ */
+#ifdef VANZO_FEATURE_BREATH_LIGHT_SUPPORT
+        devices->lights[LIGHT_INDEX_BREATH]
+            = get_device(module, LIGHT_ID_BREATH);
+#endif
+// End of Vanzo:luanshijun
     } else {
         memset(devices, 0, sizeof(Devices));
     }

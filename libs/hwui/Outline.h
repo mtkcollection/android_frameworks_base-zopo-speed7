@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +71,11 @@ public:
 
     bool isEmpty() const {
         return mType == kOutlineType_Empty;
+    }
+
+    /// M: reture true if the outline is none
+    bool isNone() const {
+        return mType == kOutlineType_None;
     }
 
     float getAlpha() const {

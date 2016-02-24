@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,8 @@ import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.BatteryStats;
 import android.os.RemoteException;
+import android.os.storage.StorageManager;
+import android.os.storage.StorageVolume;
 import android.provider.MediaStore;
 import android.provider.MediaStore.Audio;
 import android.provider.MediaStore.Files;
@@ -42,6 +49,16 @@ import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Locale;
+
+/// M: Added for USB Develpment debug, more log for more debuging help. @{
+import android.os.SystemProperties;/// M: Added Modification for ALPS00278882
+import com.mediatek.xlog.SXlog;
+import com.mediatek.xlog.Xlog;
+import java.lang.Integer;
+//Added Modification for ALPS00278882
+import android.os.SystemProperties;
+//Added Modification for ALPS00278882
+/// M: @}
 
 /**
  * {@hide}
@@ -63,6 +80,8 @@ public class MtpDatabase {
     private String mSubDirectoriesWhere;
     // where arguments for restricting queries to files in mSubDirectories
     private String[] mSubDirectoriesWhereArgs;
+
+    private static String[] mStoragePaths;
 
     private final HashMap<String, MtpStorage> mStorageMap = new HashMap<String, MtpStorage>();
 
@@ -305,21 +324,63 @@ public class MtpDatabase {
         return false;
     }
 
-    // returns true if the path is in the storage root
     private boolean inStorageRoot(String path) {
         try {
             File f = new File(path);
             String canonical = f.getCanonicalPath();
-            for (String root: mStorageMap.keySet()) {
-                if (canonical.startsWith(root)) {
+            if (mStoragePaths == null) {
+                StorageManager storageManager = (StorageManager) mContext.getSystemService(mContext.STORAGE_SERVICE);
+                mStoragePaths = storageManager.getVolumePaths();
+            }
+
+            for ( int i = 0; i < mStoragePaths.length; i++) {
+                if ((mStoragePaths[i] != null) && (canonical.startsWith(mStoragePaths[i])))
                     return true;
-                }
             }
         } catch (IOException e) {
             // ignore
         }
         return false;
     }
+
+    private int getObjectHandleWithPath(String path, int format, int parent,
+                         int storageId, long size, long modified) {
+        // if mSubDirectories is not null, do not allow copying files to any other locations
+        if (!inStorageSubDirectory(path)) return -1;
+
+        // make sure the object does not exist
+        if (path != null) {
+            //Added for USB Develpment debug, more log for more debuging help
+            SXlog.i(TAG, "getObjectHandleWithPath: path = "+ path);
+            //Added for USB Develpment debug, more log for more debuging help
+            Cursor c = null;
+            try {
+                c = mMediaProvider.query(mPackageName, mObjectsUri, ID_PROJECTION, PATH_WHERE,
+                        new String[] { path }, null, null);
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "beginSendObject: mObjectsUri = "+ mObjectsUri);
+
+                if (c != null && c.getCount() > 0)
+				{
+                    Log.w(TAG, "file already exists in getObjectHandleWithPath: " + path+ ", c.getCount() = " + c.getCount());
+					if (c != null && c.moveToFirst())
+					{
+	                    Log.w(TAG, "file already exists in getObjectHandleWithPath: adn delete it!! " + path+ ", c.getInt(0) = " + c.getInt(0));
+						deleteFile(c.getInt(0));
+					}
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "RemoteException in beginSendObject", e);
+            } finally {
+                if (c != null) {
+                    c.close();
+                }
+            }
+        }
+
+		return MtpConstants.RESPONSE_OK;
+	}
+        /// M: @}
 
     private int beginSendObject(String path, int format, int parent,
                          int storageId, long size, long modified) {
@@ -333,10 +394,15 @@ public class MtpDatabase {
 
         // make sure the object does not exist
         if (path != null) {
+            /// M: Added for USB Develpment debug, more log for more debuging help
+            SXlog.d(TAG, "beginSendObject: path = "+ path);
             Cursor c = null;
             try {
                 c = mMediaProvider.query(mPackageName, mObjectsUri, ID_PROJECTION, PATH_WHERE,
                         new String[] { path }, null, null);
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "beginSendObject: mObjectsUri = "+ mObjectsUri);
+
                 if (c != null && c.getCount() > 0) {
                     Log.w(TAG, "file already exists in beginSendObject: " + path);
                     return -1;
@@ -358,12 +424,24 @@ public class MtpDatabase {
         values.put(Files.FileColumns.STORAGE_ID, storageId);
         values.put(Files.FileColumns.SIZE, size);
         values.put(Files.FileColumns.DATE_MODIFIED, modified);
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        SXlog.i(TAG, "beginSendObject: path = "+path);
+        SXlog.i(TAG, "beginSendObject: FORMAT = "+Integer.toHexString(format));
+        SXlog.i(TAG, "beginSendObject: PARENT = "+Integer.toHexString(parent));
+        SXlog.i(TAG, "beginSendObject: storageId = "+Integer.toHexString(storageId));
+        SXlog.i(TAG, "beginSendObject: size = "+size);
+        SXlog.i(TAG, "beginSendObject: DATE_MODIFIED = "+modified);
+        /// M: @}
 
         try {
             Uri uri = mMediaProvider.insert(mPackageName, mObjectsUri, values);
             if (uri != null) {
+                notifyBeginSend(mMediaProvider, path);
+                //Log.e(TAG, "NO notifyNeginSend!");
                 return Integer.parseInt(uri.getPathSegments().get(2));
             } else {
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.e(TAG, "beginSendObject: uri insert failed!!");
                 return -1;
             }
         } catch (RemoteException e) {
@@ -373,6 +451,10 @@ public class MtpDatabase {
     }
 
     private void endSendObject(String path, int handle, int format, boolean succeeded) {
+        notifyEndSend(mMediaProvider);
+        //Xlog.e(TAG, "NO notifyEndSend!");
+        /// M: Added for USB Develpment debug, more log for more debuging help
+        SXlog.d(TAG, "endSendObject: path = "+path + ", format = 0x"+ Integer.toHexString(format));
         if (succeeded) {
             // handle abstract playlists separately
             // they do not exist in the file system so don't use the media scanner here
@@ -401,6 +483,8 @@ public class MtpDatabase {
                     Log.e(TAG, "RemoteException in endSendObject", e);
                 }
             } else {
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.d(TAG, "endSendObject: mVolumeName = "+mVolumeName);
                 mMediaScanner.scanMtpFile(path, mVolumeName, handle, format);
             }
         } else {
@@ -412,6 +496,11 @@ public class MtpDatabase {
         String where;
         String[] whereArgs;
 
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        SXlog.i(TAG, "createObjectQuery: storageID = 0x "+Integer.toHexString(storageID));
+        SXlog.i(TAG, "createObjectQuery: format = 0x "+Integer.toHexString(format));
+        SXlog.i(TAG, "createObjectQuery: parent = 0x "+Integer.toHexString(parent));
+        /// M: @}
         if (storageID == 0xFFFFFFFF) {
             // query all stores
             if (format == 0) {
@@ -484,6 +573,8 @@ public class MtpDatabase {
         // if we are restricting queries to mSubDirectories, we need to add the restriction
         // onto our "where" arguments
         if (mSubDirectoriesWhere != null) {
+            /// M: Added for USB Develpment debug, more log for more debuging help
+            SXlog.i(TAG, "createObjectQuery: mSubDirectoriesWhere = "+mSubDirectoriesWhere);
             if (where == null) {
                 where = mSubDirectoriesWhere;
                 whereArgs = mSubDirectoriesWhereArgs;
@@ -502,6 +593,9 @@ public class MtpDatabase {
                 }
                 whereArgs = newWhereArgs;
             }
+        } else {
+            /// M: Added for USB Develpment debug, more log for more debuging help
+            SXlog.e(TAG, "createObjectQuery: mSubDirectoriesWhere = null");
         }
 
         return mMediaProvider.query(mPackageName, mObjectsUri, ID_PROJECTION, where,
@@ -511,19 +605,40 @@ public class MtpDatabase {
     private int[] getObjectList(int storageID, int format, int parent) {
         Cursor c = null;
         try {
+            /// M: Added for USB Develpment debug, more log for more debuging help @{
+            SXlog.i(TAG, "getObjectList: storageID = 0x " + Integer.toHexString(storageID));
+            SXlog.i(TAG, "getObjectList: format = 0x" + Integer.toHexString(format));
+            SXlog.i(TAG, "getObjectList: parent = 0x" + Integer.toHexString(parent));
+            /// M: @}
             c = createObjectQuery(storageID, format, parent);
             if (c == null) {
+				//Modeification for ALPS00326143
+				SXlog.i(TAG, "getObjectList: c == null!!");
+				//Modeification for ALPS00326143
                 return null;
             }
             int count = c.getCount();
+            /// M: Added for USB Develpment debug, more log for more debuging help
+            SXlog.d(TAG, "getObjectList: count = " + count);
             if (count > 0) {
                 int[] result = new int[count];
                 for (int i = 0; i < count; i++) {
                     c.moveToNext();
                     result[i] = c.getInt(0);
+                    /// M: Added for USB Develpment debug, more log for more debuging help
+                    SXlog.v(TAG, "getObjectList: result["+i+"] = 0x " + Integer.toHexString(result[i]));
                 }
                 return result;
             }
+			//Modeification for ALPS00326143
+			else
+			{
+                int[] result = new int[1];
+				result[0] = 0;
+				SXlog.d(TAG, "getObjectList: result[0] = 0x00!!");
+				return result;
+			}
+			//Modeification for ALPS00326143
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in getObjectList", e);
         } finally {
@@ -708,8 +823,13 @@ public class MtpDatabase {
 
     private MtpPropertyList getObjectPropertyList(long handle, int format, long property,
                         int groupCode, int depth) {
+        /// M: ALPS00120037, add log for support MTP debugging
+        SXlog.d(TAG, "getObjectPropertyList: handle = 0x" + Long.toHexString(handle) + ", property = 0x" + Long.toHexString(property));
+
         // FIXME - implement group support
         if (groupCode != 0) {
+            /// M: Added for USB Develpment debug, more log for more debuging help
+            SXlog.i(TAG, "getObjectPropertyList RESPONSE_SPECIFICATION_BY_GROUP_UNSUPPORTED");
             return new MtpPropertyList(0, MtpConstants.RESPONSE_SPECIFICATION_BY_GROUP_UNSUPPORTED);
         }
 
@@ -778,8 +898,19 @@ public class MtpDatabase {
         File newFile = new File(newPath);
         boolean success = oldFile.renameTo(newFile);
         if (!success) {
+            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            // Confirm that if the old name and new name are the same.
+            if(newPath.equals(path)) {
+                //nothing to do
+                SXlog.e(TAG, "renaming "+ path + " to " + newPath + " is equal");
+                //going!!
+            } else {
+            /// M: @}
             Log.w(TAG, "renaming "+ path + " to " + newPath + " failed");
             return MtpConstants.RESPONSE_GENERAL_ERROR;
+            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            }
+            /// M: @}
         }
 
         // finally update database
@@ -789,7 +920,10 @@ public class MtpDatabase {
         try {
             // note - we are relying on a special case in MediaProvider.update() to update
             // the paths for all children in the case where this is a directory.
-            updated = mMediaProvider.update(mPackageName, mObjectsUri, values, ID_WHERE, whereArgs);
+            /// M: Some meida vaule(such as DISPLAY_NAME, BUCKET_ID and BUCKET_DISPLAY_NAME) need update refer
+            /// to new file path, so that app can show right values.
+            Uri newMtpUpdateUri = mObjectsUri.buildUpon().appendQueryParameter("need_update_media_values", "true").build();
+            updated = mMediaProvider.update(mPackageName, newMtpUpdateUri, values, ID_WHERE, whereArgs);
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in mMediaProvider.update", e);
         }
@@ -838,8 +972,48 @@ public class MtpDatabase {
     }
 
     private int getDeviceProperty(int property, long[] outIntValue, char[] outStringValue) {
+        /// M: Added for USB Develpment debug, more log for more debuging help
+        SXlog.d(TAG, "getDeviceProperty  property = 0x" + Integer.toHexString(property));
+
         switch (property) {
             case MtpConstants.DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
+			{
+				//Ainge
+                // writable string properties kept in shared preferences
+                String value = mDeviceProperties.getString(Integer.toString(property), "");
+                int length = value.length();
+                if (length > 255) {
+                    length = 255;
+                }
+                value.getChars(0, length, outStringValue, 0);
+                outStringValue[length] = 0;
+                /// M: Added for USB Develpment debug, more log for more debuging help @{
+                if(length > 0) {
+                    SXlog.w(TAG, "getDeviceProperty  property = " + Integer.toHexString(property));
+                    SXlog.w(TAG, "getDeviceProperty  value = " + value + ", length = " + length);
+                }
+                SXlog.w(TAG, "getDeviceProperty  length = " + length);
+
+                /// M: Added Modification for ALPS00278882 @{
+                // Return the device name for the PC display if the FriendlyName is empty!!
+                String deviceName;
+                deviceName = SystemProperties.get("ro.product.name");
+
+                int lengthDeviceName = deviceName.length();
+                if (lengthDeviceName > 255) {
+                    lengthDeviceName = 255;
+                }
+                if(lengthDeviceName >0) {
+                    deviceName.getChars(0, lengthDeviceName, outStringValue, 0);
+                    outStringValue[lengthDeviceName] = 0;
+                    SXlog.d(TAG, "getDeviceProperty  deviceName = " + deviceName + ", lengthDeviceName = " + lengthDeviceName);
+                } else {
+                    SXlog.d(TAG, "getDeviceProperty  lengthDeviceName = " + lengthDeviceName);
+                }
+                /// M: @}
+				//Ainge
+                return MtpConstants.RESPONSE_OK;
+            }
             case MtpConstants.DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME:
                 // writable string properties kept in shared preferences
                 String value = mDeviceProperties.getString(Integer.toString(property), "");
@@ -849,6 +1023,35 @@ public class MtpDatabase {
                 }
                 value.getChars(0, length, outStringValue, 0);
                 outStringValue[length] = 0;
+                /// M: Added for USB Develpment debug, more log for more debuging help @{
+                if(length > 0) {
+                    SXlog.i(TAG, "getDeviceProperty  property = " + Integer.toHexString(property));
+                    SXlog.i(TAG, "getDeviceProperty  value = " + value + ", length = " + length);
+                }
+                else if(SystemProperties.get("ro.sys.usb.mtp.whql.enable").equals("0"))
+                {
+                    SXlog.i(TAG, "getDeviceProperty  length = " + length);
+                    /// M: Added Modification for ALPS00278882 @{
+                    if(property == MtpConstants.DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME) {
+                        // Return the device name for the PC display if the FriendlyName is empty!!
+                        String deviceName;
+                        deviceName = SystemProperties.get("ro.product.name");
+
+                        int lengthDeviceName = deviceName.length();
+                        if (lengthDeviceName > 255) {
+                            lengthDeviceName = 255;
+                        }
+                        if(lengthDeviceName >0) {
+                            deviceName.getChars(0, lengthDeviceName, outStringValue, 0);
+                            outStringValue[lengthDeviceName] = 0;
+                            SXlog.d(TAG, "getDeviceProperty  deviceName = " + deviceName + ", lengthDeviceName = " + lengthDeviceName);
+                        } else {
+                            SXlog.d(TAG, "getDeviceProperty  lengthDeviceName = " + lengthDeviceName);
+                        }
+                    }
+                    /// M: @}
+                }
+                /// M: @}
                 return MtpConstants.RESPONSE_OK;
 
             case MtpConstants.DEVICE_PROPERTY_IMAGE_SIZE:
@@ -857,9 +1060,13 @@ public class MtpDatabase {
                         Context.WINDOW_SERVICE)).getDefaultDisplay();
                 int width = display.getMaximumSizeDimension();
                 int height = display.getMaximumSizeDimension();
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "getDeviceProperty DEVICE_PROPERTY_IMAGE_SIZE  width = " + width + ", height = " + height);
                 String imageSize = Integer.toString(width) + "x" +  Integer.toString(height);
                 imageSize.getChars(0, imageSize.length(), outStringValue, 0);
                 outStringValue[imageSize.length()] = 0;
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "getDeviceProperty DEVICE_PROPERTY_IMAGE_SIZE imageSize = " + imageSize);
                 return MtpConstants.RESPONSE_OK;
 
             // DEVICE_PROPERTY_BATTERY_LEVEL is implemented in the JNI code
@@ -871,7 +1078,7 @@ public class MtpDatabase {
 
     private int setDeviceProperty(int property, long intValue, String stringValue) {
         switch (property) {
-            case MtpConstants.DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
+            //case MtpConstants.DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
             case MtpConstants.DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME:
                 // writable string properties kept in shared prefs
                 SharedPreferences.Editor e = mDeviceProperties.edit();
@@ -886,6 +1093,8 @@ public class MtpDatabase {
     private boolean getObjectInfo(int handle, int[] outStorageFormatParent,
                         char[] outName, long[] outCreatedModified) {
         Cursor c = null;
+        /// M: ALPS00120037, add log for support MTP debugging
+        Xlog.w(TAG, "getObjectInfo");
         try {
             c = mMediaProvider.query(mPackageName, mObjectsUri, OBJECT_INFO_PROJECTION,
                             ID_WHERE, new String[] {  Integer.toString(handle) }, null, null);
@@ -924,6 +1133,9 @@ public class MtpDatabase {
     }
 
     private int getObjectFilePath(int handle, char[] outFilePath, long[] outFileLengthFormat) {
+        /// M: Added for USB Develpment debug, more log for more debuging help
+        SXlog.i(TAG, "getObjectFilePath handle = " + Integer.toHexString(handle));
+
         if (handle == 0) {
             // special case root directory
             mMediaStoragePath.getChars(0, mMediaStoragePath.length(), outFilePath, 0);
@@ -944,8 +1156,13 @@ public class MtpDatabase {
                 // So to be safe, use the actual file size here.
                 outFileLengthFormat[0] = new File(path).length();
                 outFileLengthFormat[1] = c.getLong(2);
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "getObjectFilePath RESPONSE_OK: path = " + path);
+
                 return MtpConstants.RESPONSE_OK;
             } else {
+                /// M: Added for USB Develpment debug, more log for more debuging help
+                SXlog.i(TAG, "getObjectFilePath RESPONSE_INVALID_OBJECT_HANDLE, handle = " + handle);
                 return MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE;
             }
         } catch (RemoteException e) {
@@ -983,6 +1200,10 @@ public class MtpDatabase {
         String path = null;
         int format = 0;
 
+        /// M: Added for USB Develpment debug, more log for more debuging help
+        SXlog.d(TAG, "deleteFile: handle = 0x"+ Integer.toHexString(handle));
+        /// M: Added for USB Develpment debug, more log for more debuging help
+
         Cursor c = null;
         try {
             c = mMediaProvider.query(mPackageName, mObjectsUri, PATH_FORMAT_PROJECTION,
@@ -999,6 +1220,10 @@ public class MtpDatabase {
             if (path == null || format == 0) {
                 return MtpConstants.RESPONSE_GENERAL_ERROR;
             }
+
+        /// M: Added for USB Develpment debug, more log for more debuging help
+	SXlog.d(TAG, "deleteFile: handle = 0x"+ Integer.toHexString(handle)+ ", path = " + path + ", format = 0x"+ Integer.toHexString(format));
+        /// M: Added for USB Develpment debug, more log for more debuging help
 
             // do not allow deleting any of the special subdirectories
             if (isStorageSubDirectory(path)) {
@@ -1084,17 +1309,65 @@ public class MtpDatabase {
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in setObjectReferences", e);
         }
+        /// M: Added for USB Develpment debug, more log for more debuging help
+        SXlog.e(TAG, "setObjectReferences: Not Playlist, we don't accept!!");
         return MtpConstants.RESPONSE_GENERAL_ERROR;
     }
 
     private void sessionStarted() {
+        /// M: ALPS00120037, add log for support MTP debugging
+        Xlog.w(TAG, "sessionStarted");
         mDatabaseModified = false;
     }
 
     private void sessionEnded() {
+        /// M: ALPS00120037, add log for support MTP debugging
+        Xlog.w(TAG, "sessionEnded, mDatabaseModified = " + mDatabaseModified);
         if (mDatabaseModified) {
             mContext.sendBroadcast(new Intent(MediaStore.ACTION_MTP_SESSION_END));
             mDatabaseModified = false;
+        }
+    }
+
+    /// M: Added Modification for ALPS00264207, ALPS00248646 @{
+    private void getObjectBeginIndication(String storagePath) {
+        SXlog.d(TAG, "getObjectBeginIndication: storagePath = " + storagePath);
+        notifyBeginSend(mMediaProvider, storagePath);
+    }
+
+    private void getObjectEndIndication(String storagePath) {
+        SXlog.d(TAG, "getObjectEndIndication: storagePath = " + storagePath);
+        notifyEndSend(mMediaProvider);
+    }
+    /// M: @}
+
+    private void notifyBeginSend(IContentProvider mediaProvider, String path) {
+        if (mediaProvider == null || path == null) {
+            Xlog.e(TAG, "notifyBeginSend: Null " + (path == null ? "path!" : "provider!"));
+            return;
+        }
+
+        try {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MTP_TRANSFER_FILE_PATH, path);
+            mediaProvider.insert(mPackageName, MediaStore.getMtpTransferFileUri(), values);
+            Xlog.e(TAG, "notifyBeginSend: Add the pathUri!");
+        } catch (RemoteException e) {
+            Xlog.e(TAG, "notifyBeginSend: RemoteException!", e);
+        }
+    }
+
+    private void notifyEndSend(IContentProvider mediaProvider) {
+        if (mediaProvider == null) {
+            Xlog.e(TAG, "notifyEndSend: Null provider!");
+            return;
+        }
+
+        try {
+            mediaProvider.delete(mPackageName, MediaStore.getMtpTransferFileUri(), null, null);
+            Xlog.e(TAG, "notifyEndSend: delete the pathUri!");
+        } catch (RemoteException e) {
+            Xlog.e(TAG, "notifyEndSend: RemoteException!", e);
         }
     }
 

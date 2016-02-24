@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +52,9 @@ import java.util.Set;
  * 
  */
 public class ViewPropertyAnimator {
+
+    /// M: should remember old layer type, otherwise call withLayer() twice will be wrong.
+    private int mOldLayerType = -1;
 
     /**
      * The View whose properties are being animated by this class. This is set at
@@ -782,11 +790,23 @@ public class ViewPropertyAnimator {
                 }
             }
         };
-        final int currentLayerType = mView.getLayerType();
+
+        /// M: If app call withLayer twice, it should use original layer type instead of current one.
+        final int currentLayerType;
+        if (mOldLayerType == -1) {
+            currentLayerType = mView.getLayerType();
+            mOldLayerType = currentLayerType;
+        }
+        else {
+            currentLayerType = mOldLayerType;
+        }
+
         mPendingCleanupAction = new Runnable() {
             @Override
             public void run() {
                 mView.setLayerType(currentLayerType, null);
+                /// M : reset old layer type
+                mOldLayerType = -1;
             }
         };
         if (mAnimatorSetupMap == null) {

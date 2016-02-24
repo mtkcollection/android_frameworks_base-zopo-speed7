@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +73,11 @@ public final class TimedText
     private static final int KEY_STRUCT_JUSTIFICATION          = 15; // Justification
     private static final int KEY_STRUCT_TEXT                   = 16; // Text
 
-    private static final int LAST_PUBLIC_KEY                  = 16;
+    ///M: Add for MTK_SUBTITLE_SUPPORT @{
+    private static final int KEY_STRUCT_BITMAP                 = 17; // Bitmap
+    ///@}
+
+    private static final int LAST_PUBLIC_KEY                  = 17;
 
     private static final int FIRST_PRIVATE_KEY                = 101;
 
@@ -104,6 +113,13 @@ public final class TimedText
 
     private Rect mTextBounds = null;
     private String mTextChars = null;
+
+    ///M: Add for MTK_SUBTITLE_SUPPORT @{
+    private byte[] mTextByteChars = null;
+    private int mBitMapWidth = -1;
+    private int mBitMapHeight = -1;
+    private int mBitMapFd = -1;
+    ///@}
 
     private Justification mJustification;
 
@@ -414,8 +430,14 @@ public final class TimedText
             byte[] text = parcel.createByteArray();
             if (text == null || text.length == 0) {
                 mTextChars = null;
+                ///M: Add for MTK_SUBTITLE_SUPPORT @{
+                mTextByteChars = null;
+                ///@}
             } else {
                 mTextChars = new String(text);
+                ///M: Add for MTK_SUBTITLE_SUPPORT @{
+                mTextByteChars = text;
+                ///@}
             }
 
         } else if (type != KEY_GLOBAL_SETTING) {
@@ -508,6 +530,17 @@ public final class TimedText
                     object = mScrollDelay;
                     break;
                 }
+
+                ///M: Add for MTK_SUBTITLE_SUPPORT @{
+                case KEY_STRUCT_BITMAP: {
+                    Log.d(TAG, "KEY_STRUCT_BITMAP");
+                    mBitMapWidth = parcel.readInt();
+                    mBitMapHeight = parcel.readInt();
+                    mBitMapFd = parcel.readInt();
+                    break;
+                }
+                ///@}
+
                 default: {
                     break;
                 }

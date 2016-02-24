@@ -39,6 +39,13 @@ interface IPowerManager
     void userActivity(long time, int event, int flags);
     void wakeUp(long time);
     void goToSleep(long time, int reason, int flags);
+
+    void startBacklight(int msec);
+    void stopBacklight();
+
+    void wakeUpByReason(long time, int reason);
+    void setSmartBookScreen(boolean on);
+
     void nap(long time);
     boolean isInteractive();
     boolean isPowerSaveMode();
@@ -55,6 +62,9 @@ interface IPowerManager
     // see the effect of a settings change without applying it immediately
     void setTemporaryScreenBrightnessSettingOverride(int brightness);
     void setTemporaryScreenAutoBrightnessAdjustmentSettingOverride(float adj);
+
+    void setBacklightOffForWfd(boolean enable);
+    void setBlNotify();
 
     // sets the attention light (used by phone app only)
     void setAttentionLight(boolean on, int color);

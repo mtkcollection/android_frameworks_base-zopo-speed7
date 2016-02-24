@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,12 +86,22 @@ public class CaptivePortalLoginActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        /// M: If there is no network id in intent, exit app directly. @{
+        if (getIntent() == null || getIntent().getData() == null
+            || getIntent().getData().getScheme() == null) {
+            Log.v(TAG, "intent data is invalid, exit app directly");
+            finish();
+            return;
+        }
+        /// @}
+
         String server = Settings.Global.getString(getContentResolver(), "captive_portal_server");
         if (server == null) server = DEFAULT_SERVER;
         try {
             mURL = new URL("http", server, "/generate_204");
             final Uri dataUri = getIntent().getData();
             if (!dataUri.getScheme().equals("netid")) {
+                Log.v(TAG, "No network id, exit app directly");
                 throw new MalformedURLException();
             }
             mNetId = Integer.parseInt(dataUri.getSchemeSpecificPart());
@@ -94,6 +109,10 @@ public class CaptivePortalLoginActivity extends Activity {
         } catch (MalformedURLException|NumberFormatException e) {
             // System misconfigured, bail out in a way that at least provides network access.
             done(CAPTIVE_PORTAL_APP_RETURN_WANTED_AS_IS);
+            /// M: Finish App immediately. @{
+            finish();
+            return;
+            /// @}
         }
 
         final ConnectivityManager cm = ConnectivityManager.from(this);
@@ -128,6 +147,14 @@ public class CaptivePortalLoginActivity extends Activity {
         final WebView myWebView = (WebView) findViewById(R.id.webview);
         myWebView.clearCache(true);
         WebSettings webSettings = myWebView.getSettings();
+        /// M: Set zoom and overview mode. @{
+        webSettings.setUseWideViewPort(true);
+        webSettings.setSupportZoom(true);
+        webSettings.setBuiltInZoomControls(true);
+        webSettings.setLoadWithOverviewMode(true);
+        // Set the mixed content mode
+        webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        /// @}
         webSettings.setJavaScriptEnabled(true);
         myWebView.setWebViewClient(new MyWebViewClient());
         myWebView.setWebChromeClient(new MyWebChromeClient());
@@ -169,12 +196,14 @@ public class CaptivePortalLoginActivity extends Activity {
         intent.putExtra(LOGGED_IN_RESULT, String.valueOf(result));
         intent.putExtra(RESPONSE_TOKEN, mResponseToken);
         sendBroadcast(intent);
-        finish();
+        /// M: Not finish App immediately
+        // finish();
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.captive_portal_login, menu);
+        /// M: Not show the menu
+        // getMenuInflater().inflate(R.menu.captive_portal_login, menu);
         return true;
     }
 
@@ -190,6 +219,8 @@ public class CaptivePortalLoginActivity extends Activity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        /// M: Not show the menu. @{
+        /*
         int id = item.getItemId();
         if (id == R.id.action_use_network) {
             done(CAPTIVE_PORTAL_APP_RETURN_WANTED_AS_IS);
@@ -200,6 +231,9 @@ public class CaptivePortalLoginActivity extends Activity {
             return true;
         }
         return super.onOptionsItemSelected(item);
+        */
+        return true;
+        /// @}
     }
 
     private void testForCaptivePortal() {
@@ -236,12 +270,17 @@ public class CaptivePortalLoginActivity extends Activity {
 
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            Log.e(TAG, "onPageStarted: firstPageLoad=" + firstPageLoad + ", url=" + url);
+
             if (firstPageLoad) return;
-            testForCaptivePortal();
+            /// M: Not test here
+            // testForCaptivePortal();
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
+            Log.e(TAG, "onPageFinished: firstPageLoad=" + firstPageLoad + ", url=" + url);
+
             if (firstPageLoad) {
                 firstPageLoad = false;
                 // Now that WebView has loaded at least one page we know it has read in the proxy
@@ -251,7 +290,8 @@ public class CaptivePortalLoginActivity extends Activity {
                 view.loadUrl(mURL.toString());
                 return;
             }
-            testForCaptivePortal();
+            /// M: Not test here
+            // testForCaptivePortal();
         }
 
         // A web page consisting of a large broken lock icon to indicate SSL failure.

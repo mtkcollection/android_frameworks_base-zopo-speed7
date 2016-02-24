@@ -90,4 +90,17 @@ oneway interface IWindow {
      * Called for non-application windows when the enter animation has completed.
      */
     void dispatchWindowShown();
+
+    /**
+     * M: Enable/Disable the log
+     */
+    void enableLog(boolean enable);
+
+    /**
+     * M: Dump input dispatching status for ANR analysis. @{
+     * @hide
+     */
+    void dumpInputDispatchingStatus();
+    /** @} */
+
 }

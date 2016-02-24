@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -156,6 +161,7 @@ void TextDropShadowCache::operator()(ShadowText&, ShadowTexture*& texture) {
         }
 
         texture->deleteTexture();
+        TT_REMOVE(texture->id, "[TextDropShadowCache.cpp] operator -");
         delete texture;
     }
 }
@@ -211,6 +217,9 @@ ShadowTexture* TextDropShadowCache::get(const SkPaint* paint, const char* text, 
 
         glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, texture->width, texture->height, 0,
                 GL_ALPHA, GL_UNSIGNED_BYTE, shadow.image);
+
+        TT_ADD(texture->id, texture->width, texture->height, GL_ALPHA, GL_UNSIGNED_BYTE, String8("textShadow"), "[TextDropShadowCache.cpp] get +");
+        DUMP_ALPHA_TEXTURE(texture->width, texture->height, shadow.image, "ShadowTexture", SkBitmap::kA8_Config);
 
         texture->setFilter(GL_LINEAR);
         texture->setWrap(GL_CLAMP_TO_EDGE);

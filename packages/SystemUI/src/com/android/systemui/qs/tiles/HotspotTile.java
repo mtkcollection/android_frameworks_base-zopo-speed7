@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +24,12 @@ package com.android.systemui.qs.tiles;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.provider.Settings.Global;
+import android.util.Log;
 
 import com.android.systemui.R;
+import com.android.systemui.qs.GlobalSetting;
 import com.android.systemui.qs.UsageTracker;
 import com.android.systemui.qs.QSTile;
 import com.android.systemui.statusbar.policy.HotspotController;
@@ -37,12 +46,26 @@ public class HotspotTile extends QSTile<QSTile.BooleanState> {
     private final UsageTracker mUsageTracker;
     private final KeyguardMonitor mKeyguard;
 
+    /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+    private final GlobalSetting mSetting;
+    private boolean mListening = false;
+    /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
+
     public HotspotTile(Host host) {
         super(host);
         mController = host.getHotspotController();
         mUsageTracker = newUsageTracker(host.getContext());
         mUsageTracker.setListening(true);
         mKeyguard = host.getKeyguardMonitor();
+
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+        mSetting = new GlobalSetting(mContext, mHandler, Global.AIRPLANE_MODE_ON) {
+            @Override
+            protected void handleValueChanged(int value) {
+                handleRefreshState(value);
+            }
+        };
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
     }
 
     @Override
@@ -58,6 +81,21 @@ public class HotspotTile extends QSTile<QSTile.BooleanState> {
 
     @Override
     public void setListening(boolean listening) {
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+        if (mListening == listening) {
+            return;
+        }
+        mListening = listening;
+        if (listening) {
+            final IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+            mContext.registerReceiver(mReceiver, filter);
+        } else {
+            mContext.unregisterReceiver(mReceiver);
+        }
+        mSetting.setListening(listening);
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
+
         if (listening) {
             mController.addCallback(mCallback);
         } else {
@@ -67,6 +105,15 @@ public class HotspotTile extends QSTile<QSTile.BooleanState> {
 
     @Override
     protected void handleClick() {
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+        final boolean airplaneMode = mSetting.getValue() != 0;
+        Log.d(TAG, "handleClick(), airplaneMode= " + airplaneMode);
+        if (airplaneMode) {
+            refreshState();
+            return;
+        }
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
+
         final boolean isEnabled = (Boolean) mState.value;
         mController.setHotspotEnabled(!isEnabled);
         mEnable.setAllowAnimation(true);
@@ -92,6 +139,17 @@ public class HotspotTile extends QSTile<QSTile.BooleanState> {
         state.label = mContext.getString(R.string.quick_settings_hotspot_label);
 
         state.value = mController.isHotspotEnabled();
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+        final int airplaneModeValue = arg instanceof Integer ? (Integer) arg : mSetting.getValue();
+        final boolean airplaneMode = airplaneModeValue != 0;
+        if (DEBUG) {
+            Log.d(TAG, "handleUpdateState(), airplaneMode= " + airplaneMode);
+        }
+        if (airplaneMode) {
+            state.value = false;
+        }
+        /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
+
         state.icon = state.visible && state.value ? mEnable : mDisable;
     }
 
@@ -130,4 +188,15 @@ public class HotspotTile extends QSTile<QSTile.BooleanState> {
             mUsageTracker.trackUsage();
         }
     }
+
+    /// M: Support "Hotspot can not be turned on on Aeroplane mode". @{
+    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_AIRPLANE_MODE_CHANGED.equals(intent.getAction())) {
+                refreshState();
+            }
+        }
+    };
+    /// M: Support "Hotspot can not be turned on on Aeroplane mode". @}
 }

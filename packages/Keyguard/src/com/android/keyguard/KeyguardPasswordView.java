@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +28,7 @@ import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.method.TextKeyListener;
 import android.util.AttributeSet;
+import android.util.Log ;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.animation.AnimationUtils;
@@ -35,6 +41,7 @@ import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
 
 import java.util.List;
+
 /**
  * Displays an alphanumeric (latin-1) key entry for the user to enter
  * an unlock password
@@ -42,6 +49,9 @@ import java.util.List;
 
 public class KeyguardPasswordView extends KeyguardAbsKeyInputView
         implements KeyguardSecurityView, OnEditorActionListener, TextWatcher {
+
+    private static final String TAG = "KeyguardPasswordView";
+    private static final boolean DEBUG = true ;
 
     private final boolean mShowImeAtScreenOn;
     private final int mDisappearYTranslation;
@@ -68,7 +78,8 @@ public class KeyguardPasswordView extends KeyguardAbsKeyInputView
     }
 
     protected void resetState() {
-        mSecurityMessageDisplay.setMessage(R.string.kg_password_instructions, false);
+        /// M: [ALPS00594552] Indicate the user to input password.
+        mSecurityMessageDisplay.setMessage(R.string.kg_password_instructions, true);
         mPasswordEntry.setEnabled(true);
     }
 
@@ -79,6 +90,7 @@ public class KeyguardPasswordView extends KeyguardAbsKeyInputView
 
     @Override
     public boolean needsInput() {
+        Log.d(TAG, "needsInput() - returns true.") ;
         return true;
     }
 
@@ -92,7 +104,10 @@ public class KeyguardPasswordView extends KeyguardAbsKeyInputView
             public void run() {
                 if (isShown()) {
                     mPasswordEntry.requestFocus();
+                    Log.d(TAG, "reason = " + reason +
+                        ", mShowImeAtScreenOn = " + mShowImeAtScreenOn) ;
                     if (reason != KeyguardSecurityView.SCREEN_ON || mShowImeAtScreenOn) {
+                        Log.d(TAG, "onResume() - call showSoftInput()") ;
                         mImm.showSoftInput(mPasswordEntry, InputMethodManager.SHOW_IMPLICIT);
                     }
                 }
@@ -310,4 +325,7 @@ public class KeyguardPasswordView extends KeyguardAbsKeyInputView
         }
         return false;
     }
+
+    /// M: Temp rect used to compute Password entry's location on screen
+    private int[] mTempLocation = new int[2];
 }

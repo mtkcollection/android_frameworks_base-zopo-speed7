@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -888,6 +893,88 @@ public interface IMountService extends IInterface {
                 }
                 return;
             }
+
+            /// M: Add  some APIs for new feature or bug fix @{
+            /**
+             * For new feature BICR
+             * Mount CD rom
+             */
+            public void shareCDRom(boolean share) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeInt((share ? 1 : 0));
+                    mRemote.transact(Stub.TRANSACTION_shareCDRom, _data, _reply, 0);
+                    _reply.readException();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+            }
+
+            /**
+             * Use for SD swap feature only, APP should NOT use this API.
+             * tell MountService this unmount operation should not trigger SD swap.
+             * Now only ExternalStorageFormatter call this API.
+             */
+            public void unmountVolumeNotSwap(String mountPoint, boolean force, boolean removeEncryption)
+                    throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(mountPoint);
+                    _data.writeInt((force ? 1 : 0));
+                    _data.writeInt((removeEncryption ? 1 : 0));
+                    mRemote.transact(Stub.TRANSACTION_unmountVolumeNotSwap, _data, _reply, 0);
+                    _reply.readException();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+            }
+
+            /**
+             * Use for SD swap feature only, APP should NOT use this API.
+             * tell MountService this mount operation should not trigger SD swap.
+             * Now only ExternalStorageFormatter call this API.
+             */
+            public int mountVolumeNotSwap(String mountPoint) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(mountPoint);
+                    mRemote.transact(Stub.TRANSACTION_mountVolumeNotSwap, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            /**
+             * set default path.
+             */
+            public void setDefaultPath(String path) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(path);
+                    mRemote.transact(Stub.TRANSACTION_setDefaultPath, _data, _reply, 0);
+                    _reply.readException();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+            }
+            /// @}
+
         }
 
         private static final String DESCRIPTOR = "IMountService";
@@ -977,6 +1064,17 @@ public interface IMountService extends IInterface {
         static final int TRANSACTION_lastMaintenance = IBinder.FIRST_CALL_TRANSACTION + 41;
 
         static final int TRANSACTION_runMaintenance = IBinder.FIRST_CALL_TRANSACTION + 42;
+
+        /// M: Add  some APIs for new feature or bug fix @{
+
+        static final int TRANSACTION_shareCDRom = IBinder.FIRST_CALL_TRANSACTION + 43;
+
+        static final int TRANSACTION_unmountVolumeNotSwap = IBinder.FIRST_CALL_TRANSACTION + 44;
+
+        static final int TRANSACTION_mountVolumeNotSwap = IBinder.FIRST_CALL_TRANSACTION + 45;
+
+        static final int TRANSACTION_setDefaultPath = IBinder.FIRST_CALL_TRANSACTION + 46;
+        /// @}
 
         /**
          * Cast an IBinder object into an IMountService interface, generating a
@@ -1334,6 +1432,35 @@ public interface IMountService extends IInterface {
                     reply.writeInt(result);
                     return true;
                 }
+                /// M: Add  some APIs for new feature or bug fix @{
+                case TRANSACTION_shareCDRom: {
+                    data.enforceInterface(DESCRIPTOR);
+                    boolean share;
+                    share = 0 != data.readInt();
+                    shareCDRom(share);
+                    reply.writeNoException();
+                    return true;
+                }
+                case TRANSACTION_unmountVolumeNotSwap: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String mountPoint;
+                    mountPoint = data.readString();
+                    boolean force = 0 != data.readInt();
+                    boolean removeEncrypt = 0 != data.readInt();
+                    unmountVolumeNotSwap(mountPoint, force, removeEncrypt);
+                    reply.writeNoException();
+                    return true;
+                }
+                case TRANSACTION_mountVolumeNotSwap: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String mountPoint;
+                    mountPoint = data.readString();
+                    int resultCode = mountVolumeNotSwap(mountPoint);
+                    reply.writeNoException();
+                    reply.writeInt(resultCode);
+                    return true;
+                }
+                /// @}
                 case TRANSACTION_getPasswordType: {
                     data.enforceInterface(DESCRIPTOR);
                     int result = getPasswordType();
@@ -1393,6 +1520,14 @@ public interface IMountService extends IInterface {
                 case TRANSACTION_runMaintenance: {
                     data.enforceInterface(DESCRIPTOR);
                     runMaintenance();
+                    reply.writeNoException();
+                    return true;
+                }
+                case TRANSACTION_setDefaultPath:{
+                    data.enforceInterface(DESCRIPTOR);
+                    String path;
+                    path = data.readString();
+                    setDefaultPath(path);
                     reply.writeNoException();
                     return true;
                 }
@@ -1634,6 +1769,36 @@ public interface IMountService extends IInterface {
      */
     public int mkdirs(String callingPkg, String path) throws RemoteException;
 
+    /// M: Add  some APIs for new feature or bug fix @{
+    /**
+     * For BICR
+     * Share CD rom
+     */
+    public void shareCDRom(boolean mount) throws RemoteException;
+
+    /**
+     * Use for SD swap feature only, tell MountService not to swap during unmount.
+     * Copy of unmountVolume
+     * Safely unmount external storage at given mount point. The unmount is an
+     * asynchronous operation. Applications should register StorageEventListener
+     * for storage related status changes.
+     * @param mountPoint the mount point
+     * @param force whether or not to forcefully unmount it (e.g. even if programs are using this
+     *     data currently)
+     * @param removeEncryption whether or not encryption mapping should be removed from the volume.
+     *     This value implies {@code force}.
+     */
+    public void unmountVolumeNotSwap(String mountPoint, boolean force, boolean removeEncryption)
+            throws RemoteException;
+
+    /**
+     * Use for SD swap feature only, tell MountService not to swap during mount.
+     * Mount external storage at given mount point. Returns an int consistent
+     * with MountServiceResultCode
+     */
+    public int mountVolumeNotSwap(String mountPoint) throws RemoteException;
+    /// @}
+
     /**
      * Determines the type of the encryption password
      * @return PasswordType
@@ -1680,4 +1845,11 @@ public interface IMountService extends IInterface {
      * @throws RemoteException
      */
     public void runMaintenance() throws RemoteException;
+
+    /**
+     * set default path.
+     * @param path default path to set
+     */
+    public void setDefaultPath(String Path) throws RemoteException;
+
 }

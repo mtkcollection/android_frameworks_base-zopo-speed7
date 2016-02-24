@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,6 +96,10 @@ public:
     ANDROID_API void destroyHardwareResources();
     ANDROID_API static void trimMemory(int level);
 
+    /// M: [ALPS02008699] support static fence, this is useful if someone wants to wait until RenderThread
+    /// finished all tasks but it's not an instance of RenderProxy. e.g. GLES20Canvas has to make sure
+    /// Caches has finished its initialization before getMaximumBitmapHeight or getMaximumBitmapWidth.
+    ANDROID_API static void staticFence();
     ANDROID_API void fence();
     ANDROID_API void stopDrawing();
     ANDROID_API void notifyFramePending();

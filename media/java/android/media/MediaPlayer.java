@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,7 @@
 
 package android.media;
 
+import android.os.SystemProperties;
 import android.app.ActivityThread;
 import android.app.AppOpsManager;
 import android.app.Application;
@@ -40,6 +46,7 @@ import android.os.ServiceManager;
 import android.provider.Settings;
 import android.system.ErrnoException;
 import android.system.OsConstants;
+import android.os.SystemProperties;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -72,6 +79,10 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.Vector;
 import java.lang.ref.WeakReference;
+
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.media.IOmaSettingHelper;
+
 
 /**
  * MediaPlayer class can be used to control playback
@@ -972,7 +983,8 @@ public class MediaPlayer implements SubtitleController.Listener
     public void setDataSource(Context context, Uri uri, Map<String, String> headers)
             throws IOException, IllegalArgumentException, SecurityException, IllegalStateException {
         final String scheme = uri.getScheme();
-        if (ContentResolver.SCHEME_FILE.equals(scheme)) {
+        /// M: If scheme is null, try to get path from uri and setDataSource with path.
+        if (scheme == null || ContentResolver.SCHEME_FILE.equals(scheme)) {
             setDataSource(uri.getPath());
             return;
         } else if (ContentResolver.SCHEME_CONTENT.equals(scheme)
@@ -990,6 +1002,7 @@ public class MediaPlayer implements SubtitleController.Listener
             ContentResolver resolver = context.getContentResolver();
             fd = resolver.openAssetFileDescriptor(uri, "r");
             if (fd == null) {
+                Log.e(TAG, "setDataSource: Null fd! uri=" + uri);
                 return;
             }
             // Note: using getDeclaredLength so that our behavior is the same
@@ -1002,16 +1015,22 @@ public class MediaPlayer implements SubtitleController.Listener
             }
             return;
         } catch (SecurityException ex) {
+            Log.e(TAG, "setDataSource: SecurityException! uri=" + uri, ex);
         } catch (IOException ex) {
+            Log.e(TAG, "setDataSource: IOException! uri=" + uri, ex);
         } finally {
             if (fd != null) {
                 fd.close();
             }
         }
-
         Log.d(TAG, "Couldn't open file on client side, trying server side");
-
-        setDataSource(uri.toString(), headers);
+        if (SystemProperties.getBoolean("ro.mtk_bsp_package", false)) {
+            setDataSource(uri.toString(), headers);
+        } else {
+            IOmaSettingHelper helper = MPlugin.createInstance(IOmaSettingHelper.class.getName(),
+                    context);
+            setDataSource(uri.toString(), helper.setSettingHeader(context, uri, headers));
+        }
     }
 
     /**
@@ -1163,6 +1182,18 @@ public class MediaPlayer implements SubtitleController.Listener
             _setVolume(0, 0);
         }
         stayAwake(true);
+        _start();
+    }
+
+    /**
+     * M: Add to call by FM, don't require wakelock
+     * @hide
+     */
+    public void startWithoutWakelock() throws IllegalStateException {
+        if (isRestricted()) {
+            _setVolume(0, 0);
+        }
+        //stayAwake(true);
         _start();
     }
 
@@ -1474,6 +1505,9 @@ public class MediaPlayer implements SubtitleController.Listener
         mOnInfoListener = null;
         mOnVideoSizeChangedListener = null;
         mOnTimedTextListener = null;
+        /// M: update duration dynamically @{
+        mOnDurationUpdateListener = null;
+        /// @}
         if (mTimeProvider != null) {
             mTimeProvider.close();
             mTimeProvider = null;
@@ -1508,7 +1542,7 @@ public class MediaPlayer implements SubtitleController.Listener
         if (mTimeProvider != null) {
             mTimeProvider.close();
             mTimeProvider = null;
-        }
+          }
 
         stayAwake(false);
         _reset();
@@ -1656,10 +1690,97 @@ public class MediaPlayer implements SubtitleController.Listener
      */
     public native void attachAuxEffect(int effectId);
 
+    /* Do not change these values (starting with KEY_PARAMETER) without updating
+     * their counterparts in include/media/mediaplayer.h!
+     */
+
+    // There are currently no defined keys usable from Java with get*Parameter.
+    // But if any keys are defined, the order must be kept in sync with include/media/mediaplayer.h.
+    // private static final int KEY_PARAMETER_... = ...;
+
 
     /**
      * Sets the send level of the player to the attached auxiliary effect.
      * See {@link #attachAuxEffect(int)}. The level value range is 0 to 1.0.
+     * @param key key indicates the parameter to be set.
+     * @param value value of the parameter to be set.
+     * @return true if the parameter is set successfully, false otherwise
+     * {@hide}
+     */
+    public boolean setParameter(int key, String value) {
+        Parcel p = Parcel.obtain();
+        p.writeString(value);
+        boolean ret = setParameter(key, p);
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Sets the parameter indicated by key.
+     * @param key key indicates the parameter to be set.
+     * @param value value of the parameter to be set.
+     * @return true if the parameter is set successfully, false otherwise
+     * {@hide}
+     */
+    public boolean setParameter(int key, int value) {
+        Parcel p = Parcel.obtain();
+        p.writeInt(value);
+        boolean ret = setParameter(key, p);
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @param reply value of the parameter to get.
+     */
+    private native void getParameter(int key, Parcel reply);
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * The caller is responsible for recycling the returned parcel.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public Parcel getParcelParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        return p;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public String getStringParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        String ret = p.readString();
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public int getIntParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        int ret = p.readInt();
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Sets the send level of the player to the attached auxiliary effect
+     * {@see #attachAuxEffect(int)}. The level value range is 0 to 1.0.
      * <p>By default the send level is 0, so even if an effect is attached to the player
      * this method must be called for the effect to be applied.
      * <p>Note that the passed level value is a raw scalar. UI controls should be scaled
@@ -1906,6 +2027,37 @@ public class MediaPlayer implements SubtitleController.Listener
      */
     public static final String MEDIA_MIMETYPE_TEXT_SUBRIP = "application/x-subrip";
 
+    ///M: Add for MTK_SUBTITLE_SUPPORT @{
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUBASS = "application/x-subtitle-ass";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUBSSA = "application/x-subtitle-ssa";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUBTXT = "application/x-subtitle-txt";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUBMPL = "application/x-subtitle-mpl";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUBSMI = "application/x-subtitle-smi";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_SUB = "application/x-subtitle-sub";
+    /**
+      * {@hide}
+      */
+    public static final String MEDIA_MIMETYPE_TEXT_IDX = "application/x-subtitle-idx";
+    ///@}
+
     /**
      * MIME type for WebVTT subtitle data.
      * @hide
@@ -1925,6 +2077,33 @@ public class MediaPlayer implements SubtitleController.Listener
         if (MEDIA_MIMETYPE_TEXT_SUBRIP.equals(mimeType)) {
             return true;
         }
+
+        ///M: Add for MTK_SUBTITLE_SUPPORT @{
+        if (SystemProperties.getBoolean("ro.mtk_subtitle_support", false)) {
+            if (mimeType == MEDIA_MIMETYPE_TEXT_SUBASS) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_SUBSSA) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_SUBTXT) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_SUBMPL) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_SUBSMI) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_SUB) {
+                return true;
+            }
+            else if (mimeType == MEDIA_MIMETYPE_TEXT_IDX) {
+                return true;
+            }
+        }
+        ///@}
+
         return false;
     }
 
@@ -1992,6 +2171,7 @@ public class MediaPlayer implements SubtitleController.Listener
     public void addSubtitleSource(InputStream is, MediaFormat format)
             throws IllegalStateException
     {
+        Log.d(TAG, "addSubtitleSource: MediaFormat = " + format);
         final InputStream fIs = is;
         final MediaFormat fFormat = format;
 
@@ -2009,11 +2189,13 @@ public class MediaPlayer implements SubtitleController.Listener
         handler.post(new Runnable() {
             private int addTrack() {
                 if (fIs == null || mSubtitleController == null) {
+                    Log.e(TAG, "addSubtitleSource: MEDIA_INFO_UNSUPPORTED_SUBTITLE");
                     return MEDIA_INFO_UNSUPPORTED_SUBTITLE;
                 }
 
                 SubtitleTrack track = mSubtitleController.addTrack(fFormat);
                 if (track == null) {
+                    Log.e(TAG, "addSubtitleSource: MEDIA_INFO_UNSUPPORTED_SUBTITLE");
                     return MEDIA_INFO_UNSUPPORTED_SUBTITLE;
                 }
 
@@ -2128,12 +2310,15 @@ public class MediaPlayer implements SubtitleController.Listener
             ContentResolver resolver = context.getContentResolver();
             fd = resolver.openAssetFileDescriptor(uri, "r");
             if (fd == null) {
+                Log.e(TAG, "addTimedTextSource: Null fd! uri=" + uri);
                 return;
             }
             addTimedTextSource(fd.getFileDescriptor(), mimeType);
             return;
         } catch (SecurityException ex) {
+            Log.e(TAG, "addTimedTextSource: SecurityException! uri=" + uri, ex);
         } catch (IOException ex) {
+            Log.e(TAG, "addTimedTextSource: IOException! uri=" + uri);
         } finally {
             if (fd != null) {
                 fd.close();
@@ -2195,6 +2380,24 @@ public class MediaPlayer implements SubtitleController.Listener
             throw new RuntimeException(ex);
         }
 
+        ///M: if sub file is bitmap type return directly @{
+        if (SystemProperties.getBoolean("ro.mtk_subtitle_support", false) 
+            && MEDIA_MIMETYPE_TEXT_SUB.equals(mime)) {
+            byte[] header = new byte[4];
+            try{
+                IoBridge.read(fd2, header, 0, 4);                
+                if ((header[0] & 0xFF)==0x00 && (header[1] & 0xFF )==0x00 
+                    && (header[2] & 0xFF)==0x01 && (header[3] & 0xFF)==0xBA) {
+                    Log.d(TAG, "Bitmap sub file, return directly");
+                    return;
+                }
+            } catch (Exception e) {
+                 Log.e(TAG, e.getMessage(), e);
+                 return;
+            }
+        }
+        ///M @}
+
         final MediaFormat fFormat = new MediaFormat();
         fFormat.setString(MediaFormat.KEY_MIME, mime);
         fFormat.setInteger(MediaFormat.KEY_IS_TIMED_TEXT, 1);
@@ -2218,8 +2421,27 @@ public class MediaPlayer implements SubtitleController.Listener
         if (!mSubtitleController.hasRendererFor(fFormat)) {
             // test and add not atomic
             mSubtitleController.registerRenderer(new SRTRenderer(context, mEventHandler));
+            ///M: register more Renderer @{
+            if (SystemProperties.getBoolean("ro.mtk_subtitle_support", false)) {
+                mSubtitleController.registerRenderer(new ASSRenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new MPLRenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new SSARenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new SUBRenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new SMIRenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new TXTRenderer(context, mEventHandler));
+                mSubtitleController.registerRenderer(new VobSubRenderer(context, mEventHandler));
+            }
+            ///M @}
         }
         final SubtitleTrack track = mSubtitleController.addTrack(fFormat);
+
+        ///M: get sub file path from idx file descriptor @{
+        if(SystemProperties.getBoolean("ro.mtk_subtitle_support", false) && 
+            MEDIA_MIMETYPE_TEXT_IDX.equals(mime) && track instanceof VobSubTrack) {
+           ((VobSubTrack)track).getSubPathFromFileDescriptor(fd2);
+        } 
+        ///M @}
+
         mOutOfBandSubtitleTracks.add(track);
 
         final FileDescriptor fd3 = fd2;
@@ -2500,6 +2722,10 @@ public class MediaPlayer implements SubtitleController.Listener
     private static final int MEDIA_ERROR = 100;
     private static final int MEDIA_INFO = 200;
     private static final int MEDIA_SUBTITLE_DATA = 201;
+    /// M: Native layer adds 2 states to implement asyn pause and play. @{
+    private static final int MEDIA_PAUSE_COMPLETE = 600;
+    private static final int MEDIA_PLAY_COMPLETE = 601;
+    /// @}
 
     private TimeProvider mTimeProvider;
 
@@ -2526,6 +2752,7 @@ public class MediaPlayer implements SubtitleController.Listener
                 Log.w(TAG, "mediaplayer went away with unhandled events");
                 return;
             }
+            Log.d(TAG, "handleMessage msg:(" + msg.what + ", " + msg.arg1 + ", " + msg.arg2 + ")");
             switch(msg.what) {
             case MEDIA_PREPARED:
                 scanInternalSubtitleTracks();
@@ -2549,7 +2776,7 @@ public class MediaPlayer implements SubtitleController.Listener
             case MEDIA_PAUSED:
                 if (mTimeProvider != null) {
                     mTimeProvider.onPaused(msg.what == MEDIA_PAUSED);
-                }
+                  }
                 break;
 
             case MEDIA_BUFFERING_UPDATE:
@@ -2566,7 +2793,7 @@ public class MediaPlayer implements SubtitleController.Listener
             case MEDIA_SKIPPED:
               if (mTimeProvider != null) {
                   mTimeProvider.onSeekComplete(mMediaPlayer);
-              }
+                }
               return;
 
             case MEDIA_SET_VIDEO_SIZE:
@@ -2635,7 +2862,32 @@ public class MediaPlayer implements SubtitleController.Listener
                     mOnSubtitleDataListener.onSubtitleData(mMediaPlayer, data);
                 }
                 return;
-
+            case MEDIA_PAUSE_COMPLETE:
+                if (mOnInfoListener != null) {
+                    if (msg.arg1 != 0) {
+                        Log.e(TAG, "MEDIA_PAUSE_COMPLETE failed " + msg.arg1);
+                    }
+                        /// M: fix ALPS00787395
+                        mOnInfoListener.onInfo(mMediaPlayer, MEDIA_INFO_PAUSE_COMPLETED, msg.arg1);
+                }
+                break;
+            case MEDIA_PLAY_COMPLETE:
+                if (mOnInfoListener != null) {
+                    if (msg.arg1 != 0) {
+                        Log.e(TAG, "MEDIA_PLAY_COMPLETE failed " + msg.arg1);
+                    }
+                    /// M: fix ALPS00787395
+                        mOnInfoListener.onInfo(mMediaPlayer, MEDIA_INFO_PLAY_COMPLETED, msg.arg1);
+                }
+                break;
+            /// M: update duration dynamically @{
+            case MEDIA_DURATION_UPDATE:
+                Log.v(TAG, "Duration update (duration=" + msg.arg1 + ")");
+                if (mOnDurationUpdateListener != null) {
+                    mOnDurationUpdateListener.onDurationUpdate(mMediaPlayer, msg.arg1);
+                }
+                break;
+            /// @}
             case MEDIA_NOP: // interface test message - ignore
                 break;
 
@@ -2658,6 +2910,7 @@ public class MediaPlayer implements SubtitleController.Listener
     {
         MediaPlayer mp = (MediaPlayer)((WeakReference)mediaplayer_ref).get();
         if (mp == null) {
+            Log.e(TAG, "postEventFromNative: Null mp! what=" + what + ", arg1=" + arg1 + ", arg2=" + arg2);
             return;
         }
 
@@ -2902,6 +3155,42 @@ public class MediaPlayer implements SubtitleController.Listener
     public static final int MEDIA_ERROR_UNSUPPORTED = -1010;
     /** Some operation takes too long to complete, usually more than 3-5 seconds. */
     public static final int MEDIA_ERROR_TIMED_OUT = -110;
+	
+    /**
+     * M: Constant used to notify the client pause completed.
+     *
+     * {@hide}
+     * @internal
+     */
+    public static final int MEDIA_INFO_PAUSE_COMPLETED = 858;
+
+    /**
+     * M: Contant used to notify the client play completed.
+     *
+     * {@hide}
+     * @internal
+     */
+    public static final int MEDIA_INFO_PLAY_COMPLETED = 859;
+
+    /**
+     * M: The video size of media file is too large for decoder(or other reason),
+     * so decoder can not decode the video.
+     * @see android.media.MediaPlayer.OnInfoListener
+     *
+     * {@hide}
+     * @internal
+     */
+    public static final int MEDIA_INFO_VIDEO_NOT_SUPPORTED = 860;
+
+    /**
+     * M: The decoder can't support the audio format of media file ,
+     * so decoder can not decode the audio.
+     * @see android.media.MediaPlayer.OnInfoListener
+     *
+     * {@hide}
+     * @internal
+     */
+    public static final int MEDIA_INFO_AUDIO_NOT_SUPPORTED = 862;
 
     /**
      * Interface definition of a callback to be invoked when there
@@ -3469,4 +3758,37 @@ public class MediaPlayer implements SubtitleController.Listener
             }
         }
     }
+
+    /// M: update duration dynamically @{
+    /**
+     * Interface definition to notify application when a new(accurate)
+     * duration is available from lower layers
+     *
+     * @hide
+     */
+    public interface OnDurationUpdateListener {
+        /**
+         * Called when a new duration is available from lower layers
+         *
+         * @param duration accurate duration of the currently playing track
+         */
+        void onDurationUpdate(MediaPlayer mp, int duration);
+    }
+
+    /**
+     * Register a callback to be invoked when a new duration is available from
+     * lower layers
+     *
+     * @param listener the callback used to notify application
+     * @hide
+     * @internal
+     */
+    public void setOnDurationUpdateListener(OnDurationUpdateListener listener) {
+        mOnDurationUpdateListener = listener;
+    }
+
+    private static final int MEDIA_DURATION_UPDATE = 300;
+    private OnDurationUpdateListener mOnDurationUpdateListener;
+    /// @}
+
 }

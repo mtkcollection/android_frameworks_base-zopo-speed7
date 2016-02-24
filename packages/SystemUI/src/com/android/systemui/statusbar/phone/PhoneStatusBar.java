@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +34,7 @@ import static com.android.systemui.statusbar.phone.BarTransitions.MODE_SEMI_TRAN
 import static com.android.systemui.statusbar.phone.BarTransitions.MODE_TRANSLUCENT;
 import static com.android.systemui.statusbar.phone.BarTransitions.MODE_TRANSPARENT;
 import static com.android.systemui.statusbar.phone.BarTransitions.MODE_WARNING;
-
+import com.android.systemui.recents.RecentsActivity;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.TimeInterpolator;
@@ -76,12 +81,14 @@ import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.service.notification.StatusBarNotification;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.DisplayMetrics;
@@ -176,18 +183,51 @@ import com.android.systemui.statusbar.stack.StackScrollAlgorithm;
 import com.android.systemui.statusbar.stack.StackScrollState.ViewState;
 import com.android.systemui.volume.VolumeComponent;
 
+import com.mediatek.systemui.ext.IStatusBarPlmnPlugin;
+import com.mediatek.systemui.ext.PluginFactory;
+import com.mediatek.systemui.statusbar.policy.AudioProfileControllerImpl;
+import com.mediatek.systemui.statusbar.policy.DataConnectionControllerImpl;
+import com.mediatek.systemui.statusbar.policy.HotKnotControllerImpl;
+import com.mediatek.systemui.statusbar.util.SIMHelper;
+import com.mediatek.systemui.ext.PluginFactory;
+import com.mediatek.xlog.Xlog;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
+///M:add for multi window,@{
+import com.mediatek.multiwindow.MultiWindowProxy;
+import com.mediatek.common.multiwindow.IMWSystemUiCallback;
+///}@
+/* Vanzo:yinjun on: Mon, 09 Mar 2015 09:55:41 +0800
+ * for float window
+ */
+import android.widget.ImageButton;
+import android.graphics.drawable.BitmapDrawable;
+import android.widget.Button;
+import android.widget.Toast;
+import android.text.format.Formatter;
+import android.app.ActivityManager.MemoryInfo;
+import android.content.ComponentName;
+import android.content.pm.PackageManager;
+import android.content.pm.ActivityInfo;
+import android.content.pm.ResolveInfo;
+import java.io.BufferedReader;
+import java.io.IOException;
+import android.app.Dialog;
+import android.view.Window;
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
 public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         DragDownHelper.DragDownCallback, ActivityStarter, OnUnlockMethodChangedListener {
     static final String TAG = "PhoneStatusBar";
-    public static final boolean DEBUG = BaseStatusBar.DEBUG;
+    /// M: For debug
+    public static final boolean DEBUG = true;
     public static final boolean SPEW = false;
     public static final boolean DUMPTRUCK = true; // extra dumpsys info
     public static final boolean DEBUG_GESTURES = false;
@@ -263,6 +303,13 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
     BrightnessMirrorController mBrightnessMirrorController;
     AccessibilityController mAccessibilityController;
 
+    /// M: add HotKnot in quicksetting
+    HotKnotControllerImpl mHotKnotController;
+    /// M: add AudioProfile in quicksetting
+    AudioProfileControllerImpl mAudioProfileController;
+    /// M: add DataConnection in quicksetting
+    DataConnectionControllerImpl mDataConnectionController;
+
     int mNaturalBarHeight = -1;
     int mIconSize = -1;
     int mIconHPadding = -1;
@@ -327,12 +374,20 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
     // carrier/wifi label
     private TextView mCarrierLabel;
+/* Vanzo:yinjun on: Fri, 10 Apr 2015 10:24:08 +0800
+ * add statusbar carrier
+ */
+    private TextView mStatusBarCarrierLabel;
+    private boolean mStatusBarCarrierVisible = false;
+// End of Vanzo: yinjun
     private boolean mCarrierLabelVisible = false;
     private int mCarrierLabelHeight;
     private int mStatusBarHeaderHeight;
 
     private boolean mShowCarrierInPanel = false;
 
+    //status bar plmn text
+    private TextView mPlmnDisplay;
     // position
     int[] mPositionTmp = new int[2];
     boolean mExpandedVisible;
@@ -373,6 +428,9 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
     private int mNavigationIconHints = 0;
     private HandlerThread mHandlerThread;
+
+    /// M: [Smartbook] Process Notification Key
+    boolean mQuicksettingShow = false;
 
     // ensure quick settings is disabled until the current user makes it through the setup wizard
     private boolean mUserSetup = false;
@@ -577,6 +635,88 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             goToLockedShade(null);
         }
     };
+/* Vanzo:yinjun on: Mon, 09 Mar 2015 10:02:54 +0800
+ * apps float window
+ */
+    private boolean isAdded = false;
+    private static WindowManager wm;
+    private static WindowManager.LayoutParams params;
+    private static PackageManager packageManager;
+    private ImageButton btn_floatView;
+    private float windowW;
+    private Dialog mQuickAppDialog;
+    private BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if ("show_float_apps_window".equals(intent.getAction())) {
+                boolean isShow = intent.getBooleanExtra("is_show",false);
+                if (isShow) {
+                    createFloatView();
+                } else {
+                    wm.removeView(btn_floatView);
+                }
+            }
+        }
+    };
+    private Button mSwitchApps;
+    private Button top_left,top_right,bottom_left,bottom_right;
+    private View animView;
+    private String[] app_local = new String[]{"top_one","left_one","right_one","bottom_one","top_two","left_two","right_two","bottom_two"};
+    public final static String DEFAULT_TOP_ONE = "com.android.dialer&com.android.dialer.DialtactsActivity";
+    public final static String DEFAULT_LEFT_ONE = "com.android.mms&com.android.mms.ui.BootActivity";
+    public final static String DEFAULT_RIGHT_ONE = "com.android.email&com.android.email.activity.Welcome";
+    public final static String DEFAULT_BOTTOM_ONE = "com.android.browser&com.android.browser.BrowserActivity";
+    private Handler myHandler = new Handler(){
+        @Override
+            public void handleMessage(Message msg) {
+                super.handleMessage(msg);
+                updateWindowView();
+            }
+    };
+    private View.OnClickListener clickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(View view) {
+            switch (view.getId()){
+                case R.id.switch_apps:
+                    mSwitchApps = (Button)view;
+                    if ("one".equals(view.getTag().toString())) {
+                        mSwitchApps.setTag("two");
+                        RotateAnimation rotateAnimation = new RotateAnimation(animView.getWidth()/2.0f,animView.getHeight()/2.0f,RotateAnimation.ROTATE_DECREASE);
+                        animView.startAnimation(rotateAnimation);
+                    } else if ("two".equals(view.getTag().toString())) {
+                        mSwitchApps.setTag("one");
+                        RotateAnimation rotateAnimation = new RotateAnimation(animView.getWidth()/2.0f,animView.getHeight()/2.0f,RotateAnimation.ROTATE_INCREASE);
+                        animView.startAnimation(rotateAnimation);
+                    }
+                    myHandler.sendEmptyMessageDelayed(0,400);
+                    break;
+                case R.id.top_left:
+                case R.id.top_right:
+                case R.id.bottom_left:
+                case R.id.bottom_right:
+                    Object obj = view.getTag();
+                    Intent intent = new Intent();
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    if (obj != null) {
+                        String packageName = obj.toString().split("&")[0];
+                        String activityName = obj.toString().split("&")[1];
+                        if (isApkExist(mContext,packageName)) {
+                            intent.setComponent(new ComponentName(packageName,activityName));
+                        } else {
+                            intent.setComponent(new ComponentName("com.android.settings","com.android.settings.floatwindow.FloatWindowSettings"));
+                        }
+                    } else {
+                        intent.setComponent(new ComponentName("com.android.settings","com.android.settings.floatwindow.FloatWindowSettings"));
+                    }
+                    mContext.startActivity(intent);
+                    if (mQuickAppDialog != null) {
+                        mQuickAppDialog.dismiss();
+                    }
+                    break;
+            }
+        }
+    };
+// End of Vanzo: yinjun
 
     @Override
     public void start() {
@@ -585,6 +725,15 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         updateDisplaySize();
         mScrimSrcModeEnabled = mContext.getResources().getBoolean(
                 R.bool.config_status_bar_scrim_behind_use_src);
+
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        if (SIMHelper.isMtkSmartBookSupport()) {
+            /// M: [ALPS01097705] Query the plug-in state as soon as possible.
+            mIsDisplayDevice = SIMHelper.isSmartBookPluggedIn(mContext);
+            Log.v(TAG, "start, mIsDisplayDevice=" + mIsDisplayDevice);
+        }
+        /// @}
+
         super.start(); // calls createAndAddWindows()
 
         mMediaSessionManager
@@ -628,6 +777,7 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
     protected PhoneStatusBarView makeStatusBarView() {
         final Context context = mContext;
 
+        Xlog.d(TAG, "makeStatusBarView : Start");
         Resources res = context.getResources();
 
         updateDisplaySize(); // populates mDisplayMetrics
@@ -635,8 +785,22 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
         mIconSize = res.getDimensionPixelSize(com.android.internal.R.dimen.status_bar_icon_size);
 
+        /// M: Support "Change font size of phone".
+        Configuration config = res.getConfiguration();
+
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        Log.v(TAG, "makeStatusBarView dump config information start ");
+        Log.v(TAG, " widthPixels = " + mDisplayMetrics.widthPixels);
+        Log.v(TAG, " heightPixels = " + mDisplayMetrics.heightPixels);
+        Log.v(TAG, " orientation = " + config.orientation);
+        Log.v(TAG, " config = " + config.toString());
+        Log.v(TAG, "makeStatusBarView dump config information end ");
+        /// @}
+
+        Xlog.d(TAG, "makeStatusBarView : inflate super_status_bar +");
         mStatusBarWindow = (StatusBarWindowView) View.inflate(context,
                 R.layout.super_status_bar, null);
+        Xlog.d(TAG, "makeStatusBarView : inflate super_status_bar -");
         mStatusBarWindow.mService = this;
         mStatusBarWindow.setOnTouchListener(new View.OnTouchListener() {
             @Override
@@ -660,7 +824,8 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 R.id.notification_panel);
         mNotificationPanel.setStatusBar(this);
 
-        if (!ActivityManager.isHighEndGfx()) {
+        //  M: setBackground in 512 low ram device
+        if (!ActivityManager.isHighEndGfx() && !SystemProperties.getBoolean("ro.config.low_ram", true)) {
             mStatusBarWindow.setBackground(null);
             mNotificationPanel.setBackground(new FastColorDrawable(context.getResources().getColor(
                     R.color.notification_panel_solid_background)));
@@ -683,8 +848,14 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             boolean showNav = mWindowManagerService.hasNavigationBar();
             if (DEBUG) Log.v(TAG, "hasNavigationBar=" + showNav);
             if (showNav) {
+                     /// M: add for multi window @{
+                int layoutId = R.layout.navigation_bar;
+                if(RecentsActivity.FLOAT_WINDOW_SUPPORT){
+                    layoutId = R.layout.navigation_bar_float_window;
+                }
                 mNavigationBarView =
-                    (NavigationBarView) View.inflate(context, R.layout.navigation_bar, null);
+                    (NavigationBarView) View.inflate(context, /*R.layout.navigation_bar*/layoutId, null);
+                /// @}
 
                 mNavigationBarView.setDisabledFlags(mDisabled);
                 mNavigationBarView.setBar(this);
@@ -720,7 +891,20 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         mMoreIcon = mStatusBarView.findViewById(R.id.moreIcon);
         mNotificationIcons.setOverflowIndicator(mMoreIcon);
         mStatusBarContents = (LinearLayout)mStatusBarView.findViewById(R.id.status_bar_contents);
-
+        /*add calling code here */
+        /*calling the plugin for plmn display for orange*/
+        /// M: calling the plugin for plmn display for orange 
+        Xlog.d(TAG, "over the call to plugin factory");
+        mPlmnDisplay = PluginFactory.getStatusBarPlmnPlugin(mContext).getPlmnTextView(mContext);
+            if (mPlmnDisplay != null) {
+                mPlmnDisplay.setVisibility(View.VISIBLE);
+                String str = (String) mPlmnDisplay.getText();
+                if (str == null)
+                    Xlog.d(TAG, "No text in framework");
+                Xlog.d(TAG, "text of TextView = " + str);
+                mStatusBarContents.addView(mPlmnDisplay, 0);
+                mNotificationIcons.setCarrierText(mPlmnDisplay);
+          }
         mStackScroller = (NotificationStackScrollLayout) mStatusBarWindow.findViewById(
                 R.id.notification_stack_scroller);
         mStackScroller.setLongPressListener(getNotificationLongClicker());
@@ -796,7 +980,9 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         mHandlerThread.start();
 
         // Other icons
+        Xlog.d(TAG, "makeStatusBarView : LocationControllerImpl");
         mLocationController = new LocationControllerImpl(mContext); // will post a notification
+        Xlog.d(TAG, "makeStatusBarView : BatteryController");
         mBatteryController = new BatteryController(mContext);
         mBatteryController.addStateChangedCallback(new BatteryStateChangeCallback() {
             @Override
@@ -811,19 +997,61 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 // noop
             }
         });
+        Xlog.d(TAG, "makeStatusBarView : NetworkControllerImpl");
         mNetworkController = new NetworkControllerImpl(mContext);
+        Xlog.d(TAG, "makeStatusBarView : HotspotControllerImpl");
         mHotspotController = new HotspotControllerImpl(mContext);
+        Xlog.d(TAG, "makeStatusBarView : BluetoothControllerImpl");
         mBluetoothController = new BluetoothControllerImpl(mContext, mHandlerThread.getLooper());
+        Xlog.d(TAG, "makeStatusBarView : SecurityControllerImpl");
         mSecurityController = new SecurityControllerImpl(mContext);
+
+        /// M: add HotKnot in quicksetting @{
+        if (SIMHelper.isMtkHotKnotSupport()) {
+            Xlog.d(TAG, "makeStatusBarView : HotKnotControllerImpl");
+            mHotKnotController = new HotKnotControllerImpl(mContext);
+        } else {
+            mHotKnotController = null;
+        }
+        /// add HotKnot in quicksetting @}
+
+        /// M: add AudioProfile in quicksetting @{
+        if (SIMHelper.isMtkAudioProfilesSupport()) {
+            Xlog.d(TAG, "makeStatusBarView : AudioProfileControllerImpl");
+            mAudioProfileController = new AudioProfileControllerImpl(mContext);
+        } else {
+            mAudioProfileController = null;
+        }
+        /// M: add AudioProfile in quicksetting @}
+
+        /// M: add DataConnection in quicksetting @{
+        SIMHelper.setContext(mContext);
+
+        if(!SIMHelper.isWifiOnlyDevice()) {
+            Xlog.d(TAG, "makeStatusBarView : DataConnectionControllerImpl");
+            mDataConnectionController = new DataConnectionControllerImpl(mContext);
+        } else {
+            mDataConnectionController = null;
+        }
+        /// M: add DataConnection in quicksetting @}
+
         if (mContext.getResources().getBoolean(R.bool.config_showRotationLock)) {
+            Xlog.d(TAG, "makeStatusBarView : RotationLockControllerImpl");
             mRotationLockController = new RotationLockControllerImpl(mContext);
         }
+        Xlog.d(TAG, "makeStatusBarView : UserInfoController +");
         mUserInfoController = new UserInfoController(mContext);
+        Xlog.d(TAG, "makeStatusBarView : UserInfoController -");
         mVolumeComponent = getComponent(VolumeComponent.class);
         if (mVolumeComponent != null) {
             mZenModeController = mVolumeComponent.getZenController();
         }
-        mCastController = new CastControllerImpl(mContext);
+        // M: Remove CastTile when WFD is not support in quicksetting
+        if (SIMHelper.isWifiDisplaySupport()) {
+            Xlog.d(TAG, "makeStatusBarView : CastControllerImpl +");
+            mCastController = new CastControllerImpl(mContext);
+            Xlog.d(TAG, "makeStatusBarView : CastControllerImpl -");
+        }
         final SignalClusterView signalCluster =
                 (SignalClusterView) mStatusBarView.findViewById(R.id.signal_cluster);
         final SignalClusterView signalClusterKeyguard =
@@ -839,19 +1067,35 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         signalClusterKeyguard.setNetworkController(mNetworkController);
         signalClusterQs.setSecurityController(mSecurityController);
         signalClusterQs.setNetworkController(mNetworkController);
-        final boolean isAPhone = mNetworkController.hasVoiceCallingFeature();
-        if (isAPhone) {
-            mNetworkController.addEmergencyListener(new NetworkControllerImpl.EmergencyListener() {
-                @Override
-                public void setEmergencyCallsOnly(boolean emergencyOnly) {
+        /// M: [ALPS01967373] set EmergencyCallsOnly text @{
+        mNetworkController.addEmergencyListener(new NetworkControllerImpl.EmergencyListener() {
+            @Override
+            public void setEmergencyCallsOnly(boolean emergencyOnly) {
+                final boolean isAPhone = mNetworkController.hasVoiceCallingFeature();
+                if (DEBUG) {
+                    Xlog.d(TAG, "setEmergencyCallsOnly: " + emergencyOnly +
+                        ", voiceFeature: " + isAPhone);
+                }
+                if (isAPhone || emergencyOnly == false) {
                     mHeader.setShowEmergencyCallsOnly(emergencyOnly);
                 }
-            });
-        }
+            }
+        });
+        /// M: [ALPS01967373] set EmergencyCallsOnly text @}
 
         mCarrierLabel = (TextView)mStatusBarWindow.findViewById(R.id.carrier_label);
+/* Vanzo:yinjun on: Fri, 10 Apr 2015 10:18:28 +0800
+ * add statubar carrier
+ */
+        if (FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_CARRIER) {
+            mStatusBarCarrierLabel = (TextView)mStatusBarWindow.findViewById(R.id.my_carrier_label);
+        }
+// End of Vanzo: yinjun
         mShowCarrierInPanel = (mCarrierLabel != null);
         if (DEBUG) Log.v(TAG, "carrierlabel=" + mCarrierLabel + " show=" + mShowCarrierInPanel);
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN" @{
+        mStatusBarPlmnPlugin = PluginFactory.getStatusBarPlmnPlugin(context);
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN" @}
         if (mShowCarrierInPanel) {
             mCarrierLabel.setVisibility(mCarrierLabelVisible ? View.VISIBLE : View.INVISIBLE);
 
@@ -859,26 +1103,61 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 @Override
                 public void setCarrierLabel(String label) {
                     mCarrierLabel.setText(label);
+/* Vanzo:yinjun on: Fri, 10 Apr 2015 10:20:15 +0800
+ * add statubar carrier
+ */
+                    if (FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_CARRIER) {
+                        String netWorkName = mNetworkController.getMobileNetworkName();
+                        if (mNetworkController.isEmergencyOnly() || TextUtils.isEmpty(netWorkName)) {
+                            mStatusBarCarrierLabel.setText("");
+                            mStatusBarCarrierLabel.setVisibility(View.GONE);
+                        } else {
+                            mStatusBarCarrierLabel.setText(netWorkName);
+                            if (mStatusBarCarrierVisible) {
+                                mStatusBarCarrierLabel.setVisibility(View.VISIBLE);
+                            }
+                        }
+                    }
+// End of Vanzo: yinjun
                     if (mNetworkController.hasMobileDataFeature()) {
                         if (TextUtils.isEmpty(label)) {
                             mCarrierLabel.setVisibility(View.GONE);
                         } else {
-                            mCarrierLabel.setVisibility(View.VISIBLE);
+                            /// M: Support "Operator plugin - Customize Carrier Label for PLMN" @{
+                            if (!(mStatusBarPlmnPlugin != null
+                                    && mStatusBarPlmnPlugin.supportCustomizeCarrierLabel())) {
+                                mCarrierLabel.setVisibility(View.VISIBLE);
+                            }
+                            /// M: Support "Operator plugin - Customize Carrier Label for PLMN" @}
                         }
                     }
                 }
             });
         }
 
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @{
+        if (supportCustomizeCarrierLabel()) {
+            mCustomizeCarrierLabel = mStatusBarPlmnPlugin.customizeCarrierLabel(
+                    mNotificationPanel, mCarrierLabel);
+        }
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @}
+
+        Xlog.d(TAG, "makeStatusBarView : FlashlightController +");
         mFlashlightController = new FlashlightController(mContext);
+        Xlog.d(TAG, "makeStatusBarView : FlashlightController -");
         mKeyguardBottomArea.setFlashlightController(mFlashlightController);
         mKeyguardBottomArea.setPhoneStatusBar(this);
+        Xlog.d(TAG, "makeStatusBarView : AccessibilityController");
         mAccessibilityController = new AccessibilityController(mContext);
         mKeyguardBottomArea.setAccessibilityController(mAccessibilityController);
+        Xlog.d(TAG, "makeStatusBarView : NextAlarmController +");
         mNextAlarmController = new NextAlarmController(mContext);
+        Xlog.d(TAG, "makeStatusBarView : NextAlarmController -");
         mKeyguardMonitor = new KeyguardMonitor();
         if (UserSwitcherController.isUserSwitcherAvailable(UserManager.get(mContext))) {
+            Xlog.d(TAG, "makeStatusBarView : UserSwitcherController +");
             mUserSwitcherController = new UserSwitcherController(mContext, mKeyguardMonitor);
+            Xlog.d(TAG, "makeStatusBarView : UserSwitcherController -");
         }
         mKeyguardUserSwitcher = new KeyguardUserSwitcher(mContext,
                 (ViewStub) mStatusBarWindow.findViewById(R.id.keyguard_user_switcher),
@@ -893,7 +1172,14 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                     mNetworkController, mZenModeController, mHotspotController,
                     mCastController, mFlashlightController,
                     mUserSwitcherController, mKeyguardMonitor,
-                    mSecurityController);
+                    mSecurityController,
+                    /// M: add HotKnot in quicksetting
+                    mHotKnotController,
+                    /// M: add AudioProfile in quicksetting
+                    mAudioProfileController,
+                    /// M: add DataConnection in quicksetting
+                    mDataConnectionController                    
+            );
             mQSPanel.setHost(qsh);
             mQSPanel.setTiles(qsh.getTiles());
             mBrightnessMirrorController = new BrightnessMirrorController(mStatusBarWindow);
@@ -932,11 +1218,43 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         }
         filter.addAction(ACTION_DEMO);
         context.registerReceiverAsUser(mBroadcastReceiver, UserHandle.ALL, filter, null, null);
+/* Vanzo:qiukai on: Fri, 08 May 2015 17:36:49 +0800
+ * support blank up down notification
+ */
+        if (FeatureOption.VANZO_FEATURE_SYSTEMUI_LAUNCHER_SUPPORT_BLANK_UP_DOWN_NOTIFICATION) {
+            IntentFilter myFilter = new IntentFilter();
+            myFilter.addAction("com.intent.notification.launcher");
+            context.registerReceiver(notificationReceiver, myFilter);
+        }
+// End of Vanzo:qiukai
+
+        /// M: [SystemUI] Support Smartbook Feature. @{
+        if (SIMHelper.isMtkSmartBookSupport()) {
+            IntentFilter mFilter = new IntentFilter(Intent.ACTION_SMARTBOOK_PLUG);
+            context.registerReceiver(mDisplayDevicePluginReceiver, mFilter);
+            Log.v(TAG, "makeStatusBarView, isSmartBookPluggedIn="
+                + SIMHelper.isSmartBookPluggedIn(context));
+        }
+        /// @}
 
         // listen for USER_SETUP_COMPLETE setting (per-user)
         resetUserSetupObserver();
 
         startGlyphRasterizeHack();
+        Xlog.d(TAG, "makeStatusBarView : End");
+/* Vanzo:yinjun on: Mon, 09 Mar 2015 09:57:21 +0800
+ * for float window
+ */
+        if (FeatureOption.VANZO_FEATURE_APPS_FLOAT_WINDOW) {
+            boolean mSwitchChecked = Settings.System.getInt(mContext.getContentResolver(),"apps_switch",0) == 1 ? true : false;
+            if (mSwitchChecked) {
+                createFloatView();
+            }
+            IntentFilter intentFilter = new IntentFilter();
+            intentFilter.addAction("show_float_apps_window");
+            mContext.registerReceiver(receiver,intentFilter);
+        }
+// End of Vanzo: yinjun
         return mStatusBarView;
     }
 
@@ -1076,6 +1394,88 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         return lp;
     }
 
+    /// M: add for multi window @{
+    public void updateNavigationBarIcon(int state){
+        if (mNavigationBarView != null) mNavigationBarView.setDisabledFlags(state);
+    }
+
+    public void updateFloatButtonIcon(boolean flaotPanelOpen) {
+        if (mNavigationBarView != null) {
+            if (flaotPanelOpen) {
+                mNavigationBarView.getFloatButton().setImageResource(R.drawable.ic_sysbar_up);
+                checkBarModes();
+            } else {
+                mNavigationBarView.getFloatButton().setImageResource(R.drawable.ic_sysbar_down);
+                mNavigationBarView.getBarTransitions().transitionTo(MODE_OPAQUE, true);
+            }
+        }
+    }
+	public void updateFloatButtonIconOnly(boolean floatPanelOpen) {/// M: [SystemUI] [Tablet Only]Support "Multi Window" 
+		Log.v(TAG, "updateFloatButtonIconOnly, floatPanelOpen=" + floatPanelOpen);
+        if (mNavigationBarView != null) {
+            if (floatPanelOpen) {
+                mNavigationBarView.getFloatButton().setImageResource(R.drawable.ic_sysbar_down);
+            } else {
+                mNavigationBarView.getFloatButton().setImageResource(R.drawable.ic_sysbar_up);
+            }
+        }
+    }
+
+    public void setNavigationBarEditFloatListener(View.OnClickListener listener) {
+        if (mNavigationBarView != null) {
+            mNavigationBarView.getExtensionButton().setOnClickListener(listener);
+        }
+    }
+
+    public void setExtensionButtonVisibility(int visibility) {
+        if (mNavigationBarView != null) {
+			mNavigationBarView.getExtensionButton().setText(R.string.more);
+            mNavigationBarView.getExtensionButton().setVisibility(visibility);
+        }
+    }
+	///* M:ALPS01454734 Icon of multi window display on lock screen*/
+	public void setFloatButtonVisibility(int visibility) {
+        if (mNavigationBarView != null) {
+            mNavigationBarView.getFloatButton().setVisibility(visibility);
+        }
+    }
+    
+    @Override
+    protected WindowManager.LayoutParams getFloatLayoutParams(LayoutParams layoutParams,boolean focus) {
+        boolean opaque = false;
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_SYSTEM_ALERT, 
+                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_IGNORE_CHEEK_PRESSES
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+                | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
+                ,
+                (opaque ? PixelFormat.OPAQUE : PixelFormat.TRANSLUCENT));
+
+		lp.privateFlags |=
+                WindowManager.LayoutParams.PRIVATE_FLAG_SHOW_FOR_ALL_USERS; /*show multi-window screen in multi-user ui  */
+
+        if(!focus){
+            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE; 
+        }
+        if (ActivityManager.isHighEndGfx()) {
+            lp.flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+        } else {
+            lp.flags |= WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+            lp.dimAmount = 0.75f;
+        }
+        lp.gravity = Gravity.BOTTOM | Gravity.LEFT;
+        lp.setTitle("FloatPanel");
+        lp.windowAnimations = com.android.internal.R.style.Animation_RecentApplications;
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
+        | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+        return lp;
+    }
     @Override
     protected void updateSearchPanel() {
         super.updateSearchPanel();
@@ -1136,6 +1536,13 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             return true;
         }
     };
+    /// M: add for multi window @{
+    private View.OnClickListener mFloatClickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            toggleFloatApps();
+        }
+    };
 
     private int mShowSearchHoldoff = 0;
     private Runnable mShowSearchPanel = new Runnable() {
@@ -1185,7 +1592,16 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         mNavigationBarView.getBackButton().setLongClickable(true);
         mNavigationBarView.getBackButton().setOnLongClickListener(mLongPressBackRecentsListener);
         mNavigationBarView.getHomeButton().setOnTouchListener(mHomeActionListener);
+	/// M: add for multi window @{
+        if(RecentsActivity.FLOAT_WINDOW_SUPPORT){
+            mNavigationBarView.getFloatButton().setOnClickListener(mFloatClickListener);
+        }       
         updateSearchPanel();
+        //Multi window
+        MultiWindowProxy mMultiWindowProxy =MultiWindowProxy.getInstance();
+        if (mMultiWindowProxy != null){
+             mMultiWindowProxy.setSystemUiCallback(new MWSystemUiCallback());              
+        }         
     }
 
     // For small-screen devices (read: phones) that lack hardware navigation buttons
@@ -1595,6 +2011,10 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         final int N = activeNotifications.size();
         ArrayList<StatusBarIconView> toShow = new ArrayList<>(N);
 
+        /// M: StatusBar IconMerger feature.
+        // hash{pkg+icon}=iconlevel
+        HashMap<String, Integer> uniqueIcon = new HashMap<String, Integer>();
+
         // Filter out notifications with low scores.
         for (int i = 0; i < N; i++) {
             Entry ent = activeNotifications.get(i);
@@ -1602,8 +2022,20 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                     !NotificationData.showNotificationEvenIfUnprovisioned(ent.notification)) {
                 continue;
             }
+            /// M: StatusBar IconMerger feature. @{
+            String key = ent.notification.getPackageName() + String.valueOf(ent.notification.getNotification().icon);
+            if (uniqueIcon.containsKey(key) && uniqueIcon.get(key) == ent.notification.getNotification().iconLevel) {
+                Log.d(TAG, "updateNotificationIcons(), IconMerger feature, skip pkg / icon / iconlevel ="
+                    + ent.notification.getPackageName() + "/" + ent.notification.getNotification().icon + "/" + ent.notification.getNotification().iconLevel);
+                continue;
+            }
+            /// @}
             toShow.add(ent.icon);
+            /// M: StatusBar IconMerger feature.
+            uniqueIcon.put(key, ent.notification.getNotification().iconLevel);
         }
+        /// M: StatusBar IconMerger feature.
+        uniqueIcon = null;
 
         if (DEBUG) {
             Log.d(TAG, "refreshing icons: " + toShow.size() +
@@ -1650,6 +2082,22 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
     }
 
     protected void updateCarrierLabelVisibility(boolean force) {
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @{
+        if (supportCustomizeCarrierLabel()) {
+            if (mState == StatusBarState.KEYGUARD) {
+                if (mCustomizeCarrierLabel != null) {
+                    mCustomizeCarrierLabel.setVisibility(View.GONE);
+                }
+            } else {
+                if (mCarrierLabel != null) {
+                    mCarrierLabel.setVisibility(View.GONE);
+                }
+                updateCustomizeCarrierLabelVisibility(force);
+                return;
+            }
+        }
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @}
+
         // TODO: Handle this for the notification stack scroller as well
         if (!mShowCarrierInPanel) return;
         // The idea here is to only show the carrier label when there is enough room to see it,
@@ -2032,8 +2480,30 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             mSystemIconArea.animate().cancel();
             if ((state & StatusBarManager.DISABLE_SYSTEM_INFO) != 0) {
                 animateStatusBarHide(mSystemIconArea, animate);
+                if(mPlmnDisplay != null){
+                    mPlmnDisplay.setVisibility(View.GONE);
+                }
+/* Vanzo:yinjun on: Fri, 10 Apr 2015 10:22:06 +0800
+ * add statusbar carrier
+ */
+                if (mStatusBarCarrierLabel != null && FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_CARRIER) {
+                    mStatusBarCarrierVisible = false;
+                    mStatusBarCarrierLabel.setVisibility(View.GONE);
+                }
+// End of Vanzo: yinjun
             } else {
                 animateStatusBarShow(mSystemIconArea, animate);
+                if(mPlmnDisplay != null){
+                    mPlmnDisplay.setVisibility(View.VISIBLE);
+                }
+/* Vanzo:yinjun on: Fri, 10 Apr 2015 10:22:51 +0800
+ * add statusbar carrier
+ */
+                if (mStatusBarCarrierLabel != null && FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_CARRIER) {
+                    mStatusBarCarrierVisible = true;
+                    mStatusBarCarrierLabel.setVisibility(View.VISIBLE);
+                }
+// End of Vanzo: yinjun
             }
         }
 
@@ -2615,7 +3085,12 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 checkBarModes = true;
             }
             if (checkBarModes) {
-                checkBarModes();
+                      if((RecentsActivity.FLOAT_WINDOW_SUPPORT)&&isFloatPanelOpened())  {///M: [SystemUI] [Tablet Only]Support "Multi Window" 
+              ;//nothing to do
+             }
+             else {
+              checkBarModes();
+			 }
             }
             if (sbModeChanged || nbModeChanged) {
                 // update transient bar autohide
@@ -2680,7 +3155,8 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         if (powerSave && getBarState() == StatusBarState.SHADE) {
             mode = MODE_WARNING;
         }
-        transitions.transitionTo(mode, anim);
+        /// M: [ALPS01266566] Performance patch
+        transitions.transitionTo(mode, anim && (mode != MODE_OPAQUE));
     }
 
     private void finishBarAnimations() {
@@ -2714,7 +3190,12 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 mVolumeComponent.dismissNow();
             }
         }
-        checkBarModes();
+       		if((RecentsActivity.FLOAT_WINDOW_SUPPORT)&&isFloatPanelOpened()){///M: [SystemUI] [Tablet Only]Support "Multi Window" 
+		  ;//nothing to do
+		}
+		else {
+           checkBarModes();
+		}
     }
 
     private void resumeSuspendedAutohide() {
@@ -3138,6 +3619,15 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
                 notifyHeadsUpScreenOn(false);
                 finishBarAnimations();
                 resetUserExpandedStates();
+/* Vanzo:yinjun on: Mon, 09 Mar 2015 10:20:25 +0800
+ * apps float window
+ */
+                if (FeatureOption.VANZO_FEATURE_APPS_FLOAT_WINDOW) {
+                    if (mQuickAppDialog != null) {
+                        mQuickAppDialog.dismiss();
+                    }
+                }
+// End of Vanzo: yinjun
             }
             else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 mScreenOn = true;
@@ -3201,6 +3691,9 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         updateShowSearchHoldoff();
         updateRowStates();
         mScreenPinningRequest.onConfigurationChanged();
+				if(RecentsActivity.FLOAT_WINDOW_SUPPORT){///M: [SystemUI] [Tablet Only]Support "Multi Window" 
+		   updateFloatButtonIconOnly(isFloatPanelOpened()); 
+		}
     }
 
     @Override
@@ -3519,6 +4012,13 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             mHandlerThread = null;
         }
         mContext.unregisterReceiver(mBroadcastReceiver);
+/* Vanzo:qiukai on: Fri, 08 May 2015 17:38:20 +0800
+ * support blank up down notification
+ */
+        if (FeatureOption.VANZO_FEATURE_SYSTEMUI_LAUNCHER_SUPPORT_BLANK_UP_DOWN_NOTIFICATION) {
+            mContext.unregisterReceiver(notificationReceiver);
+        }
+// End of Vanzo:qiukai
     }
 
     private boolean mDemoModeAllowed;
@@ -4357,4 +4857,376 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
             }
         }
     }
+
+    /// M: Support "Default SIM Indicator". @{
+    private boolean mIsSimIndicatorShowing = false;
+    private String mBusinessType = null;
+    private int mSubIDinSetting = -100;
+    /**
+        * show SimIndicator.
+        * @param businessType
+        *     public static final String VOICE_CALL_SIM_SETTING = "voice_call_sim_setting";
+        *     public static final String SMS_SIM_SETTING = "sms_sim_setting";
+        *     Default value
+        *     public static final long VOICE_CALL_SIM_SETTING_INTERNET = -2;
+        *     public static final long DEFAULT_SIM_SETTING_ALWAYS_ASK = -1;
+        *     public static final long SMS_SIM_SETTING_AUTO = -3;
+        */
+    public void showSimIndicator(String businessType) {
+        if (mIsSimIndicatorShowing) {
+            hideSimIndicator();
+        }
+        mBusinessType = businessType;
+        Xlog.d(TAG, "showSimIndicator, businessType = " + businessType + ".");
+
+        switch (businessType) {
+            case Settings.System.VOICE_CALL_SIM_SETTING:
+                mSubIDinSetting = SubscriptionManager.getDefaultVoiceSubId();
+                if ((int) Settings.System.DEFAULT_SIM_SETTING_ALWAYS_ASK == mSubIDinSetting ||
+                    (int) Settings.System.VOICE_CALL_SIM_SETTING_INTERNET == mSubIDinSetting) {
+                    Xlog.d(TAG, "showSimIndicator Voice Call Setting= " + mSubIDinSetting);
+                    mNetworkController.showAlwaysAskOrInternetCall(mSubIDinSetting);
+                    mIsSimIndicatorShowing = true;
+                    return;
+                }
+                break;
+            case Settings.System.SMS_SIM_SETTING:
+                mSubIDinSetting = SubscriptionManager.getDefaultSmsSubId();
+                if ((int) Settings.System.SMS_SIM_SETTING_AUTO == mSubIDinSetting) {
+                    Xlog.d(TAG, "showSimIndicator SMS Auto ");
+                    mNetworkController.showAlwaysAskOrInternetCall(mSubIDinSetting);
+                    mIsSimIndicatorShowing = true;
+                    return;
+                }
+                break;
+            default:
+                Xlog.d(TAG, "showSimIndicator businessType unknown");
+                return;
+        }
+        if (mSubIDinSetting != -100) {
+            // Set Default sim
+            Xlog.d(TAG, "showSimIndicator: Set Default= " + businessType +
+                   "/ " + mSubIDinSetting);
+            mNetworkController.showSimIndicator(mSubIDinSetting);
+            mIsSimIndicatorShowing = true;
+        }
+    }
+
+    /**
+        * hide SimIndicator.
+        */
+    public void hideSimIndicator() {
+        if (mBusinessType == null) {
+            return;
+        }
+        Xlog.d(TAG, "hideSimIndicator, mBusinessType = " + mBusinessType +
+                ", selectId = " + mSubIDinSetting + ".");
+
+        mNetworkController.hideSimIndicator();
+
+        mIsSimIndicatorShowing = false;
+        mSubIDinSetting = -100;
+        mBusinessType = null;
+    }
+    /// M: Support "Default SIM Indicator". }@
+
+    /// M: [SystemUI] Support Smartbook Feature. @{
+    /// M: [Smartbook] Dynamic Resolution Change
+    private boolean mIsDisplayDevice = false;
+    private BroadcastReceiver mDisplayDevicePluginReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            if (DEBUG) Log.v(TAG, "onReceive: " + intent);
+            String action = intent.getAction();
+            Log.v(TAG, "onReceive, action=" + action);
+            if (Intent.ACTION_SMARTBOOK_PLUG.equals(action)) {
+                boolean mPlugin = intent.getBooleanExtra(Intent.EXTRA_SMARTBOOK_PLUG_STATE, false);
+                Log.v(TAG, "recreateStatusBar, mPlugin = " + mPlugin);
+                if (mPlugin != mIsDisplayDevice) {
+                    Log.v(TAG, "recreateStatusBar, mIsDisplayDevice = " + mIsDisplayDevice);
+                    mIsDisplayDevice = mPlugin;
+                    // TODO: kill service only
+                    Process.killProcess(Process.myPid());
+                }
+            }
+        }
+    };
+
+    /// M: [Smartbook] Process Notification Key
+    public void dispatchStatusBarKeyEvent(KeyEvent event) {
+        final int keyCode = event.getKeyCode();
+        if (keyCode == KeyEvent.KEYCODE_NOTIFICATION) {
+            processNotificationKeyEvent(event);
+        }
+    }
+
+    public void processNotificationKeyEvent(KeyEvent event) {
+        final int repeatCount = event.getRepeatCount();
+        final int metaState = event.getMetaState();
+        final int flags = event.getFlags();
+        final boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        Log.v(TAG, "processOnKeyEvent, KEYCODE_NOTIFICATION");
+
+        if ((mDisabled & StatusBarManager.DISABLE_EXPAND) != 0) {
+            Log.v(TAG, "processOnKeyEvent, DISABLE_EXPAND");
+        }
+        if (down && repeatCount == 0) {
+            boolean isNotificationPanelShow = false;
+            if (mNotificationPanel.isFullyExpanded()) {
+                isNotificationPanelShow = true;
+            }
+            Log.v(TAG, "processOnKeyEvent, KEYCODE_NOTIFICATION, isNPanel = " +
+                isNotificationPanelShow +
+                " mExpandedVisible= " + mExpandedVisible +
+                " mQuicksettingShow= " + mQuicksettingShow);
+
+            if ((metaState & KeyEvent.META_SHIFT_RIGHT_ON) != 0 ||
+                (metaState & KeyEvent.META_SHIFT_LEFT_ON) != 0) {
+                if (!mExpandedVisible && !isNotificationPanelShow) {
+                    mCommandQueue.animateExpandNotificationsPanel();
+                } else if (isNotificationPanelShow && !mQuicksettingShow) {
+                    mCommandQueue.animateExpandSettingsPanel();
+                    mQuicksettingShow = true;
+                } else if (mQuicksettingShow) {
+                    mCommandQueue.animateCollapsePanels();
+                    mQuicksettingShow = false;
+                }
+            } else {
+                if (!mExpandedVisible && !isNotificationPanelShow) {
+                    mCommandQueue.animateExpandNotificationsPanel();
+                } else if (isNotificationPanelShow && !mQuicksettingShow) {
+                    mCommandQueue.animateExpandSettingsPanel();
+                    mQuicksettingShow = true;
+                } else if (mQuicksettingShow) {
+                    mCommandQueue.animateCollapsePanels();
+                    mQuicksettingShow = false;
+                }
+            }
+        }
+    }
+	/// M: add for multi window @
+   public void showRestoreButtonInner(boolean flag) {
+       mNavigationBarView.showRestoreButton(flag);     
+   }
+    
+   public class MWSystemUiCallback extends IMWSystemUiCallback.Stub{
+        
+       public MWSystemUiCallback (){      
+       
+       }
+               
+       @Override 
+       public void showRestoreButton(boolean flag){
+           Log.e("Hongwei","systemUI flag = "+flag );
+           showRestoreButtonInner(flag);        
+       }        
+    
+   }   
+/* Vanzo:qiukai on: Fri, 08 May 2015 17:40:46 +0800
+ * support blank up down notification
+ */
+   private BroadcastReceiver notificationReceiver = new BroadcastReceiver() {
+       @Override
+       public void onReceive(Context arg0, Intent intent) {
+           String action = intent.getAction();
+           if (action.equals("com.intent.notification.launcher")) {
+               animateExpandNotificationsPanel();
+           }
+       }
+   };
+// End of Vanzo:qiukai
+    /// @}
+/* Vanzo:yinjun on: Mon, 09 Mar 2015 10:18:49 +0800
+ * apps float window
+ */
+    private void createFloatView() {
+        btn_floatView = new ImageButton(mContext);
+        //btn_floatView.setBackgroundResource(R.drawable.ic_qs_dropzone_on);
+        btn_floatView.setImageResource(R.drawable.float_window_ic_qs_dropzone_on);
+
+        wm = (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
+        packageManager = mContext.getPackageManager();
+        windowW = wm.getDefaultDisplay().getWidth();
+
+        params = new WindowManager.LayoutParams();
+        params.x = -(int)windowW/2;
+
+        params.type = WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+        params.format = PixelFormat.RGBA_8888;
+
+        params.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+
+        params.width = 60;
+        params.height = 65;
+
+        btn_floatView.setOnTouchListener(new View.OnTouchListener() {
+                int lastX, lastY;
+                int paramX, paramY;
+
+                public boolean onTouch(View v, MotionEvent event) {
+                    switch  (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            lastX = (int) event.getRawX();
+                            lastY = (int) event.getRawY();
+                            paramX = params.x;
+                            paramY = params.y;
+                            break;
+                        case MotionEvent.ACTION_MOVE:
+                            int dx = (int) event.getRawX() - lastX;
+                            int dy = (int) event.getRawY() - lastY;
+                            params.x = paramX + dx;
+                            params.y = paramY + dy;
+                            wm.updateViewLayout(btn_floatView, params);
+                            break;
+                        case MotionEvent.ACTION_UP:
+                            params.x = event.getRawX() > windowW/2 ? (int)windowW/2 : -(int)windowW/2;
+                            wm.updateViewLayout(btn_floatView, params);
+                    }
+                    return false;
+                }
+        });
+        btn_floatView.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    if (mQuickAppDialog != null) {
+                        if (mQuickAppDialog.isShowing()) {
+                            mQuickAppDialog.dismiss();
+                        } else {
+                            updateWindowView();
+                            mQuickAppDialog.show();
+                        }
+                    } else {
+                        createPopView(mContext);
+                    }
+                }
+        });
+
+        wm.addView(btn_floatView, params);
+        isAdded = true;
+    }
+    private void updateWindowView(){
+        if (mSwitchApps != null) {
+            if ("one".equals(mSwitchApps.getTag().toString())) {
+                updateText(app_local[4],top_left,null);
+                updateText(app_local[5],top_right,null);
+                updateText(app_local[6],bottom_left,null);
+                updateText(app_local[7],bottom_right,null);
+                mSwitchApps.setText(mContext.getResources().getString(R.string.back));
+                //mSwitchApps.setBackgroundResource(R.drawable.ic_sysbar_back_land);
+            } else if ("two".equals(mSwitchApps.getTag().toString())) {
+                updateText(app_local[0],top_left,DEFAULT_TOP_ONE);
+                updateText(app_local[1],top_right,DEFAULT_LEFT_ONE);
+                updateText(app_local[2],bottom_left,DEFAULT_RIGHT_ONE);
+                updateText(app_local[3],bottom_right,DEFAULT_BOTTOM_ONE);
+                mSwitchApps.setText(mContext.getResources().getString(R.string.apps));
+                //mSwitchApps.setBackgroundResource(R.drawable.ic_qs_sync_on);
+            }
+        }
+    }
+    private boolean isApkExist(Context context, String packageName){
+        PackageManager pm = context.getPackageManager();
+        try {
+            pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES);
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+        return true;
+    }
+    private void createPopView(Context context){
+        mQuickAppDialog = new Dialog(mContext, com.android.internal.R.style.Theme_DeviceDefault_Dialog_NoFrame);
+
+        View v = View.inflate(mContext, R.layout.v_float_window_dialogview, null);
+        mQuickAppDialog.setContentView(v);
+        mQuickAppDialog.setCanceledOnTouchOutside(true);
+
+        Window w = mQuickAppDialog.getWindow();
+
+        WindowManager.LayoutParams attrs = w.getAttributes();
+        attrs.setTitle("QuickActions");
+        attrs.gravity = Gravity.CENTER;
+        //attrs.width = WindowManager.LayoutParams.MATCH_PARENT;
+        attrs.dimAmount = 0.5f;
+        attrs.windowAnimations = com.android.internal.R.style.Animation_InputMethod;
+        w.setAttributes(attrs);
+
+        w.setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+        w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        w.setWindowAnimations(com.android.internal.R.style.Animation_InputMethod);
+        w.getDecorView().setSystemUiVisibility(View.STATUS_BAR_DISABLE_EXPAND | View.SYSTEM_UI_FLAG_LOW_PROFILE);
+
+        animView = v.findViewById(R.id.apps_rel);
+        mSwitchApps = (Button) v.findViewById(R.id.switch_apps);
+        mSwitchApps.setTag("two");
+        mSwitchApps.setText(mContext.getResources().getString(R.string.apps));
+        top_left = (Button) v.findViewById(R.id.top_left);
+        top_right = (Button) v.findViewById(R.id.top_right);
+        bottom_left = (Button) v.findViewById(R.id.bottom_left);
+        bottom_right = (Button) v.findViewById(R.id.bottom_right);
+        top_left.setOnClickListener(clickListener);
+        top_right.setOnClickListener(clickListener);
+        bottom_left.setOnClickListener(clickListener);
+        bottom_right.setOnClickListener(clickListener);
+        mSwitchApps.setOnClickListener(clickListener);
+        updateWindowView();
+
+        mQuickAppDialog.show();
+    }
+    public void updateText(String appLocal, Button view, String defaultApp) {
+        String strCompontent = Settings.System.getString(mContext.getContentResolver(),appLocal);
+        ActivityInfo info = null;
+        try {
+            if (strCompontent != null) {
+                info = packageManager.getActivityInfo(new ComponentName(strCompontent.split("&")[0], strCompontent.split("&")[1]), 0);
+            } else if (defaultApp != null) {
+                info = packageManager.getActivityInfo(new ComponentName(defaultApp.split("&")[0], defaultApp.split("&")[1]), 0);
+                strCompontent = defaultApp;
+                Settings.System.putString(mContext.getContentResolver(),appLocal,strCompontent);
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            e.printStackTrace();
+        }
+        view.setTag(strCompontent);
+        Drawable drawable = null;
+        if (info != null) {
+            drawable = scaleDrawable(info.loadIcon(packageManager));
+        }
+        view.setCompoundDrawablesWithIntrinsicBounds(null,info == null ?
+                mContext.getResources().getDrawable(R.drawable.float_window_ic_menu_add) : drawable,null,null);
+        view.setText(info == null ? mContext.getResources().getString(R.string.set_apps) : info.loadLabel(packageManager));
+    }
+
+    public Drawable scaleDrawable(Drawable drawable) {
+        int w = 100;
+        int h = 100;
+        Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        drawable.setBounds(0, 0, w, h);
+        drawable.draw(canvas);
+        return new BitmapDrawable(bitmap);
+    }
+// End of Vanzo: yinjun
+
+   /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @{
+   private IStatusBarPlmnPlugin mStatusBarPlmnPlugin = null;
+   private View mCustomizeCarrierLabel = null;
+
+   private final boolean supportCustomizeCarrierLabel() {
+       return mStatusBarPlmnPlugin != null && mStatusBarPlmnPlugin.supportCustomizeCarrierLabel()
+               && mNetworkController != null && mNetworkController.hasMobileDataFeature();
+   }
+
+   private final void updateCustomizeCarrierLabelVisibility(boolean force) {
+       if (DEBUG) {
+           Log.d(TAG, "updateCustomizeCarrierLabelVisibility(), force = " + force
+                   + ", mState = " + mState);
+       }
+
+       final boolean makeVisible = mStackScroller.getVisibility() == View.VISIBLE
+               && mState != StatusBarState.KEYGUARD;
+
+       mStatusBarPlmnPlugin.updateCarrierLabelVisibility(force, makeVisible);
+   }
+
+   /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @}
+
 }

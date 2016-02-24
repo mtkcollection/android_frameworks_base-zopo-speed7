@@ -26,6 +26,8 @@ import android.widget.ImageView;
 import com.android.systemui.R;
 import com.android.systemui.qs.QSTile.SignalState;
 
+import com.mediatek.xlog.Xlog;
+
 /** View that represents a custom quick settings tile for displaying signal info (wifi/cell). **/
 public final class SignalTileView extends QSTileView {
     private static final long DEFAULT_DURATION = new ValueAnimator().getDuration();
@@ -120,13 +122,16 @@ public final class SignalTileView extends QSTileView {
         if (state.autoMirrorDrawable && drawable != null) {
             drawable.setAutoMirrored(true);
         }
+        Xlog.d("SignalTileView", "handleStateChanged: state.connected: " + s.connected);
         final boolean shown = isShown();
         setVisibility(mIn, shown, s.activityIn);
         setVisibility(mOut, shown, s.activityOut);
     }
 
     private void setVisibility(View view, boolean shown, boolean visible) {
+        Xlog.d("SignalTileView", "setVisibility: shown: " + shown + ", visible: " + visible);
         final float newAlpha = shown && visible ? 1 : 0;
+        Xlog.d("SignalTileView", "view.getAlpha(): " + view.getAlpha() + ", newAlpha: " + newAlpha);
         if (view.getAlpha() == newAlpha) return;
         if (shown) {
             view.animate()

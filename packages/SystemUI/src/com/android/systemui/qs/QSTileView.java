@@ -279,8 +279,8 @@ public class QSTileView extends ViewGroup {
         }
         layout(labelView(), 0, top);
     }
-
-    private void updateRippleSize(int width, int height) {
+    ///M: modify the policy to customize the quick settings tile view
+    protected void updateRippleSize(int width, int height) {
         // center the touch feedback on the center of the icon, and dial it down a bit
         final int cx = width / 2;
         final int cy = mDual ? mIcon.getTop() + mIcon.getHeight() / 2 : height / 2;
@@ -338,4 +338,45 @@ public class QSTileView extends ViewGroup {
             }
         }
     }
+    ///M: Get the property for operator quick settings customrize.@{
+    protected View getQSIcon() {
+        return mIcon;
+    }
+
+    protected View getDivider() {
+        return mDivider;
+    }
+
+    protected int getIconSizePx() {
+        return mIconSizePx;
+    }
+
+    protected int getTilePaddingTopPx() {
+        return mTilePaddingTopPx;
+    }
+
+    protected int getTilePaddingBelowIconPx() {
+        return mTilePaddingBelowIconPx;
+    }
+
+    protected View getTopBackgroundView() {
+        return mTopBackgroundView;
+    }
+
+    protected TextView getLabel() {
+        return mLabel;
+    }
+
+    protected QSDualTileLabel getDualLabel() {
+        return mDualLabel;
+    }
+
+    protected boolean getDual() {
+        return mDual;
+    }
+
+    protected RippleDrawable getRipple() {
+        return mRipple;
+    }
+    /// @}
 }

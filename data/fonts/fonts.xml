@@ -175,9 +175,11 @@
         <font weight="400" style="normal">NotoSansBengaliUI-Regular.ttf</font>
         <font weight="700" style="normal">NotoSansBengaliUI-Bold.ttf</font>
     </family>
-    <family variant="elegant">
-        <font weight="400" style="normal">NotoSansTelugu-Regular.ttf</font>
-        <font weight="700" style="normal">NotoSansTelugu-Bold.ttf</font>
+    <family>
+        <font weight="400" style="normal">Padauk.ttf</font>
+    </family>
+    <family>
+        <font weight="400" style="normal">ZawgyiOne.ttf</font>
     </family>
     <family variant="compact">
         <font weight="400" style="normal">NotoSansTeluguUI-Regular.ttf</font>
@@ -288,6 +290,9 @@
         <font weight="400" style="normal">NotoSansTagbanwa-Regular.ttf</font>
     </family>
     <family>
+        <font weight="400" style="normal">NotoSansTaiLe-Regular.ttf</font>
+    </family>
+    <family>
         <font weight="400" style="normal">NotoSansTaiTham-Regular.ttf</font>
     </family>
     <family>
@@ -328,12 +333,5 @@
     </family>
     <family lang="ja">
         <font weight="400" style="normal">MTLmr3m.ttf</font>
-    </family>
-    <!--
-        Noto Sans Tai Le is intentionally kept last, to make sure it doesn't override
-        the East Asian punctuation for Chinese.
-    -->
-    <family>
-        <font weight="400" style="normal">NotoSansTaiLe-Regular.ttf</font>
     </family>
 </familyset>

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +50,7 @@ import java.util.List;
  * Handles run-time package changes.
  */
 public class ServiceWatcher implements ServiceConnection {
-    private static final boolean D = false;
+    private static final boolean D = true;
     public static final String EXTRA_SERVICE_VERSION = "serviceVersion";
     public static final String EXTRA_SERVICE_IS_MULTIUSER = "serviceIsMultiuser";
 
@@ -152,6 +157,10 @@ public class ServiceWatcher implements ServiceConnection {
         return true;
     }
 
+    public void stop() {
+        unbindLocked();
+    }
+
     /**
      * Searches and binds to the best package, or do nothing
      * if the best package is already bound.
@@ -230,6 +239,12 @@ public class ServiceWatcher implements ServiceConnection {
             if (D) Log.d(mTag, "unbinding " + pkg);
             mContext.unbindService(this);
         }
+        //MTK add start
+        try {
+            mPackageMonitor.unregister();
+        } catch (Exception e) {
+        }
+        //MTK add end
     }
 
     private void bindToPackageLocked(String packageName, int version, boolean isMultiuser) {

@@ -85,6 +85,9 @@ interface IUsbManager
     /* Sets the current USB function. */
     void setCurrentFunction(String function, boolean makeDefault);
 
+    /* Returns the current USB state. */
+    int getCurrentState();
+
     /* Sets the file path for USB mass storage backing file. */
     void setMassStorageBackingFile(String path);
 

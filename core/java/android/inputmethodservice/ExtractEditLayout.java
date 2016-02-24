@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +46,9 @@ public class ExtractEditLayout extends LinearLayout {
     Button mExtractActionButton;
     Button mEditButton;
 
+    /** M: The variable for holding the menu pop-up helper. **/
+    private MenuPopupHelper mMenuPopupHelper;
+
     public ExtractEditLayout(Context context) {
         super(context);
     }
@@ -80,6 +88,25 @@ public class ExtractEditLayout extends LinearLayout {
     }
 
     @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        /** M: If the extract edit layout window become to not visible, dismiss the menu pop-up.@{ */
+        if (visibility != View.VISIBLE) {
+            dismissMenuPopupHelper();
+        }
+        /** @} **/
+    }
+
+    /**
+     * M: Dismiss the menu pop-up.
+     */
+    private void dismissMenuPopupHelper() {
+        if (mMenuPopupHelper != null && mMenuPopupHelper.isShowing()) {
+            mMenuPopupHelper.dismiss();
+        }
+    }
+
+    @Override
     public void onFinishInflate() {
         super.onFinishInflate();
         mExtractActionButton = (Button) findViewById(com.android.internal.R.id.inputExtractAction);
@@ -87,7 +114,13 @@ public class ExtractEditLayout extends LinearLayout {
         mEditButton.setOnClickListener(new OnClickListener() {
             public void onClick(View clicked) {
                 if (mActionMode != null) {
-                    new MenuPopupHelper(getContext(), mActionMode.mMenu, clicked).show();
+                    /**
+                     * M: @{ Register the listener in order to dismiss the pop up window when window focus changed.
+                     *      when the user click the edit button in the landscape, the popup menu should be shown.
+                     */
+                    mMenuPopupHelper = new MenuPopupHelper(getContext(), mActionMode.mMenu, clicked);
+                    mMenuPopupHelper.show();
+                    /** @} **/
                 }
             }
         });
@@ -169,6 +202,10 @@ public class ExtractEditLayout extends LinearLayout {
             sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
 
             mActionMode = null;
+
+            /** M: If action mode finished, dismiss the MenuPopupHelper. @{ **/
+            dismissMenuPopupHelper();
+            /** @} **/
         }
 
         @Override

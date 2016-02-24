@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007-2008 The Android Open Source Project
  * 
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
@@ -67,6 +72,8 @@ import android.widget.LinearLayout;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+
+import android.os.SystemProperties;
 
 /**
  * InputMethodService provides a standard implementation of an InputMethod,
@@ -222,7 +229,9 @@ import java.io.PrintWriter;
  */
 public class InputMethodService extends AbstractInputMethodService {
     static final String TAG = "InputMethodService";
-    static final boolean DEBUG = false;
+
+    /** M: Changed for switch log on/off in the runtime. **/
+    static boolean DEBUG = false;
 
     /**
      * The back button will close the input window.
@@ -301,6 +310,9 @@ public class InputMethodService extends AbstractInputMethodService {
     
     View mInputView;
     boolean mIsInputViewShown;
+    /// M: This flag indicates this show request is send from toggle Ime key. @{
+    private boolean mShowInputFromKey = false;
+    /// @}
     
     int mStatusIcon;
     int mBackDisposition;
@@ -406,6 +418,10 @@ public class InputMethodService extends AbstractInputMethodService {
             mShowInputFlags = 0;
             mShowInputRequested = false;
             mShowInputForced = false;
+            /// M: Reset this show request flag. @{
+            mShowInputFromKey = false;
+            /// @}
+
             doHideWindow();
             if (resultReceiver != null) {
                 resultReceiver.send(wasVis != isInputViewShown()
@@ -420,9 +436,18 @@ public class InputMethodService extends AbstractInputMethodService {
          */
         public void showSoftInput(int flags, ResultReceiver resultReceiver) {
             if (DEBUG) Log.v(TAG, "showSoftInput()");
+            /// M: This request is send from the toggle IME hard key, set this
+            ///    flag to show soft keyboard always. @{
+            if ((flags & InputMethod.SHOW_FORCED_FROM_KEY) != 0) {
+                if (DEBUG) Log.d(TAG, "Show request from toggle Ime key.");
+                mShowInputFromKey = true;
+            }
+            /// @}
             boolean wasVis = isInputViewShown();
             mShowInputFlags = 0;
-            if (onShowInputRequested(flags, false)) {
+            /// M: update the keyboard if it has been already shown; @{
+            if (onShowInputRequested(flags, false) || mWindowVisible) {
+            /// @}
                 try {
                     showWindow(true);
                 } catch (BadTokenException e) {
@@ -771,6 +796,14 @@ public class InputMethodService extends AbstractInputMethodService {
         int showFlags = mShowInputFlags;
         boolean showingInput = mShowInputRequested;
         CompletionInfo[] completions = mCurCompletions;
+        /// M: This block is to fix the google issue that the spell check
+        /// suggestions popup window is left on the screen
+        /// when ExtractEditText is hidden. @{
+        if (null != mExtractEditText) {
+            mExtractEditText.onWindowFocusChanged(false);
+            mExtractEditText.setVisibility(View.GONE);
+        }
+        /// @}
         initViews();
         mInputViewStarted = false;
         mCandidatesViewStarted = false;
@@ -1133,6 +1166,14 @@ public class InputMethodService extends AbstractInputMethodService {
      */
     public boolean onEvaluateInputViewShown() {
         Configuration config = getResources().getConfiguration();
+        /// M: For smart book if there is a request from Toggle Ime key, we will think the
+        ///    keyboard is shown.@{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+             return config.keyboard == Configuration.KEYBOARD_NOKEYS
+                || config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_YES
+                || mShowInputFromKey;
+        }
+        /// @}
         return config.keyboard == Configuration.KEYBOARD_NOKEYS
                 || config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_YES;
     }
@@ -1598,6 +1639,10 @@ public class InputMethodService extends AbstractInputMethodService {
         mInputStarted = true;
         mStartedInputConnection = ic;
         mInputEditorInfo = attribute;
+        /// M: this time App should know whether the IME is in fullscreen mode
+        ///    to adjust it's cursor and the spell check suggestions window. @{
+        //if (ic != null) ic.reportFullscreenMode(onEvaluateFullscreenMode());
+        /// @}
         initialize();
         if (DEBUG) Log.v(TAG, "CALL: onStartInput");
         onStartInput(attribute, restarting);
@@ -2370,8 +2415,21 @@ public class InputMethodService extends AbstractInputMethodService {
     /**
      * Performs a dump of the InputMethodService's internal state.  Override
      * to add your own information to the dump.
+     * M: Changed for switch log on/off in the runtime.
      */
     @Override protected void dump(FileDescriptor fd, PrintWriter fout, String[] args) {
+        /** M: Changed for switch log on/off in the runtime. @{ **/
+        if (args.length == 1) {
+            if ("enable".equals(args[0])) {
+                DEBUG = true;
+                return;
+            } else if ("disable".equals(args[0])) {
+                DEBUG = false;
+                return;
+            }
+        }
+        /** @} **/
+
         final Printer p = new PrintWriterPrinter(fout);
         p.println("Input method service state for " + this + ":");
         p.println("  mWindowCreated=" + mWindowCreated

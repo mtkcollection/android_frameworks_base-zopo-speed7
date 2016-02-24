@@ -167,4 +167,7 @@
     <string name="keyguard_transport_play_description" msgid="2924628863741150956">"Lejátszás gomb"</string>
     <string name="keyguard_transport_stop_description" msgid="3084179324810575787">"Leállítás gomb"</string>
     <string name="keyguard_carrier_default" msgid="8700650403054042153">"Nincs szolgáltatás."</string>
+    <string name="kg_new_simcard">Új SIM-kártya</string>
+    <string name="kg_detecting_simcard">Észlelés…</string>
+    <string name="kg_slot_id"><xliff:g id="number">%d</xliff:g> nyílás:</string>
 </resources>

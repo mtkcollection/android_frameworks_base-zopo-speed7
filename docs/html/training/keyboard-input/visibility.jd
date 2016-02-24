@@ -8,7 +8,11 @@ trainingnavtop=true
 <div id="tb">
 
 <h2>This lesson teaches you to</h2>
-<ol>  <li><a href="#ShowOnStart">Show the Input Method When the Activity Starts</a></li>  <li><a href="#ShowOnDemand">Show the Input Method On Demand</a></li>  <li><a href="#Respond">Specify How Your UI Should Respond</a></li></ol>
+<ol>
+  <li><a href="#ShowOnStart">Show the Input Method When the Activity Starts</a></li>
+  <li><a href="#ShowOnDemand">Show the Input Method On Demand</a></li>
+  <li><a href="#Respond">Specify How Your UI Should Respond</a></li>
+</ol>
 
 </div>
 </div>

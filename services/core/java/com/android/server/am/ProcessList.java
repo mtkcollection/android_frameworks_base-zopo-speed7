@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +38,11 @@ import android.net.LocalSocketAddress;
 import android.net.LocalSocket;
 import android.util.Slog;
 import android.view.Display;
+/* Vanzo:yucheng on: Sat, 27 Jun 2015 11:59:13 +0800
+ * Modified for RAM OPT
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yucheng
 
 /**
  * Activity manager code dealing with processes.
@@ -128,7 +138,14 @@ final class ProcessList {
     // we have no limit on the number of service, visible, foreground, or other such
     // processes and the number of those processes does not count against the cached
     // process limit.
+/* Vanzo:yucheng on: Sat, 27 Jun 2015 11:56:20 +0800
+ * Modified for RAM opt
     static final int MAX_CACHED_APPS = 32;
+ */
+    static final int MAX_CACHED_APPS = FeatureOption.VANZO_FEATURE_RAM_OPTIMIZE ? 12 : 32;
+    static final int MAX_SERVICE_APPS = 9;
+    static final int MAX_PERCEPTIBLE_APPS = 3;
+// End of Vanzo: yucheng
 
     // We allow empty processes to stick around for at most 30 minutes.
     static final long MAX_EMPTY_TIME = 30*60*1000;
@@ -142,7 +159,12 @@ final class ProcessList {
 
     // The number of cached at which we don't consider it necessary to do
     // memory trimming.
+/* Vanzo:yucheng on: Sat, 27 Jun 2015 12:11:44 +0800
+ * Moidified for RAM OPT
     static final int TRIM_CACHED_APPS = (MAX_CACHED_APPS-MAX_EMPTY_APPS)/3;
+ */
+    static final int TRIM_CACHED_APPS = FeatureOption.VANZO_FEATURE_RAM_OPTIMIZE ? 5 : (MAX_CACHED_APPS-MAX_EMPTY_APPS)/3;
+// End of Vanzo: yucheng
 
     // Threshold of number of cached+empty where we consider memory critical.
     static final int TRIM_CRITICAL_THRESHOLD = 3;
@@ -163,10 +185,8 @@ final class ProcessList {
     // These are the various interesting memory levels that we will give to
     // the OOM killer.  Note that the OOM killer only supports 6 slots, so we
     // can't give it a different value for every possible kind of process.
-    private final int[] mOomAdj = new int[] {
-            FOREGROUND_APP_ADJ, VISIBLE_APP_ADJ, PERCEPTIBLE_APP_ADJ,
-            BACKUP_APP_ADJ, CACHED_APP_MIN_ADJ, CACHED_APP_MAX_ADJ
-    };
+    private int[] mOomAdj;
+
     // These are the low-end OOM level limits.  This is appropriate for an
     // HVGA or smaller phone with less than 512MB.  Values are in KB.
     private final int[] mOomMinFreeLow = new int[] {
@@ -180,7 +200,7 @@ final class ProcessList {
             129024, 147456, 184320
     };
     // The actual OOM killer memory levels we are using.
-    private final int[] mOomMinFree = new int[mOomAdj.length];
+    private int[] mOomMinFree;
 
     private final long mTotalMemMb;
 
@@ -195,6 +215,82 @@ final class ProcessList {
         MemInfoReader minfo = new MemInfoReader();
         minfo.readMemInfo();
         mTotalMemMb = minfo.getTotalSize()/(1024*1024);
+
+        /// M: GMO define mOomMinFree[] and mOomAdj[] self
+        if (SystemProperties.get("ro.mtk_gmo_ram_optimize").equals("1")) {
+
+            final long LOW_LEVEL_SIZE = 256;
+            final long HIGH_LEVEL_SIZE = 512;
+
+            if (mTotalMemMb <= LOW_LEVEL_SIZE) {
+                mOomAdj = new int[] {
+                    FOREGROUND_APP_ADJ,
+                    VISIBLE_APP_ADJ,
+                    PERCEPTIBLE_APP_ADJ,
+                    HEAVY_WEIGHT_APP_ADJ,
+                    HOME_APP_ADJ,
+                    SERVICE_B_ADJ,
+                    CACHED_APP_MIN_ADJ,
+                    (CACHED_APP_MIN_ADJ+CACHED_APP_MAX_ADJ)/2,
+                    CACHED_APP_MAX_ADJ
+                };
+                mOomMinFree = new int[] {
+                    4096,  // 4 * 1024 (Adj 0 -> 4MB)
+                    12288, // 12 * 1024 (Adj 1 -> 12MB)
+                    20480, // 20 * 1024 (Adj 2 -> 20MB)
+                    24576, // 24 * 1024 (Adj 4 -> 24MB)
+                    28672, // 28 * 1024 (Adj 6 -> 28MB)
+                    32768, // 32 * 1024 (Adj 8 -> 32MB)
+                    36864, // 36 * 1024 (Adj 9 -> 36MB)
+                    40960, // 40 * 1024 (Adj 12 -> 40MB)
+                    49152  // 48 * 1024 (Adj 15 -> 48MB)
+                };
+            } else if (mTotalMemMb <= HIGH_LEVEL_SIZE) {
+                mOomAdj = new int[] {
+                    FOREGROUND_APP_ADJ,
+                    VISIBLE_APP_ADJ,
+                    PERCEPTIBLE_APP_ADJ,
+                    BACKUP_APP_ADJ,
+                    CACHED_APP_MIN_ADJ,
+                    CACHED_APP_MAX_ADJ
+                };
+                mOomMinFree = new int[] {
+                    24576, // 24 * 1024 (ADJ 0 -> 24MB)
+                    31744, // 31 * 1024 (ADJ 1 -> 31MB)
+                    38912, // 38 * 1024 (ADJ 2 -> 38MB)
+                    49152, // 48 * 1024 (ADJ 3 -> 48MB)
+                    56320, // 55 * 1024 (ADJ 9 -> 55MB)
+                    68608  // 67 * 1024 (ADJ 15 -> 67MB)
+                };
+            } else {
+                mOomAdj = new int[] {
+                    FOREGROUND_APP_ADJ,
+                    VISIBLE_APP_ADJ,
+                    PERCEPTIBLE_APP_ADJ,
+                    BACKUP_APP_ADJ,
+                    CACHED_APP_MIN_ADJ,
+                    CACHED_APP_MAX_ADJ
+                };
+                mOomMinFree = new int[] {
+                    36864, // 36 * 1024 (ADJ 0 -> 36MB)
+                    49152, // 48 * 1024 (ADJ 1 -> 48MB)
+                    61440, // 60 * 1024 (ADJ 2 -> 60MB)
+                    73728, // 72 * 1024 (ADJ 3 -> 72MB)
+                    86016, // 84 * 1024 (ADJ 9 -> 84MB)
+                    102400  // 100 * 1024 (ADJ 15 -> 100MB)
+                };
+            }
+        } else {
+            // These are the various interesting memory levels that we will give to
+            // the OOM killer.	Note that the OOM killer only supports 6 slots, so we
+            // can't give it a different value for every possible kind of process.
+            mOomAdj = new int[] {
+                FOREGROUND_APP_ADJ, VISIBLE_APP_ADJ, PERCEPTIBLE_APP_ADJ,
+                BACKUP_APP_ADJ, CACHED_APP_MIN_ADJ, CACHED_APP_MAX_ADJ
+            };
+            // The actual OOM killer memory levels we are using.
+            mOomMinFree = new int[mOomAdj.length];
+        }
         updateOomLevels(0, 0, false);
     }
 
@@ -210,6 +306,25 @@ final class ProcessList {
     }
 
     private void updateOomLevels(int displayWidth, int displayHeight, boolean write) {
+        /// M: GMO write mOomMinFree[] and mOomAdj[] self @ {
+        if (SystemProperties.get("ro.mtk_gmo_ram_optimize").equals("1")) {
+            // GMO set mCachedRestoreLevel self
+            mCachedRestoreLevel = (getMemLevel(ProcessList.CACHED_APP_MAX_ADJ)/1024) / 3;
+            Slog.i(ActivityManagerService.TAG, "mCachedRestoreLevel = " + Long.toString(mCachedRestoreLevel));
+
+            if (write) {
+                ByteBuffer buf = ByteBuffer.allocate(4 * (2*mOomAdj.length + 1));
+                buf.putInt(LMK_TARGET);
+                for (int i=0; i<mOomAdj.length; i++) {
+                    buf.putInt((mOomMinFree[i]*1024)/PAGE_SIZE);
+                    buf.putInt(mOomAdj[i]);
+                }
+                writeLmkd(buf);
+            }
+            return;
+        }
+        /// @}
+
         // Scale buckets from avail memory: at 300MB we use the lowest values to
         // 700MB or more for the top values.
         float scaleMem = ((float)(mTotalMemMb-350))/(700-350);
@@ -248,6 +363,25 @@ final class ProcessList {
             mOomMinFree[i] = (int)(low + ((high-low)*scale));
         }
 
+        /// M: Confige mOomMinFree's value for CMCC  @ {
+        if (SystemProperties.get("ro.mediatek.cmcc.minfree.1g").equals("1")) {
+            Slog.i("XXXXXX", "minfree for cmcc 1g");
+            for (int i = 0; i < mOomAdj.length; i++) {
+                int low = mOomMinFreeLow[i];
+                int high = mOomMinFreeHigh[i];
+                if (is64bit) {
+                    // Increase the high min-free levels for cached processes for 64-bit
+                    if (i == 4) {
+                        high = (high * 7) / 8;
+                    } else if (i == 5) {
+                        high = (high * 7) / 8;
+                    }
+                }
+                mOomMinFree[i] = (int) (low + ((high - low) * scale));
+             }
+        }
+        /// @}
+
         if (minfree_abs >= 0) {
             for (int i=0; i<mOomAdj.length; i++) {
                 mOomMinFree[i] = (int)((float)minfree_abs * mOomMinFree[i]
@@ -269,6 +403,7 @@ final class ProcessList {
         // memory duress, is 1/3 the size we have reserved for kernel caches and other overhead
         // before killing background processes.
         mCachedRestoreLevel = (getMemLevel(ProcessList.CACHED_APP_MAX_ADJ)/1024) / 3;
+        Slog.i(ActivityManagerService.TAG, "mCachedRestoreLevel=" + Long.toString(mCachedRestoreLevel));
 
         // Ask the kernel to try to keep enough memory free to allocate 3 full
         // screen 32bpp buffers without entering direct reclaim.
@@ -561,6 +696,13 @@ final class ProcessList {
 
     public static long computeNextPssTime(int procState, boolean first, boolean test,
             boolean sleeping, long now) {
+        ///M: ALPS02057296 procState not initinlized @{
+        if (procState == -1) {
+            Slog.w(ActivityManagerService.TAG, "[computeNextPssTime] procState = "+procState);
+            Thread.dumpStack();
+            procState = ActivityManager.PROCESS_STATE_CACHED_EMPTY;
+        }
+        /// @}
         final long[] table = test
                 ? (first
                         ? sTestFirstAwakePssTimes

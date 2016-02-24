@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,12 +26,17 @@ import dalvik.system.CloseGuard;
 import android.os.Handler;
 import android.view.Surface;
 
+///M:
+import android.util.Slog;
+
 /**
  * Listens for Wifi remote display connections managed by the media server.
  *
  * @hide
  */
 public final class RemoteDisplay {
+    private static final String TAG = "RemoteDisplay";
+
     /* these constants must be kept in sync with IRemoteDisplayClient.h */
 
     public static final int DISPLAY_FLAG_SECURE = 1 << 0;
@@ -44,6 +54,18 @@ public final class RemoteDisplay {
     private native void nativeDispose(long ptr);
     private native void nativePause(long ptr);
     private native void nativeResume(long ptr);
+
+    ///M: add by MTK @{
+    private static boolean isDispose = false;
+    private static final Object lock = new Object();
+    private native void nativeSetWfdLevel(long ptr, int level);
+    private native int  nativeGetWfdParam(long ptr, int paramType);
+    //WFD Sink Support
+    private native long nativeConnect(String iface, Surface surface);
+    private native void nativeSuspendDisplay(long ptr, boolean suspend, Surface surface);
+    private native void nativeSendUibcEvent(long ptr, String eventDesc);
+    ///@}
+
 
     private RemoteDisplay(Listener listener, Handler handler) {
         mListener = listener;
@@ -67,6 +89,7 @@ public final class RemoteDisplay {
      * @param handler The handler on which to invoke the listener.
      */
     public static RemoteDisplay listen(String iface, Listener listener, Handler handler) {
+        Slog.d(TAG, "listen");
         if (iface == null) {
             throw new IllegalArgumentException("iface must not be null");
         }
@@ -86,18 +109,31 @@ public final class RemoteDisplay {
      * Disconnects the remote display and stops listening for new connections.
      */
     public void dispose() {
+        Slog.d(TAG, "dispose");
+
+        synchronized (lock)
+        {
+            if (isDispose) {
+                Slog.d(TAG, "dispose done");
+                return;
+            }
+            isDispose = true;
+        }
         dispose(false);
     }
 
     public void pause() {
+        Slog.d(TAG, "pause");
         nativePause(mPtr);
     }
 
     public void resume() {
+        Slog.d(TAG, "resume");
         nativeResume(mPtr);
     }
 
     private void dispose(boolean finalized) {
+        Slog.d(TAG, "dispose");
         if (mPtr != 0) {
             if (mGuard != null) {
                 if (finalized) {
@@ -110,9 +146,16 @@ public final class RemoteDisplay {
             nativeDispose(mPtr);
             mPtr = 0;
         }
+
+        synchronized (lock)
+        {
+            Slog.d(TAG, "dispose finish");
+            isDispose = false;
+        }
     }
 
     private void startListening(String iface) {
+        Slog.d(TAG, "startListening");
         mPtr = nativeListen(iface);
         if (mPtr == 0) {
             throw new IllegalStateException("Could not start listening for "
@@ -120,10 +163,97 @@ public final class RemoteDisplay {
         }
         mGuard.open("dispose");
     }
+    ///M: add by MTK @{
+    /*
+     *
+     * @hide
+     *
+     */
+    public void setWfdLevel(int level) {
+        nativeSetWfdLevel(mPtr, level);
+    }
+
+    /*
+    *
+     * @hide
+     *
+     */
+    public int getWfdParam(int paramType) {
+        return nativeGetWfdParam(mPtr, paramType);
+    }
+
+    //WFD Sink Support
+
+    /*
+     *
+     * @hide
+     *
+     */
+    public static RemoteDisplay connect(String iface, Surface surface, Listener listener, Handler handler) {
+        Slog.d(TAG, "connect");
+        if (iface == null) {
+            throw new IllegalArgumentException("iface must not be null");
+        }
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        if (handler == null) {
+            throw new IllegalArgumentException("handler must not be null");
+        }
+
+        RemoteDisplay display = new RemoteDisplay(listener, handler);
+        display.startConnecting(iface, surface);
+        return display;
+    }
+
+    /*
+     *
+     * @hide
+     *
+     */
+    private void startConnecting(String iface, Surface surface) {
+        Slog.d(TAG, "startConnecting");
+
+        mPtr = nativeConnect(iface, surface);
+        if (mPtr == 0) {
+            throw new IllegalStateException("Could not start connecting for "
+                    + "remote display connection on \"" + iface + "\"");
+        }
+        mGuard.open("dispose");
+    }
+
+    /*
+     *
+     * @hide
+     *
+     */
+    public void suspendDisplay(boolean suspend, Surface surface) {
+        Slog.d(TAG, "suspendDisplay");
+        if (suspend && surface != null) {
+            throw new IllegalArgumentException("surface must be null when suspend display");
+        }
+        if (!suspend && surface == null) {
+            throw new IllegalArgumentException("surface must not be null when resume display");
+        }
+
+        nativeSuspendDisplay(mPtr, suspend, surface);
+    }
+
+    /*
+     *
+     * @hide
+     *
+     */
+    public void sendUibcEvent(String eventDesc) {
+        //Slog.d(TAG, "sendUibcEvent");
+        nativeSendUibcEvent(mPtr, eventDesc);
+    }
+    ///@}
 
     // Called from native.
     private void notifyDisplayConnected(final Surface surface,
             final int width, final int height, final int flags, final int session) {
+        Slog.d(TAG, "notifyDisplayConnected");
         mHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -134,6 +264,7 @@ public final class RemoteDisplay {
 
     // Called from native.
     private void notifyDisplayDisconnected() {
+        Slog.d(TAG, "notifyDisplayDisconnected");
         mHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -144,6 +275,7 @@ public final class RemoteDisplay {
 
     // Called from native.
     private void notifyDisplayError(final int error) {
+        Slog.d(TAG, "notifyDisplayError");
         mHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -151,6 +283,28 @@ public final class RemoteDisplay {
             }
         });
     }
+
+    ///M: add by MTK @{
+    private void  notifyDisplayKeyEvent(final int uniCode, final int flags) {
+        Slog.d(TAG, "notifyDisplayKeyEvent");
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mListener.onDisplayKeyEvent(uniCode, flags);
+            }
+        });
+    }
+
+    private void notifyDisplayGenericMsgEvent(final int event) {
+        Slog.d(TAG, "notifyDisplayGenericMsgEvent");
+         mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mListener.onDisplayGenericMsgEvent(event);
+            }
+        });
+    }
+    ///@}
 
     /**
      * Listener invoked when the remote display connection changes state.
@@ -160,5 +314,9 @@ public final class RemoteDisplay {
                 int width, int height, int flags, int session);
         void onDisplayDisconnected();
         void onDisplayError(int error);
+        ///M: add by MTK@{
+        void onDisplayKeyEvent(int uniCode, int flags);
+        void onDisplayGenericMsgEvent(int event);
+        ///@}
     }
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -233,7 +238,28 @@ public final class MtpDevice {
     public boolean importFile(int objectHandle, String destPath) {
         return native_import_file(objectHandle, destPath);
     }
-
+  /**
+     * @hide
+     * @param objectHandle handle of the object to read
+     * @param destPath path to destination for the file transfer.
+     *      This path should be in the external storage as defined by
+     *      {@link android.os.Environment#getExternalStorageDirectory}
+     * @return true if the file transfer succeeds
+     */
+	public boolean exportMtp(int objectHandle, String destPath) {
+		boolean ret;
+		native_import_file(objectHandle, destPath);
+		ret=native_export_file(objectHandle, destPath);
+        return ret;
+    }
+      /**
+     * @hide
+     * @param objectHandle handle of the object to query
+     * @return the object's storage unit ID
+     */
+	  public boolean createMtpFile(int objectHandle) {
+        return native_createMtp_file(objectHandle);
+    }
     // used by the JNI code
     private long mNativeContext;
 
@@ -250,4 +276,6 @@ public final class MtpDevice {
     private native long native_get_parent(int objectHandle);
     private native long native_get_storage_id(int objectHandle);
     private native boolean native_import_file(int objectHandle, String destPath);
+	private native boolean native_export_file(int objectHandle, String destPath);
+	private native boolean native_createMtp_file(int objectHandle);
 }

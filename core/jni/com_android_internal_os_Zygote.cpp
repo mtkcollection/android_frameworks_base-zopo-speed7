@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +57,10 @@
 #include "ScopedUtfChars.h"
 
 #include "nativebridge/native_bridge.h"
+
+#if defined(HAVE_ANDROID_OS)
+#include <cutils/properties.h>
+#endif
 
 namespace {
 
@@ -317,6 +326,13 @@ static bool MountEmulatedStorage(uid_t uid, jint mount_mode, bool force_mount_na
       ALOGW("Failed to mount %s to %s: %d", target_user.string(), legacy, errno);
       return false;
     }
+
+    //mount tmpfs on /mnt/shell/emulated for CTS appsecurity test, testSecondaryMountPointsNotWritable()
+    if (mount("tmpfs", source, "tmpfs", MS_NOSUID | MS_NODEV,
+         "uid=0,gid=0,mode=0700") == -1) {
+       ALOGE("Failed to mount tmpfs to %s: %s", source, strerror(errno));
+       return false;
+    }
   } else {
     ALOGW("Mount mode %d unsupported", mount_mode);
     return false;
@@ -579,6 +595,20 @@ static pid_t ForkAndSpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArra
     }
   } else if (pid > 0) {
     // the parent process
+#if defined(HAVE_ANDROID_OS) && defined(MTK_DUMP_HPROF_WHEN_OOME)
+    char propStr[PROPERTY_VALUE_MAX];
+    if (property_get("dalvik.vm.oome-hprof-path", propStr, "/data/anr")) {
+      char buf[256];
+      snprintf(buf, sizeof(buf), "%s/%d.hprof", propStr, (int) pid);
+      int fd = open(buf, O_CREAT | O_RDWR, 0666);
+      if (fd < 0) {
+        ALOGE("Can't create hprof file: %s(%s)", buf, strerror(errno));
+      } else {
+        fchmod(fd, 0666);
+        close(fd);
+      }
+    }
+#endif
   }
   return pid;
 }

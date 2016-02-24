@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +21,21 @@
 
 #include "DisplayListLogBuffer.h"
 
+/// M: performance index enhancements
+#include <cutils/properties.h>
+#include "Debug.h"
+
+/// M: log render tasks
+#include "renderthread/RenderThread.h"
+#include <utils/String8.h>
+
 // BUFFER_SIZE size must be one more than a multiple of COMMAND_SIZE to ensure
 // that mStart always points at the next command, not just the next item
+#if defined(MTK_DEBUG_RENDERER)
+#define NUM_COMMANDS 200
+#else
 #define NUM_COMMANDS 50
+#endif
 #define BUFFER_SIZE ((NUM_COMMANDS) + 1)
 
 /**
@@ -54,6 +71,11 @@ ANDROID_SINGLETON_STATIC_INSTANCE(DisplayListLogBuffer);
 
 namespace uirenderer {
 
+/**
+ * M: performance index enhancements, dump execution time of each operation every frame
+ * "1" and "0". The default value is "0".
+ */
+#define PROPERTY_DEBUG_COMMANDS_DURATION "debug.hwui.log.duration"
 
 DisplayListLogBuffer::DisplayListLogBuffer() {
     mBufferFirst = (OpLog*) malloc(BUFFER_SIZE * sizeof(OpLog));
@@ -85,11 +107,16 @@ void DisplayListLogBuffer::outputCommands(FILE *file)
             tmpBufferPtr = mBufferFirst;
         }
     }
+
+    outputCommandsInternal(file);
 }
 
 /**
  * Store the given level and label in the buffer and increment/wrap the mEnd
  * and mStart values as appropriate. Label should point to static memory.
+ *
+ * M: Do not use this API directlly, it's not thread safe!!
+ * Use writeCommandStart(level, label) instead.
  */
 void DisplayListLogBuffer::writeCommand(int level, const char* label) {
     mEnd->level = level;
@@ -106,6 +133,185 @@ void DisplayListLogBuffer::writeCommand(int level, const char* label) {
             mStart = mBufferFirst;
         }
     }
+}
+
+DisplayListLogBuffer::OpLog* DisplayListLogBuffer::writeCommandStart(int level, const char* label) {
+    Mutex::Autolock _l(mLock);
+    OpLog* op = mEnd;
+    op->start = 0;
+    op->end = 0;
+
+#if defined(MTK_DEBUG_RENDERER)
+    // level < 0 is a hint that we are using TIME_LOG
+    if (level < 0) {
+        level = 0;
+        op->start = systemTime(SYSTEM_TIME_MONOTONIC);
+    }
+#endif
+
+    writeCommand(level, label);
+    return op;
+}
+
+nsecs_t DisplayListLogBuffer::writeCommandEnd(OpLog* op) {
+    Mutex::Autolock _l(mLock);
+    op->end = systemTime(SYSTEM_TIME_MONOTONIC);
+    nsecs_t duration = op->end - op->start;
+
+    KeyedVector<const char*, OpEntry>* buffers[] = {&mOpBuffer, &mOpBufferPerFrame};
+    bool needUpdate[] = {true, mIsLogCommands};
+
+    for (int i = 0; i < 2; i++) {
+        if (needUpdate[i]) {
+            KeyedVector<const char*, OpEntry> &buffer = *(buffers[i]);
+            ssize_t index = buffer.indexOfKey(op->label);
+            if (index >= 0) {
+                OpEntry& item = buffer.editValueAt(index);
+                if (item.mTotalDuration < INT64_MAX - duration) {
+                    item.mCount++;
+                    item.mMaxDuration = duration > item.mMaxDuration ? duration : item.mMaxDuration;
+                    item.mTotalDuration += duration;
+                } else { // avoid overflow
+                    item.mCount = 1;
+                    item.mMaxDuration = duration;
+                    item.mTotalDuration = duration;
+                }
+                item.mLastDuration = duration;
+            } else {
+                OpEntry entry(op->label, 1, duration);
+                buffer.add(op->label, entry);
+            }
+        }
+    }
+
+    bool blocked = (mLastCheckTime != 0 && op->end > mLastCheckTime);
+    if (duration > g_HWUI_debug_anr_ns || blocked) {
+        mLastCheckTime = 0;
+        ALOGD("[ANR Warning] %s %" PRId64 "ms%s",
+            op->label, nanoseconds_to_milliseconds(duration),
+            blocked ? " blocked others" : " ");
+    }
+    return duration;
+}
+
+bool DisplayListLogBuffer::checkIsAllFinished(const char* command, int timeoutNs) {
+    bool allFinished = true;
+#if defined(MTK_DEBUG_RENDERER)
+    Mutex::Autolock _l(mLock);
+    mLastCheckTime = 0;
+    OpLog* tmpBufferPtr = mEnd;
+    nsecs_t current = systemTime(SYSTEM_TIME_MONOTONIC);
+    int maxNum = 5;
+    int index = 0;
+    maxNum = maxNum < NUM_COMMANDS ? maxNum : NUM_COMMANDS / 10;
+    while (index < maxNum) {
+        if (tmpBufferPtr == mStart) {
+            break;
+        }
+
+        tmpBufferPtr--;
+        if (tmpBufferPtr < mBufferFirst) {
+            tmpBufferPtr = mBufferLast;
+        }
+
+        if (tmpBufferPtr->start != 0 && tmpBufferPtr->end == 0) {
+            nsecs_t runNano = current - tmpBufferPtr->start;
+            if (runNano > timeoutNs) {
+                if (allFinished == true) {
+                    mLastCheckTime = current;
+                    ALOGD("[ANR Warning] task (%s) is waiting for:", command);
+                }
+                allFinished = false;
+                ALOGD("  (%s) run from %" PRId64 " to %" PRId64 " (%" PRId64 "ms) but not finished yet!!",
+                    tmpBufferPtr->label, tmpBufferPtr->start, current,
+                    nanoseconds_to_milliseconds(runNano));
+                index++;
+            }
+        }
+    }
+
+    if (renderthread::RenderThread::hasInstance()) {
+        String8 taskLog;
+        renderthread::RenderThread::getInstance().dumpTaskQueue(taskLog, timeoutNs);
+        if (taskLog.size() != 0) {
+            if (allFinished)
+                ALOGD("[ANR Warning] task (%s) is waiting for:", command);
+            ALOGD("%s", taskLog.string());
+        }
+    }
+#endif
+    return allFinished;
+}
+
+void DisplayListLogBuffer::outputCommandsInternal(FILE *file) {
+    if (mIsLogCommands || file) {
+        KeyedVector<const char*, OpEntry> &ops = file == NULL ? mOpBufferPerFrame : mOpBuffer;
+
+        size_t count = ops.size();
+        if (count == 0) return;
+#undef LOG_TAG
+#define LOG_TAG "DisplayListLogBuffer"
+
+        if (file)
+            fprintf(file, "\n%-25s  %10s  %10s  %10s  %10s  %10s\n",
+                "(ms)", "total", "count", "average", "max", "last");
+        else
+            ALOGD("%-25s  %10s  %10s  %10s  %10s  %10s",
+                "(ms)", "total", "count", "average", "max", "last");
+
+        Vector<OpEntry> list;
+        list.add(ops.valueAt(0));
+
+        for (size_t i = 1; i < count; i++) {
+            OpEntry entry = ops.valueAt(i);
+            size_t index = list.size();
+            size_t size = list.size();
+            for (size_t j = 0; j < size; j++) {
+                OpEntry e = list.itemAt(j);
+                if (entry.mTotalDuration > e.mTotalDuration) {
+                    index = j;
+                    break;
+                }
+           }
+           list.insertAt(entry, index);
+        }
+
+        for (size_t i = 0; i < count; i++) {
+            OpEntry entry = list.itemAt(i);
+            const char* current = entry.mName;
+            float total = entry.mTotalDuration / 1000000.0f;
+            int count = entry.mCount;
+            float max = entry.mMaxDuration / 1000000.0f;
+            float average = total / count;
+            float last = entry.mLastDuration / 1000000.0f;
+            if (file)
+                fprintf(file, "%-25s  %10.2f  %10d  %10.2f  %10.2f  %10.2f\n",
+                    current, total, count, average, max, last);
+            else
+                ALOGD("%-25s  %10.2f  %10d  %10.2f  %10.2f  %10.2f",
+                    current, total, count, average, max, last);
+        }
+
+#undef LOG_TAG
+#define LOG_TAG "OpenGLRenderer"
+    }
+}
+
+void DisplayListLogBuffer::preFlush() {
+#if defined(MTK_DEBUG_RENDERER)
+    char value[PROPERTY_VALUE_MAX];
+    property_get(PROPERTY_DEBUG_COMMANDS_DURATION, value, "");
+    mIsLogCommands = (strcmp(value, "1") == 0) ? true : false;
+    if(mIsLogCommands) {
+        mOpBufferPerFrame.clear();
+    }
+#endif
+}
+
+void DisplayListLogBuffer::postFlush() {
+#if defined(MTK_DEBUG_RENDERER)
+    outputCommandsInternal();
+#endif
 }
 
 }; // namespace uirenderer

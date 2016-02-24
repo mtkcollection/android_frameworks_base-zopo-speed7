@@ -1343,8 +1343,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"ចូល​បណ្ដាញ​វ៉ាយហ្វាយ"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"ចូល​ក្នុង​បណ្ដាញ"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
-    <skip />
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"មិន​​អាច​តភ្ជាប់​វ៉ាយហ្វាយ"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" មាន​ការ​តភ្ជាប់​អ៊ីនធឺណិត​មិន​ល្អ។"</string>
     <string name="wifi_p2p_dialog_title" msgid="97611782659324517">"វ៉ាយហ្វាយ​ផ្ទាល់"</string>
@@ -1604,6 +1603,8 @@
     <string name="storage_sd_card" msgid="3282948861378286745">"កាត​អេសឌី"</string>
     <string name="storage_usb" msgid="3017954059538517278">"ឧបករណ៍​ផ្ទុក​យូអេសប៊ី"</string>
     <string name="extract_edit_menu_button" msgid="8940478730496610137">"កែសម្រួល​"</string>
+    <string name="storage_phone">ការផ្ទុកឯកសារក្នុងទូរស័ព្ទ</string>
+    <string name="storage_external_usb">ការផ្ទុកឯកសារក្នុងឧបករណ៍ USB ខាងក្រៅ</string>
     <string name="data_usage_warning_title" msgid="1955638862122232342">"ការព្រមាន​ប្រើ​ទិន្នន័យ"</string>
     <string name="data_usage_warning_body" msgid="2814673551471969954">"ប៉ះ ដើម្បី​មើល​ការ​ប្រើ និង​ការ​កំណត់។"</string>
     <string name="data_usage_3g_limit_title" msgid="4361523876818447683">"បាន​ដល់​ដែន​កំណត់​ទិន្នន័យ 2G-3G"</string>
@@ -1854,6 +1855,8 @@
     <item quantity="one" msgid="597194865053253679">"សម្រាប់​មួយ​ម៉ោង (រហូត​ដល់ <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
     <item quantity="other" msgid="2827214920627669898">"សម្រាប់ %1$d ម៉ោង (រហូត​ដល់ <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
   </plurals>
+    <string name="storage_ic_usb1">IC-USB storage1 ផ្នែក​ខាងក្រៅ</string>
+    <string name="storage_ic_usb2">IC-USB storage2 ផ្នែក​ខាងក្រៅ</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"សម្រាប់​មួយ​នាទី"</item>
     <item quantity="other" msgid="6924190729213550991">"សម្រាប់ %d នាទី"</item>
@@ -1876,4 +1879,5 @@
     <string name="stk_cc_ss_to_dial" msgid="2151304435775557162">"សំណើរ SS ត្រូវបានកែសម្រួលទៅតាមសំណើរការហៅទូរស័ព្ទ។"</string>
     <string name="stk_cc_ss_to_ussd" msgid="3951862188105305589">"សំណើរ SS ត្រូវបានកែសម្រួលទៅតាមសំណើរ USSD។"</string>
     <string name="stk_cc_ss_to_ss" msgid="5470768854991452695">"សំណើរ SS ត្រូវបានកែសម្រួលទៅតាមសំណើរ SS ថ្មី។"</string>
+    <string name="whichApplicationNamed">បំពេញសកម្មភាពការប្រើ %1$s</string>
 </resources>

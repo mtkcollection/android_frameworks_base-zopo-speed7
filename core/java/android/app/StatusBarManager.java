@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +22,7 @@
 
 package android.app;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.os.Binder;
 import android.os.RemoteException;
@@ -26,6 +32,7 @@ import android.util.Slog;
 import android.view.View;
 
 import com.android.internal.statusbar.IStatusBarService;
+import com.mediatek.xlog.Xlog;
 
 /**
  * Allows an app to control the status bar.
@@ -72,6 +79,8 @@ public class StatusBarManager {
     private Context mContext;
     private IStatusBarService mService;
     private IBinder mToken = new Binder();
+
+    private static final String TAG = "StatusBarManager";
 
     StatusBarManager(Context context) {
         mContext = context;
@@ -193,4 +202,55 @@ public class StatusBarManager {
         if (state == WINDOW_STATE_SHOWING) return "WINDOW_STATE_SHOWING";
         return "WINDOW_STATE_UNKNOWN";
     }
+
+
+    /** M: Support "SystemUI SIM indicator" feature. @{ */
+
+    /**
+      * M: showSimIndicator: shows default (current-selected) SIM indicator in StatusBar
+      *    for a specific business type (e.g. Message, Call)
+      *
+      * @param componentName the package name which makes the call (it doesn't need to be the app who owns the business)
+      * @param businessType  the type of the default SIM setting. ex. VOICE_CALL
+      * @hide
+      * @internal
+      */
+    public void showSimIndicator(ComponentName componentName, String businessType) {
+        String pkgName = componentName == null ? "null" : componentName.getPackageName();
+        try {
+            Xlog.d(TAG, "Show SIM indicator from " + pkgName + ", businiss is " + businessType + ".");
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.showSimIndicator(businessType);
+            }
+        } catch (RemoteException ex) {
+            Xlog.d(TAG, "Show SIM indicator from " + pkgName + " occurs exception.");
+            /// M: system process is dead anyway.
+            throw new RuntimeException(ex);
+        }
+    }
+
+    /**
+      * M: hideSimIndicator: hides default SIM indicator
+      *
+      * @param componentName the package name which makes the call
+      * @hide
+      * @internal
+      */
+    public void hideSimIndicator(ComponentName componentName) {
+        String pkgName = componentName == null ? "null" : componentName.getPackageName();
+        try {
+            Xlog.d(TAG, "Hide SIM indicator from " + pkgName + ".");
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                mService.hideSimIndicator();
+            }
+        } catch (RemoteException ex) {
+            Xlog.d(TAG, "Hide SIM indicator from " + pkgName + " occurs exception.");
+            /// M: system process is dead anyway.
+            throw new RuntimeException(ex);
+        }
+    }
+
+    /** }@ */
 }

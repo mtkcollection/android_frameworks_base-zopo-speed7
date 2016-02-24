@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,7 +128,8 @@ public class CreateDirectoryFragment extends DialogFragment {
                 // Navigate into newly created child
                 mActivity.onDocumentPicked(result);
             } else {
-                Toast.makeText(mActivity, R.string.create_error, Toast.LENGTH_SHORT).show();
+                /// M: Show toast with enhance way.
+                mActivity.showToast(R.string.create_error);
             }
 
             mActivity.setPending(false);

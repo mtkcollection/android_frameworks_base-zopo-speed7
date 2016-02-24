@@ -23,6 +23,10 @@ import android.content.ServiceConnection;
 import android.os.Debug;
 import android.os.IBinder;
 import android.util.Log;
+///M: @{
+import android.os.IBinder.DeathRecipient;
+import android.os.RemoteException;
+///M: @}
 
 public class PrintSpoolerProvider implements ServiceConnection {
     private final Context mContext;
@@ -43,20 +47,48 @@ public class PrintSpoolerProvider implements ServiceConnection {
 
     public void destroy() {
         if (mSpooler != null) {
-            mContext.unbindService(this);
+            ///M: FIXME! In case all callbacks have not
+            //      been called before unbind. @{
+            try {
+                mContext.unbindService(this);
+            } catch (IllegalArgumentException ie) {
+                mSpooler = null;
+            }
+            ///M: @}
         }
     }
 
     @Override
     public void onServiceConnected(ComponentName name, IBinder service) {
         mSpooler = ((PrintSpoolerService.PrintSpooler) service).getService();
+        ///M: Since we are checking <code>mSpooler ==  null</code>
+        //      all the time, <code>mSpooler</code> should be finalize
+        //      when remote service has died. @{
+        try {
+            service.linkToDeath(mDeathRecipient, 0);
+        } catch (RemoteException re) {
+            mSpooler = null;
+        }
+        ///M: @}
         if (mSpooler != null) {
             mCallback.run();
         }
     }
 
+    ///M: @{
+    private final DeathRecipient mDeathRecipient = new DeathRecipient() {
+        @Override
+        public void binderDied() {
+            mSpooler = null;
+        }
+    };
+    ///M: @}
+
     @Override
     public void onServiceDisconnected(ComponentName name) {
-        /* do nothing - we are in the same process */
+        ///M: <code>mSpooler</code> should be finalized here
+        //      to avoid redundant operations @{
+        mSpooler = null;
+        ///M: @}
     }
 }

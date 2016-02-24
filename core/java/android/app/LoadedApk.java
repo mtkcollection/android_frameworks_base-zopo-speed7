@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +36,7 @@ import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Resources;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -110,6 +116,9 @@ public final class LoadedApk {
         = new ArrayMap<Context, ArrayMap<ServiceConnection, LoadedApk.ServiceDispatcher>>();
 
     int mClientCount = 0;
+
+    /// M: for build type
+    static final boolean IS_USER_BUILD = "user".equals(Build.TYPE) || "userdebug".equals(Build.TYPE);
 
     Application getApplication() {
         return mApplication;
@@ -586,7 +595,7 @@ public final class LoadedApk {
         final int N = packageIdentifiers.size();
         for (int i = 0; i < N; i++) {
             final int id = packageIdentifiers.keyAt(i);
-            if (id == 0x01 || id == 0x7f) {
+            if (id == 0x01 || id == 0x08 || id == 0x7f) { /// M: 0x08 is mediatek-res.apk resource ID.
                 continue;
             }
 
@@ -801,6 +810,13 @@ public final class LoadedApk {
                         if (extras != null) {
                             extras.setAllowFds(false);
                         }
+                        /// M: ActivityThread log enhancement @{
+                        if (!IS_USER_BUILD && ordered) {
+                            Slog.d(ActivityThread.TAG, "BDC-Calling finishReceiver"
+                                + ": IIntentReceiver="
+                                + Integer.toHexString(System.identityHashCode(this.asBinder())));
+                        }
+                        /// @}
                         mgr.finishReceiver(this, resultCode, data, extras, false);
                     } catch (RemoteException e) {
                         Slog.w(ActivityThread.TAG, "Couldn't finish broadcast to unregistered receiver");
@@ -852,6 +868,17 @@ public final class LoadedApk {
                     if (mRegistered && ordered) {
                         if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
                                 "Finishing null broadcast to " + mReceiver);
+                        /// M: ActivityThread log enhancement @{
+                        if (!IS_USER_BUILD) {
+                            Slog.d(ActivityThread.TAG, "BDC-Finishing null broadcast"
+                                + ": intent=" + intent
+                                + ", ordered=true"
+                                + ", receiver=" + receiver
+                                + ", IIntentReceiver="
+                                + Integer.toHexString(System.identityHashCode(
+                                    mIIntentReceiver.asBinder())));
+                        }
+                        /// @}
                         sendFinished(mgr);
                     }
                     return;
@@ -863,6 +890,18 @@ public final class LoadedApk {
                     intent.setExtrasClassLoader(cl);
                     setExtrasClassLoader(cl);
                     receiver.setPendingResult(this);
+                    /// M: ActivityThread log enhancement @{
+                    if (!IS_USER_BUILD && (mRegistered && ordered)) {
+                        final boolean isOrdered = mRegistered && ordered;
+                        Slog.d(ActivityThread.TAG, "BDC-Calling onReceive"
+                            + ": intent=" + intent
+                            + ", ordered=true"
+                            + ", receiver=" + receiver
+                            + ", IIntentReceiver="
+                            + Integer.toHexString(System.identityHashCode(
+                                mIIntentReceiver.asBinder())));
+                    }
+                    /// @}
                     receiver.onReceive(mContext, intent);
                 } catch (Exception e) {
                     if (mRegistered && ordered) {

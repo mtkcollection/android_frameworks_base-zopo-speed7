@@ -91,10 +91,16 @@ public class LocalePicker extends ListFragment {
         Collections.addAll(localeList, locales);
 
         // Don't show the pseudolocales unless we're in developer mode. http://b/17190407.
+/* Vanzo:libing on: Thu, 03 Jul 2014 11:15:20 +0800
+ * implement #86423 remove developer lang
         if (!isInDeveloperMode) {
             localeList.remove("ar-XB");
             localeList.remove("en-XA");
         }
+ */
+        localeList.remove("ar-XB");
+        localeList.remove("en-XA");
+// End of Vanzo:libing
 
         Collections.sort(localeList);
         final String[] specialLocaleCodes = resources.getStringArray(R.array.special_locale_codes);

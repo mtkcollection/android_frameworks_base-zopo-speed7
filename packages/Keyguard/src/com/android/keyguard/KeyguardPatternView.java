@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,7 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.media.AudioSystem;
 import android.os.CountDownTimer;
 import android.os.SystemClock;
 import android.text.TextUtils;
@@ -183,9 +189,17 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
 
     private void displayDefaultSecurityMessage() {
         if (mKeyguardUpdateMonitor.getMaxBiometricUnlockAttemptsReached()) {
-            mSecurityMessageDisplay.setMessage(R.string.faceunlock_multiple_failures, true);
+            ///M: use different prompt message in face unlock or voice unlock
+            if (mLockPatternUtils.usingBiometricWeak()) {
+                mSecurityMessageDisplay.setMessage(R.string.faceunlock_multiple_failures, true);
+            } else if (mLockPatternUtils.usingVoiceWeak()) {
+                mSecurityMessageDisplay.setMessage(R.string.voiceunlock_multiple_failures, true);
+                /// M: [ALPS01748966] supress voice unlock view
+                mKeyguardUpdateMonitor.setAlternateUnlockEnabled(false) ;
+            }
         } else {
-            mSecurityMessageDisplay.setMessage(R.string.kg_pattern_instructions, false);
+            /// M: [ALPS00594552] Indicate the user to input pattern.
+            mSecurityMessageDisplay.setMessage(R.string.kg_pattern_instructions, true);
         }
     }
 
@@ -228,9 +242,11 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
                 if (registeredAttempt) {
                     mCallback.reportUnlockAttempt(false);
                 }
+                /// M: for issue ALPS00431080
                 int attempts = mKeyguardUpdateMonitor.getFailedUnlockAttempts();
-                if (registeredAttempt &&
-                        0 == (attempts % LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT)) {
+                if (registeredAttempt
+                        && 0 != attempts
+                        && 0 == (attempts % LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT)) {
                     long deadline = mLockPatternUtils.setLockoutAttemptDeadline();
                     handleAttemptLockout(deadline);
                 } else {
@@ -280,6 +296,13 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
     @Override
     public void onResume(int reason) {
         reset();
+       ///M: add for voice unlock
+        ///   display prompt message when voice unlock is disabled because of
+        ///   media is playing in background.
+        final boolean mediaPlaying = AudioSystem.isStreamActive(AudioSystem.STREAM_MUSIC, 0);
+        if (mLockPatternUtils.usingVoiceWeak() && mediaPlaying) {
+            mSecurityMessageDisplay.setMessage(R.string.voice_unlock_media_playing, true);
+        }
     }
 
     @Override

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +36,11 @@ namespace uirenderer {
 
 // Debug
 #if DEBUG_RENDER_BUFFERS
-    #define RENDER_BUFFER_LOGD(...) ALOGD(__VA_ARGS__)
+    #define RENDER_BUFFER_LOGD(...) \
+    {                            \
+        if (g_HWUI_debug_render_buffers) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define RENDER_BUFFER_LOGD(...)
 #endif

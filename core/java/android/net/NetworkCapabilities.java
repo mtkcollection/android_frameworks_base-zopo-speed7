@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +42,6 @@ public final class NetworkCapabilities implements Parcelable {
      * @hide
      */
     public NetworkCapabilities() {
-        mNetworkCapabilities = DEFAULT_CAPABILITIES;
     }
 
     public NetworkCapabilities(NetworkCapabilities nc) {
@@ -54,7 +58,8 @@ public final class NetworkCapabilities implements Parcelable {
      * Represents the network's capabilities.  If any are specified they will be satisfied
      * by any Network that matches all of them.
      */
-    private long mNetworkCapabilities;
+    private long mNetworkCapabilities = (1 << NET_CAPABILITY_NOT_RESTRICTED) |
+            (1 << NET_CAPABILITY_TRUSTED) | (1 << NET_CAPABILITY_NOT_VPN);
 
     /**
      * Indicates this is a network that has the ability to reach the
@@ -162,30 +167,27 @@ public final class NetworkCapabilities implements Parcelable {
      */
     public static final int NET_CAPABILITY_VALIDATED      = 16;
 
+    /** M: start */
+    /** {@hide} */
+    public static final int NET_CAPABILITY_DM = 16;
+    /** {@hide} */
+    public static final int NET_CAPABILITY_WAP = 17;
+    /** {@hide} */
+    public static final int NET_CAPABILITY_NET = 18;
+    /** {@hide} */
+    public static final int NET_CAPABILITY_CMMAIL = 19;
+    /** {@hide} */
+    public static final int NET_CAPABILITY_TETHERING = 20;
+    /** {@hide} */
+    public static final int NET_CAPABILITY_RCSE = 21;
+    /** M: end */
+
+
     private static final int MIN_NET_CAPABILITY = NET_CAPABILITY_MMS;
-    private static final int MAX_NET_CAPABILITY = NET_CAPABILITY_VALIDATED;
 
-    /**
-     * Capabilities that are set by default when the object is constructed.
-     */
-    private static final long DEFAULT_CAPABILITIES =
-            (1 << NET_CAPABILITY_NOT_RESTRICTED) |
-            (1 << NET_CAPABILITY_TRUSTED) |
-            (1 << NET_CAPABILITY_NOT_VPN);
+    /** M: modify from NET_CAPABILITY_NOT_VPN to NET_CAPABILITY_RCSE */
+    private static final int MAX_NET_CAPABILITY = NET_CAPABILITY_RCSE;
 
-    /**
-     * Capabilities that suggest that a network is restricted.
-     * {@see #maybeMarkCapabilitiesRestricted}.
-     */
-    private static final long RESTRICTED_CAPABILITIES =
-            (1 << NET_CAPABILITY_CBS) |
-            (1 << NET_CAPABILITY_DUN) |
-            (1 << NET_CAPABILITY_EIMS) |
-            (1 << NET_CAPABILITY_FOTA) |
-            (1 << NET_CAPABILITY_IA) |
-            (1 << NET_CAPABILITY_IMS) |
-            (1 << NET_CAPABILITY_RCS) |
-            (1 << NET_CAPABILITY_XCAP);
 
     /**
      * Adds the given capability to this {@code NetworkCapability} instance.
@@ -270,26 +272,6 @@ public final class NetworkCapabilities implements Parcelable {
     }
 
     /**
-     * Removes the NET_CAPABILITY_NOT_RESTRICTED capability if all the capabilities it provides are
-     * typically provided by restricted networks.
-     *
-     * TODO: consider:
-     * - Renaming it to guessRestrictedCapability and make it set the
-     *   restricted capability bit in addition to clearing it.
-     * @hide
-     */
-    public void maybeMarkCapabilitiesRestricted() {
-        // If all the capabilities are typically provided by restricted networks, conclude that this
-        // network is restricted.
-        if ((mNetworkCapabilities & ~(DEFAULT_CAPABILITIES | RESTRICTED_CAPABILITIES)) == 0 &&
-                // Must have at least some restricted capabilities, otherwise a request for an
-                // internet-less network will get marked restricted.
-                (mNetworkCapabilities & RESTRICTED_CAPABILITIES) != 0) {
-            removeCapability(NET_CAPABILITY_NOT_RESTRICTED);
-        }
-    }
-
-    /**
      * Representing the transport type.  Apps should generally not care about transport.  A
      * request for a fast internet connection could be satisfied by a number of different
      * transports.  If any are specified here it will be satisfied a Network that matches
@@ -322,8 +304,18 @@ public final class NetworkCapabilities implements Parcelable {
      */
     public static final int TRANSPORT_VPN = 4;
 
+    ///M@add for 3Gdongle
+     /** {@hide} */
+    public static final int TRANSPORT_TEDONGLE = 5;
+
+    /**
+     * Indicates this network uses a EPDG transport.
+     * {@hide}
+     */
+    public static final int TRANSPORT_EPDG = 6;
+
     private static final int MIN_TRANSPORT = TRANSPORT_CELLULAR;
-    private static final int MAX_TRANSPORT = TRANSPORT_VPN;
+    private static final int MAX_TRANSPORT = TRANSPORT_EPDG;
 
     /**
      * Adds the given transport type to this {@code NetworkCapability} instance.
@@ -396,7 +388,17 @@ public final class NetworkCapabilities implements Parcelable {
     }
     /** @hide */
     public boolean equalsTransportTypes(NetworkCapabilities nc) {
-        return (nc.mTransportTypes == this.mTransportTypes);
+        ///M: Support for ePDG
+        NetworkCapabilities nc1 = new NetworkCapabilities(nc);
+        NetworkCapabilities nc2 = new NetworkCapabilities(this);
+
+        if (nc1.hasTransport(TRANSPORT_EPDG)) {
+            nc1.removeTransportType(TRANSPORT_EPDG);
+        }
+        if (nc2.hasTransport(TRANSPORT_EPDG)) {
+            nc2.removeTransportType(TRANSPORT_EPDG);
+        }
+        return (nc1.mTransportTypes == nc2.mTransportTypes);
     }
 
     /**
@@ -498,7 +500,9 @@ public final class NetworkCapabilities implements Parcelable {
      * @hide
      */
     public void setNetworkSpecifier(String networkSpecifier) {
-        if (TextUtils.isEmpty(networkSpecifier) == false && Long.bitCount(mTransportTypes) != 1) {
+
+        //M: Modify for ePDG
+        if (TextUtils.isEmpty(networkSpecifier) == false && Long.bitCount(mTransportTypes) > 2) {
             throw new IllegalStateException("Must have a single transport specified to use " +
                     "setNetworkSpecifier");
         }
@@ -622,6 +626,7 @@ public final class NetworkCapabilities implements Parcelable {
                 case TRANSPORT_BLUETOOTH:   transports += "BLUETOOTH"; break;
                 case TRANSPORT_ETHERNET:    transports += "ETHERNET"; break;
                 case TRANSPORT_VPN:         transports += "VPN"; break;
+                case TRANSPORT_EPDG:         transports += "EPDG"; break;
             }
             if (++i < types.length) transports += "|";
         }
@@ -646,6 +651,14 @@ public final class NetworkCapabilities implements Parcelable {
                 case NET_CAPABILITY_NOT_RESTRICTED: capabilities += "NOT_RESTRICTED"; break;
                 case NET_CAPABILITY_TRUSTED:        capabilities += "TRUSTED"; break;
                 case NET_CAPABILITY_NOT_VPN:        capabilities += "NOT_VPN"; break;
+                /** M: start */
+                case NET_CAPABILITY_DM:             capabilities += "DM"; break;
+                case NET_CAPABILITY_WAP:            capabilities += "WAP"; break;
+                case NET_CAPABILITY_NET:            capabilities += "NET"; break;
+                case NET_CAPABILITY_CMMAIL:         capabilities += "CMMAIL"; break;
+                case NET_CAPABILITY_TETHERING:      capabilities += "TETHERING"; break;
+                case NET_CAPABILITY_RCSE:           capabilities += "RCSE"; break;
+                /** M: end */
             }
             if (++i < types.length) capabilities += "&";
         }

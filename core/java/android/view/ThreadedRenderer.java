@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -145,7 +150,8 @@ public class ThreadedRenderer extends HardwareRenderer {
         mInitialized = true;
         updateEnabledState(surface);
         boolean status = nInitialize(mNativeProxy, surface);
-        surface.allocateBuffers();
+        /// M: Do allocateBuffers in render thread,
+        /// main thread is not blocked here to get better launch time
         return status;
     }
 
@@ -307,7 +313,18 @@ public class ThreadedRenderer extends HardwareRenderer {
     @Override
     void draw(View view, AttachInfo attachInfo, HardwareDrawCallbacks callbacks) {
         attachInfo.mIgnoreDirtyState = true;
-        long frameTimeNanos = mChoreographer.getFrameTimeNanos();
+        /// M: [APP launch time enhancenment feature] Catch the exception from Choreographer. @{
+        long frameTimeNanos;
+        if (attachInfo.mViewRootImpl.DBG_APP_LAUNCH_ENHANCE) {
+            try {
+                frameTimeNanos = mChoreographer.getFrameTimeNanos();
+            } catch (IllegalStateException e) {
+                frameTimeNanos = System.nanoTime();
+            }
+        } else {
+            frameTimeNanos = mChoreographer.getFrameTimeNanos();
+        }
+        /// @}
         attachInfo.mDrawingTime = frameTimeNanos / TimeUtils.NANOS_PER_MS;
 
         long recordDuration = 0;

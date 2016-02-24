@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +31,8 @@
 #include "Debug.h"
 #include "Program.h"
 #include "Properties.h"
+/// M: [ProgramBinaryAtlas] For using program atlas.
+#include "MTKProgramAtlas.h"
 
 namespace android {
 namespace uirenderer {
@@ -40,12 +47,27 @@ namespace uirenderer {
  */
 class ProgramCache {
 public:
-    ProgramCache();
-    ~ProgramCache();
+    ANDROID_API ProgramCache();
+    ANDROID_API ~ProgramCache();
 
     Program* get(const ProgramDescription& description);
 
     void clear();
+
+    /**
+     * M: [ProgramBinaryAtlas] Create program and its mapping table, return the total memory size
+     * for caching programs binaries, and update the correct mapLength.
+     *
+     * The mapping will be ProgramKey, Offset, Length, "ProgramId", ProgramKey, Offset...
+     */
+    ANDROID_API int createPrograms(int64_t* map, int* mapLength);
+
+    /**
+     * M: [ProgramBinaryAtlas] Load program binaries to the buffer, delete programs, and update the map
+     *
+     * The mapping will be ProgramKey, Offset, Length, "Format", ProgramKey, Offset...
+     */
+    ANDROID_API void loadProgramBinariesAndDelete(int64_t* map, int mapLength, void* buffer, int length);
 
 private:
     Program* generateProgram(const ProgramDescription& description, programid key);
@@ -59,6 +81,8 @@ private:
     KeyedVector<programid, Program*> mCache;
 
     const bool mHasES3;
+    /// M: [ProgramBinaryAtlas] Program atlas for caching program binaries.
+    ProgramAtlas programAtlas;
 }; // class ProgramCache
 
 }; // namespace uirenderer

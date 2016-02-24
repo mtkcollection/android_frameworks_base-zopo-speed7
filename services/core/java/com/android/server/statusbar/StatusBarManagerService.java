@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,15 +22,20 @@
 package com.android.server.statusbar;
 
 import android.app.StatusBarManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.UserHandle;
-import android.content.Context;
-import android.content.pm.PackageManager;
-import android.content.res.Resources;
 import android.util.Slog;
+import android.view.KeyEvent;
 
 import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.IStatusBarService;
@@ -34,6 +44,9 @@ import com.android.internal.statusbar.StatusBarIconList;
 import com.android.server.LocalServices;
 import com.android.server.notification.NotificationDelegate;
 import com.android.server.wm.WindowManagerService;
+
+import com.mediatek.common.dm.DmAgent; /// M: DM Lock Feature.
+import com.mediatek.xlog.Xlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -95,6 +108,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub {
         mIcons.defineSlots(res.getStringArray(com.android.internal.R.array.config_statusBarIcons));
 
         LocalServices.addService(StatusBarManagerInternal.class, mInternalService);
+
+        /// M: DM Lock Feature.
+        registerDMLock();
     }
 
     /**
@@ -223,6 +239,8 @@ public class StatusBarManagerService extends IStatusBarService.Stub {
                 });
             if (mBar != null) {
                 try {
+                    /// M:[ALPS01673960] Fix User cannot drag down the notification bar.
+                    Slog.d(TAG, "disable statusbar calling PID = " + Binder.getCallingPid());
                     mBar.disable(net);
                 } catch (RemoteException ex) {
                 }
@@ -713,5 +731,95 @@ public class StatusBarManagerService extends IStatusBarService.Stub {
                                 + " token=" + tok.token);
             }
         }
+    }
+    /** M: Support "SystemUI SIM indicator" feature. @{ */
+
+    public void showSimIndicator(String businessType) {
+        if (mBar != null) {
+            try {
+                mBar.showSimIndicator(businessType);
+            } catch (RemoteException ex) {
+                /// M: The exception from system server will throw exception there
+                Slog.e(TAG, "unable to showSimIndicator: " + businessType + " Exception:", ex);
+            }
+        }
+    }
+
+    public void hideSimIndicator() {
+        if (mBar != null) {
+            try {
+                mBar.hideSimIndicator();
+            } catch (RemoteException ex) {
+                /// M: The exception from system server will throw exception there
+                Slog.e(TAG, "unable to hideSimIndicator: Exception:", ex);
+            }
+        }
+    }
+
+    /** }@ */
+
+    /// M: [SystemUI] Support Smartbook Feature. @{
+    public void dispatchStatusBarKeyEvent(KeyEvent event) {
+        if (mBar != null) {
+            try {
+                mBar.dispatchStatusBarKeyEvent(event);
+            } catch (RemoteException ex) {
+                /// M: The exception from system server will throw exception there
+                Slog.e(TAG, "unable to dispatchStatusBarKeyEvent: " + event + " Exception:", ex);
+            }
+        }
+    }
+    /** }@ */
+
+    /// M: DM Lock Feature.
+    IBinder mDMToken = new Binder();
+    void registerDMLock() {
+        try {
+           IBinder binder = ServiceManager.getService("DmAgent");
+           if (binder != null) {
+               DmAgent agent = DmAgent.Stub.asInterface(binder);
+               boolean locked = agent.isLockFlagSet();
+               Xlog.i(TAG, "dm state lock is " + locked);
+               dmEnable(!locked);
+           } else {
+               Xlog.e(TAG, "dm binder is null!");
+           }
+        } catch (RemoteException e) {
+            Xlog.e(TAG, "remote error");
+        }
+        Xlog.i(TAG, "registerDMLock");
+        IntentFilter filter = new IntentFilter();
+        filter.addAction("com.mediatek.ppl.NOTIFY_LOCK");
+        filter.addAction("com.mediatek.ppl.NOTIFY_UNLOCK");
+        filter.addAction("com.mediatek.dm.LAWMO_LOCK");
+        filter.addAction("com.mediatek.dm.LAWMO_UNLOCK");
+        mContext.registerReceiver(mReceiver, filter);
+    }
+
+    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+
+            if (action.equals("com.mediatek.ppl.NOTIFY_LOCK") ||
+                action.equals("com.mediatek.dm.LAWMO_LOCK")) {
+                dmEnable(false);
+            } else if (action.equals("com.mediatek.ppl.NOTIFY_UNLOCK") ||
+                action.equals("com.mediatek.dm.LAWMO_UNLOCK")) {
+                dmEnable(true);
+            }
+        }
+    };
+
+    private int dmEnable(boolean enable) {
+        Xlog.i(TAG, " enable state is " + enable);
+        int net = 0;
+        if (!enable) {
+            net = StatusBarManager.DISABLE_EXPAND | StatusBarManager.DISABLE_NOTIFICATION_ALERTS
+                    | StatusBarManager.DISABLE_NOTIFICATION_ICONS
+                    | StatusBarManager.DISABLE_NOTIFICATION_TICKER;
+        }
+        disable(net, mDMToken, mContext.getPackageName());
+        return 0;
     }
 }

@@ -57,6 +57,7 @@ LOCAL_C_INCLUDES += \
     frameworks/av/media/libstagefright/codecs/amrnb/enc/src \
     frameworks/av/media/libstagefright/codecs/amrnb/common \
     frameworks/av/media/libstagefright/codecs/amrnb/common/include \
+    $(TOP)/mediatek/external/amr \
     frameworks/av/media/mtp \
     frameworks/native/include/media/openmax \
     $(call include-path-for, libhardware)/hardware \
@@ -64,9 +65,29 @@ LOCAL_C_INCLUDES += \
     $(PV_INCLUDES) \
     $(JNI_H_INCLUDE)
 
+LOCAL_C_INCLUDES += $(TOP)/$(MTK_ROOT)/frameworks-ext/native/include
+
+ifeq ($(strip $(MTK_TB_DEBUG_SUPPORT)),yes)
+LOCAL_C_INCLUDES += \
+    $(MTK_PATH_SOURCE)/frameworks/base/include 
+endif
+
+ifeq ($(strip $(MTK_HIGH_QUALITY_THUMBNAIL)),yes)
+LOCAL_CFLAGS += -DMTK_HIGH_QUALITY_THUMBNAIL
+endif
+
+ifeq ($(strip $(MTK_USE_ANDROID_MM_DEFAULT_CODE)),yes)
+LOCAL_CFLAGS += -DANDROID_DEFAULT_CODE
+endif
+
+ifeq ($(HAVE_CMMB_FEATURE),yes)
+LOCAL_CFLAGS += -DMTK_CMMB_ENABLE
+endif
+
 LOCAL_CFLAGS +=
 
 LOCAL_MODULE:= libmedia_jni
+#LOCAL_MULTILIB := 32
 
 include $(BUILD_SHARED_LIBRARY)
 

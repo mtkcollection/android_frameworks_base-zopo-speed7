@@ -1341,7 +1341,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"‏Wi-Fi نیٹ ورک میں سائن ان کریں"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"نیٹ ورک میں سائن ان کریں"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <skip />
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"‏Wi-Fi سے مربوط نہیں ہو سکا"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" اس میں ایک کمزور انٹرنیٹ کنکشن ہے۔"</string>
@@ -1852,6 +1852,10 @@
     <item quantity="one" msgid="597194865053253679">"ایک گھنٹے کیلئے (<xliff:g id="FORMATTEDTIME">%2$s</xliff:g> تک)"</item>
     <item quantity="other" msgid="2827214920627669898">"‏%1$d گھنٹوں کیلئے (<xliff:g id="FORMATTEDTIME">%2$s</xliff:g> تک)"</item>
   </plurals>
+    <string name="storage_phone">فون اسٹوریج</string>
+    <string name="storage_external_usb">خارجی ‏USB‏ اسٹوریج</string>
+    <string name="storage_ic_usb1">خارجی IC-USB اسٹوریج 1</string>
+    <string name="storage_ic_usb2">خارجی IC-USB اسٹوریج 2</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"ایک منٹ کیلئے"</item>
     <item quantity="other" msgid="6924190729213550991">"‏%d منٹ کیلئے"</item>

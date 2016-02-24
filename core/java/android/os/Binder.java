@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -451,6 +456,7 @@ public class Binder implements IBinder {
                 reply.setDataPosition(0);
                 reply.writeException(e);
             }
+            e.printStackTrace(); /// M: ALPS00303655
             res = true;
         } catch (RuntimeException e) {
             if ((flags & FLAG_ONEWAY) != 0) {
@@ -459,11 +465,13 @@ public class Binder implements IBinder {
                 reply.setDataPosition(0);
                 reply.writeException(e);
             }
+            e.printStackTrace(); /// M: ALPS00303655
             res = true;
         } catch (OutOfMemoryError e) {
             // Unconditionally log this, since this is generally unrecoverable.
             Log.e(TAG, "Caught an OutOfMemoryError from the binder stub implementation.", e);
             RuntimeException re = new RuntimeException("Out of memory", e);
+            re.printStackTrace(); /// M: ALPS00303655
             reply.setDataPosition(0);
             reply.writeException(re);
             res = true;

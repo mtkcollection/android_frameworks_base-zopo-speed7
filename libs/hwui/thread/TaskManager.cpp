@@ -19,6 +19,7 @@
 #include <sys/resource.h>
 #endif
 
+#include "Debug.h"
 #include "TaskManager.h"
 #include "Task.h"
 #include "TaskProcessor.h"
@@ -36,6 +37,7 @@ TaskManager::TaskManager() {
     int cpuCount = sysconf(_SC_NPROCESSORS_CONF);
 
     int workerCount = MathUtils::max(1, cpuCount / 2);
+    ALOGD("TaskManager() %p, cpu = %d, thread = %d", this, cpuCount, workerCount);
     for (int i = 0; i < workerCount; i++) {
         String8 name;
         name.appendFormat("hwuiTask%d", i + 1);
@@ -44,6 +46,7 @@ TaskManager::TaskManager() {
 }
 
 TaskManager::~TaskManager() {
+    ALOGD("~TaskManager() %p", this);
     for (size_t i = 0; i < mThreads.size(); i++) {
         mThreads[i]->exit();
     }
@@ -54,6 +57,7 @@ bool TaskManager::canRunTasks() const {
 }
 
 void TaskManager::stop() {
+    ALOGD("[TaskMgr] %p stop", this);
     for (size_t i = 0; i < mThreads.size(); i++) {
         mThreads[i]->exit();
     }
@@ -101,17 +105,41 @@ bool TaskManager::WorkerThread::threadLoop() {
     for (size_t i = 0; i < tasks.size(); i++) {
         const TaskWrapper& task = tasks.itemAt(i);
         task.mProcessor->process(task.mTask);
+        if (g_HWUI_debug_shadow || g_HWUI_debug_paths) {
+            ALOGD("[TaskMgr] %s finish task", mName.string());
+        }
     }
 
     return true;
 }
 
 bool TaskManager::WorkerThread::addTask(TaskWrapper task) {
+    /// M: force exiting thread before new task coming
+    ///    if the thread is going to die
+    if (isRunning() && exitPending()) {
+#if defined(HAVE_PTHREADS) && defined(HAVE_ANDROID_OS)
+        ALOGW("[TaskMgr] waiting for %s (%d) exiting", mName.string(), getTid());
+#endif
+        requestExitAndWait();
+    }
+
     if (!isRunning()) {
         run(mName.string(), PRIORITY_DEFAULT);
+#if defined(HAVE_PTHREADS) && defined(HAVE_ANDROID_OS)
+        ALOGD("[TaskMgr] Running thread %s (%d)", mName.string(), getTid());
+#endif
+    }
+    if (g_HWUI_debug_shadow || g_HWUI_debug_paths) {
+        ALOGD("[TaskMgr] Add task to %s", mName.string());
     }
 
     Mutex::Autolock l(mLock);
+
+#if defined(HAVE_PTHREADS) && defined(HAVE_ANDROID_OS)
+    /// M: store the tid to task
+    task.mTask->mTid = getTid();
+#endif
+
     ssize_t index = mTasks.add(task);
     mSignal.signal();
 
@@ -124,6 +152,9 @@ size_t TaskManager::WorkerThread::getTaskCount() const {
 }
 
 void TaskManager::WorkerThread::exit() {
+#if defined(HAVE_PTHREADS) && defined(HAVE_ANDROID_OS)
+    ALOGD("[TaskMgr] Exit thread %s (%d)", mName.string(), getTid());
+#endif
     {
         Mutex::Autolock l(mLock);
         mTasks.clear();

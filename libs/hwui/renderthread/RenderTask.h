@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +57,9 @@ public:
 
     ANDROID_API virtual void run() = 0;
 
+    /// M: name to check what this task is
+    virtual const char* name() = 0;
+
     RenderTask* mNext;
     nsecs_t mRunAt; // nano-seconds on the SYSTEM_TIME_MONOTONIC clock
 };
@@ -63,6 +71,10 @@ public:
             : mTask(task), mLock(lock), mSignal(signal) {}
     virtual void run();
 
+    virtual const char* name() {
+        return mTask->name();
+    }
+
 private:
     RenderTask* mTask;
     Mutex* mLock;
@@ -73,8 +85,8 @@ typedef void* (*RunnableMethod)(void* data);
 
 class MethodInvokeRenderTask : public RenderTask {
 public:
-    MethodInvokeRenderTask(RunnableMethod method)
-        : mMethod(method), mReturnPtr(0) {}
+    MethodInvokeRenderTask(RunnableMethod method, const char* name)
+        : mMethod(method), mReturnPtr(0), mName(name) {}
 
     void* payload() { return mData; }
     void setReturnPtr(void** retptr) { mReturnPtr = retptr; }
@@ -87,10 +99,17 @@ public:
         // Commit suicide
         delete this;
     }
+
+    virtual const char* name() {
+        return mName;
+    }
 private:
     RunnableMethod mMethod;
     char mData[METHOD_INVOKE_PAYLOAD_SIZE];
     void** mReturnPtr;
+
+    /// M: name for log
+    const char* mName;
 };
 
 } /* namespace renderthread */

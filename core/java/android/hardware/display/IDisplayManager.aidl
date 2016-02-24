@@ -59,6 +59,9 @@ interface IDisplayManager {
     // No permissions required.
     WifiDisplayStatus getWifiDisplayStatus();
 
+    /// M:[SmartBook]Query SmartBook plug status
+    boolean isSmartBookPluggedIn();
+
     // Requires CAPTURE_VIDEO_OUTPUT, CAPTURE_SECURE_VIDEO_OUTPUT, or an appropriate
     // MediaProjection token for certain combinations of flags.
     int createVirtualDisplay(in IVirtualDisplayCallback callback,
@@ -74,4 +77,17 @@ interface IDisplayManager {
 
     // No permissions required but must be same Uid as the creator.
     void releaseVirtualDisplay(in IVirtualDisplayCallback token);
+
+    boolean isSinkEnabled();
+
+    void enableSink(boolean enable);
+
+    void waitWifiDisplayConnection(in Surface surface);
+
+    void suspendWifiDisplay(boolean suspend, in Surface surface);
+
+    void sendUibcInputEvent(String input);
+
+    /// M: Get real state of the specified display no matter whether SmartBook plug in/out.
+    int getRealState(int displayId);
 }

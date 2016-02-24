@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +51,10 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+
+// M: To check permission for Mobile Manager Service/Application. @{
+import com.mediatek.common.mom.MobileManagerUtils;
+// @}
 
 /**
  * Content providers are one of the primary building blocks of Android applications, providing
@@ -183,6 +192,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @hide
      */
     class Transport extends ContentProviderNative {
+        String mQueryPermission = null;
+        String mModifyPermission = null;
         AppOpsManager mAppOpsManager = null;
         int mReadOp = AppOpsManager.OP_NONE;
         int mWriteOp = AppOpsManager.OP_NONE;
@@ -450,6 +461,11 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
         private int enforceReadPermission(String callingPkg, Uri uri, IBinder callerToken)
                 throws SecurityException {
             enforceReadPermissionInner(uri, callerToken);
+
+            if (!checkMoMSPermission(getQueryPermission())) {
+                return AppOpsManager.MODE_IGNORED;
+            }
+
             if (mReadOp != AppOpsManager.OP_NONE) {
                 return mAppOpsManager.noteOp(mReadOp, Binder.getCallingUid(), callingPkg);
             }
@@ -459,6 +475,11 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
         private int enforceWritePermission(String callingPkg, Uri uri, IBinder callerToken)
                 throws SecurityException {
             enforceWritePermissionInner(uri, callerToken);
+
+            if (!checkMoMSPermission(getModifyPermission())) {
+                return AppOpsManager.MODE_IGNORED;
+            }
+
             if (mWriteOp != AppOpsManager.OP_NONE) {
                 return mAppOpsManager.noteOp(mWriteOp, Binder.getCallingUid(), callingPkg);
             }
@@ -471,6 +492,21 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
                 || mSingleUser
                 || context.checkPermission(INTERACT_ACROSS_USERS, pid, uid)
                 == PERMISSION_GRANTED;
+    }
+
+    private boolean checkMoMSPermission(String permission) {
+        // M: To check permission for Mobile Manager Service/Application. @{
+        if (MobileManagerUtils.isSupported()) {
+            if (permission != null) {
+                int uid = Binder.getCallingUid();
+                if (!MobileManagerUtils.checkPermission(permission, uid)) {
+                    Log.w(TAG, "MoMS Denied " + permission + " to uid: " + uid);
+                    return false;
+                }
+            }
+        }
+        // @}
+        return true;
     }
 
     /** {@hide} */
@@ -753,6 +789,25 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
             mTransport.mReadOp = readOp;
             mTransport.mWriteOp = writeOp;
         }
+    }
+
+    /**
+     * MobileManagerService for database access checking
+     * @hide
+     */
+    public final void setMoMSPermission(String queryPermission, String modifyPermission) {
+         mTransport.mQueryPermission = queryPermission;
+         mTransport.mModifyPermission = modifyPermission;
+    }
+
+    /** @hide */
+    public final String getQueryPermission() {
+         return mTransport.mQueryPermission;
+    }
+
+    /** @hide */
+    public final String getModifyPermission() {
+         return mTransport.mModifyPermission;
     }
 
     /** @hide */

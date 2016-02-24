@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -209,6 +214,8 @@ public class PreferenceManager {
      *         root).
      */
     PreferenceScreen inflateFromIntent(Intent queryIntent, PreferenceScreen rootPreferences) {
+        Log.d(TAG, "inflateFromIntent");
+
         final List<ResolveInfo> activities = queryIntentActivities(queryIntent);
         final HashSet<String> inflatedRes = new HashSet<String>();
 
@@ -265,6 +272,8 @@ public class PreferenceManager {
      */
     public PreferenceScreen inflateFromResource(Context context, int resId,
             PreferenceScreen rootPreferences) {
+        Log.d(TAG, "inflateFromResource");
+
         // Block commits
         setNoCommit(true);
 

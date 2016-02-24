@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +102,8 @@ extern int register_android_media_ToneGenerator(JNIEnv *env);
 
 extern int register_android_util_FloatMath(JNIEnv* env);
 
+extern int register_com_mediatek_xlog_Xlog(JNIEnv* env);
+
 namespace android {
 
 /*
@@ -190,6 +197,8 @@ extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv *env
 extern int register_com_android_internal_net_NetworkStatsFactory(JNIEnv *env);
 extern int register_com_android_internal_os_Zygote(JNIEnv *env);
 extern int register_com_android_internal_util_VirtualRefBasePtr(JNIEnv *env);
+
+extern int register_com_mediatek_perfservice_PerfServiceWrapper(JNIEnv* env);
 
 static AndroidRuntime* gCurRuntime = NULL;
 
@@ -375,13 +384,30 @@ static void readLocale(char* language, char* region)
     property_get("persist.sys.language", propLang, "");
     property_get("persist.sys.country", propRegn, "");
     if (*propLang == 0 && *propRegn == 0) {
-        /* Set to ro properties, default is en_US */
-        property_get("ro.product.locale.language", propLang, "en");
-        property_get("ro.product.locale.region", propRegn, "US");
+        /// M: SIM Locale feature @{
+        char propSIMLang[PROPERTY_VALUE_MAX];
+        char propSIMRegn[PROPERTY_VALUE_MAX];
+
+        property_get("persist.sys.simlanguage", propSIMLang, "");
+        property_get("persist.sys.simcountry", propSIMRegn, "");
+        /// @}
+
+        if (*propSIMLang != 0 && *propSIMRegn != 0) {
+            /// M: SIM Locale feature:
+            /// If simlanguage is set, we will use this as the device default locale
+            /// Otherwise, use the en as the default locale @{
+            strcpy(propLang, propSIMLang);
+            strcpy(propRegn, propSIMRegn);
+            /// @}
+        } else {
+            /* Set to ro properties, default is en_US */
+            property_get("ro.product.locale.language", propLang, "en");
+            property_get("ro.product.locale.region", propRegn, "US");
+        }
     }
     strncat(language, propLang, 3);
     strncat(region, propRegn, 3);
-    //ALOGD("language=%s region=%s\n", language, region);
+    ALOGD("language=%s region=%s\n", language, region);     /// M: show debug log
 }
 
 void AndroidRuntime::addOption(const char* optionString, void* extraInfo)
@@ -528,7 +554,7 @@ bool AndroidRuntime::parseCompilerRuntimeOption(const char* property,
  *
  * Returns 0 on success.
  */
-int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv, bool zygote)
+int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv)
 {
     int result = -1;
     JavaVMInitArgs initArgs;
@@ -733,13 +759,9 @@ int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv, bool zygote)
         }
     }
 
-    /*
-     * Enable debugging only for apps forked from zygote.
-     * Set suspend=y to pause during VM init and use android ADB transport.
-     */
-    if (zygote) {
-      addOption("-agentlib:jdwp=transport=dt_android_adb,suspend=n,server=y");
-    }
+    /* enable debugging; set suspend=y to pause during VM init */
+    /* use android ADB transport */
+    addOption("-agentlib:jdwp=transport=dt_android_adb,suspend=n,server=y");
 
     parseRuntimeOption("dalvik.vm.lockprof.threshold",
                        lockProfThresholdBuf,
@@ -943,6 +965,80 @@ jstring AndroidRuntime::NewStringLatin1(JNIEnv* env, const char* bytes) {
     return env->NewString(buffer, length);
 }
 
+#if 0
+static bool bootClassOdexDone = false;
+static const char *bootClassOdexPath[32];
+static const char *bootClassJarPath[32];
+
+static void waitBootClassOdexDone(void)
+{
+    if (access("/system/framework/core.odex", F_OK) == 0)  {
+		ALOGD("wait_boot_class_odex : core.odex exist");
+        return;
+    }
+
+    char  *p, *str = strdup(getenv("BOOTCLASSPATH"));
+    char  odexPath[128];
+
+    memset(bootClassOdexPath, 0, 32 * sizeof(char *));
+    memset(bootClassJarPath, 0, 32 * sizeof(char *));
+    p = strtok(str, ":");
+
+    int i = 0;
+    while (p)  {
+        if (!strncmp("/system/framework/", p, strlen("/system/framework/")))  {
+            sprintf(odexPath, "/data/dalvik-cache/system@framework@%s@classes.dex", p+strlen("/system/framework/"));
+            bootClassOdexPath[i] = strdup(odexPath);
+            bootClassJarPath[i] = strdup(p);
+            i++;
+	}
+        p = strtok(NULL, ":");
+	}
+
+    //for (i = 0; bootClassJarPath[i] && (i < 32); i++)  {
+    //    ALOGD("%s => %s", bootClassJarPath[i], bootClassOdexPath[i]);
+    //}
+
+    ALOGD("wait_boot_class_odex");
+    for (i = 0; bootClassJarPath[i] && (i < 32); i++)  {
+        if (access(bootClassJarPath[i] , F_OK) == 0)  {
+            //ALOGD("wait %s", bootClassOdexPath[i]);
+            while (access(bootClassOdexPath[i] , F_OK) != 0)  {
+		        usleep(500 * 1000);
+	        }
+	        //ALOGD("done %s", bootClassOdexPath[i]);
+        }
+    }
+}
+#endif
+
+#if 1
+static bool bootOatDone = false;
+
+static void waitOatDone(void) 
+{
+    char propBuf[PROPERTY_VALUE_MAX];
+
+    property_get("ro.kernel.qemu", propBuf, "0");
+
+    if (!strcmp(propBuf, "1")) {
+        return;
+    }
+
+    while (1)  {
+        if (access("/data/dalvik-cache/arm/system@framework@am.jar@classes.dex", F_OK) == 0)  {
+            ALOGD("wait_boot_oat_32 : done");
+            return;
+        }
+        if (access("/data/dalvik-cache/arm64/system@framework@am.jar@classes.dex", F_OK) == 0)  {
+            ALOGD("wait_boot_oat_64 : done");
+            return;
+        }
+        usleep(500 * 1000);
+    }
+}
+#endif
+
 
 /*
  * Start the Android runtime.  This involves starting the virtual machine
@@ -952,10 +1048,28 @@ jstring AndroidRuntime::NewStringLatin1(JNIEnv* env, const char* bytes) {
  * Passes the main function two arguments, the class name and the specified
  * options string.
  */
-void AndroidRuntime::start(const char* className, const Vector<String8>& options, bool zygote)
+void AndroidRuntime::start(const char* className, const Vector<String8>& options)
 {
     ALOGD(">>>>>> START %s uid %d <<<<<<\n",
             className != NULL ? className : "(unknown)", getuid());
+
+#if 0
+    if (!bootClassOdexDone)  {
+        if (!strcmp(className, "com.android.internal.os.RuntimeInit"))  {
+            waitBootClassOdexDone();
+            bootClassOdexDone = true;
+        }
+    }
+#endif
+
+#if 1
+    if (!bootOatDone)  {
+        if (!strcmp(className, "com.android.internal.os.RuntimeInit"))  {
+            waitOatDone();
+            bootOatDone = true;
+        }
+    }
+#endif
 
     static const String8 startSystemServer("start-system-server");
 
@@ -988,7 +1102,7 @@ void AndroidRuntime::start(const char* className, const Vector<String8>& options
     JniInvocation jni_invocation;
     jni_invocation.Init(NULL);
     JNIEnv* env;
-    if (startVm(&mJavaVM, &env, zygote) != 0) {
+    if (startVm(&mJavaVM, &env) != 0) {
         return;
     }
     onVmCreated(env);
@@ -1253,6 +1367,8 @@ static const RegJNIRec gRegJNI[] = {
     REG_JNI(register_android_os_SystemClock),
     REG_JNI(register_android_util_EventLog),
     REG_JNI(register_android_util_Log),
+    REG_JNI(register_com_mediatek_xlog_Xlog),
+    REG_JNI(register_com_mediatek_perfservice_PerfServiceWrapper),
     REG_JNI(register_android_util_FloatMath),
     REG_JNI(register_android_content_AssetManager),
     REG_JNI(register_android_content_StringBlock),

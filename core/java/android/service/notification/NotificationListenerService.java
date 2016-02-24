@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +31,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ParceledListSlice;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -634,6 +640,12 @@ public abstract class NotificationListenerService extends Service {
                 Log.w(TAG, "onNotificationRemoved: Error receiving StatusBarNotification", e);
                 return;
             }
+            /// M: [ALPS01786531] JE @{
+            if (sbn == null){
+                Log.w(TAG, "onNotificationRemoved: StatusBarNotification is null from PID=" + Binder.getCallingPid());
+                return;
+            }
+            /// M: [ALPS01786531] JE @}
             // protect subclass from concurrent modifications of (@link mNotificationKeys}.
             synchronized (mWrapper) {
                 applyUpdate(update);

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,10 +50,13 @@ import android.view.ViewGroupOverlay;
 import android.widget.AbsListView.OnScrollListener;
 import android.widget.ImageView.ScaleType;
 
+
 /**
  * Helper class for AbsListView to draw and control the Fast Scroll thumb
  */
 class FastScroller {
+    private static final String TAG = "FastScroller";
+
     /** Duration of fade-out animation. */
     private static final int DURATION_FADE_OUT = 300;
 
@@ -1459,6 +1467,14 @@ class FastScroller {
 
             case MotionEvent.ACTION_CANCEL: {
                 cancelPendingDrag();
+            } break;
+
+            /// M: [ALPS01524267] touch event has been intercepted by fastScroller,
+            /// return true to avoid listview to handle events
+            case MotionEvent.ACTION_DOWN: {
+                if (mState == STATE_DRAGGING) {
+                    return true;
+                }
             } break;
         }
 

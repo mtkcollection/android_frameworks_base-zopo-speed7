@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +45,6 @@ import android.view.InputDevice;
 import android.view.InputEvent;
 
 import java.util.ArrayList;
-
 /**
  * Provides information about input devices and available key layouts.
  * <p>
@@ -779,6 +783,7 @@ public final class InputManager {
     public Vibrator getInputDeviceVibrator(int deviceId) {
         return new InputDeviceVibrator(deviceId);
     }
+
 
     /**
      * Listens for changes in input devices.

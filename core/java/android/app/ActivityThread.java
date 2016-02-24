@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,20 +110,28 @@ import com.android.internal.os.BinderInternal;
 import com.android.internal.os.RuntimeInit;
 import com.android.internal.os.SamplingProfilerIntegration;
 import com.android.internal.util.FastPrintWriter;
+import com.android.internal.util.MemInfoReader;
 import com.android.org.conscrypt.OpenSSLSocketImpl;
 import com.android.org.conscrypt.TrustedCertificateStore;
 import com.google.android.collect.Lists;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
 import java.security.Security;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -129,10 +142,24 @@ import java.util.regex.Pattern;
 import libcore.io.DropBox;
 import libcore.io.EventLogger;
 import libcore.io.IoUtils;
+
 import libcore.net.event.NetworkEventDispatcher;
+
+/// M: For ContentProviderClient leak aee warning
+import com.mediatek.aee.ExceptionLog;
+
+/// M: ANR Debug Mechanism @{
+import com.mediatek.anrappframeworks.ANRAppFrameworks;
+import com.mediatek.anrappmanager.ANRAppManager;
+import com.mediatek.anrappmanager.MessageLogger;
+/// M: ANR Debug Mechanism @}
+
 import dalvik.system.CloseGuard;
 import dalvik.system.VMDebug;
 import dalvik.system.VMRuntime;
+
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 final class RemoteServiceException extends AndroidRuntimeException {
     public RemoteServiceException(String msg) {
@@ -175,7 +202,13 @@ public final class ActivityThread {
     /** Type for IActivityManager.serviceDoneExecuting: done stopping (destroying) service */
     public static final int SERVICE_DONE_EXECUTING_STOP = 2;
 
-    private ContextImpl mSystemContext;
+
+    /// M: Enable/disable ANR mechanism from adb command @{
+    private static final int ENABLE_ALL_ANR_MECHANISM = 2;
+    private static final int DISABLE_ALL_ANR_MECHANISM = 0;
+    /// M: Enable/disable ANR mechanism from adb command @}
+
+    private static ContextImpl mSystemContext;
 
     static IPackageManager sPackageManager;
 
@@ -215,6 +248,8 @@ public final class ActivityThread {
     boolean mSystemThread = false;
     boolean mJitEnabled = false;
     boolean mSomeActivitiesChanged = false;
+
+    ExceptionLog exceptionLog;
 
     // These can be accessed by multiple threads; mPackages is the lock.
     // XXX For now we keep around information about all packages we have
@@ -277,6 +312,16 @@ public final class ActivityThread {
     static Handler sMainThreadHandler;  // set once in main()
 
     Bundle mCoreSettings = null;
+
+    /// M: mediatek added members start
+
+    public static boolean mTraceEnabled = false; /// M: Record If the TraceView is enabled
+    public static boolean mBooted = false; /// M: Identify if device boots up completely
+    public static boolean mEnableAppLaunchLog = false; /// M: It's for debugging App Launch time
+    public static boolean mEnableLooperLog = false;     /// M: It's for debuggig each message in main looper
+    public static boolean mIsUserBuild = false; /// M: ActivityThread log enhancement
+
+    /// M: mediatek added members end
 
     static final class ActivityClientRecord {
         IBinder token;
@@ -831,6 +876,10 @@ public final class ActivityThread {
             sendMessage(H.SUICIDE, null);
         }
 
+        public void requestThumbnail(IBinder token) {
+            sendMessage(H.REQUEST_THUMBNAIL, token);
+        }
+
         public void scheduleConfigurationChanged(Configuration config) {
             updatePendingConfiguration(config);
             sendMessage(H.CONFIGURATION_CHANGED, config);
@@ -1181,6 +1230,49 @@ public final class ActivityThread {
         public void scheduleEnterAnimationComplete(IBinder token) {
             sendMessage(H.ENTER_ANIMATION_COMPLETE, token);
         }
+
+        /// M: mediatek added functions start
+
+        /// M: ActivityThread looper log enhancement
+        public void enableLooperLog() {
+            ActivityThread.enableLooperLog();
+        }
+
+        /// M: ALPS00270724 message history mechanism
+        /// M: Add message history/queue to _exp_main.txt @{
+        public void dumpMessageHistory() {
+            ANRAppManager.dumpMessageHistory();
+        }
+        /// M: MSG HISTORY mechanism for SystemServer @{
+
+        public void dumpAllMessageHistory() {
+            ANRAppManager.dumpAllMessageHistory();
+        }
+        /// @}
+        /// Add message history/queue to _exp_main.txt @}
+        
+        /// M: BMW @{
+        public void scheduleRestoreActivity(IBinder token,
+                List<ResultInfo> pendingResults, List<ReferrerIntent> pendingNewIntents,
+                int configChanges, boolean notResumed,
+                Configuration config, boolean toMax) {
+            ActivityClientRecord r = mActivities.get(token);
+            Slog.i(TAG, "scheduleRestoreActivity r = " + r
+                    + ", notResumed = " + notResumed
+                    + ", toMax = " + toMax);
+
+            if (r != null) {
+                if (toMax) {
+                    r.intent.setFlags(r.intent.getFlags()&~(Intent.FLAG_ACTIVITY_FLOATING));
+                } else {
+                    r.intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+                }
+                requestRelaunchActivity(token, pendingResults, pendingNewIntents,
+                    configChanges, notResumed, config, true);
+            }
+        }
+        /// @}
+        /// M: mediatek added functions end
     }
 
     private class H extends Handler {
@@ -1201,7 +1293,7 @@ public final class ActivityThread {
         public static final int CREATE_SERVICE          = 114;
         public static final int SERVICE_ARGS            = 115;
         public static final int STOP_SERVICE            = 116;
-
+        public static final int REQUEST_THUMBNAIL       = 117;
         public static final int CONFIGURATION_CHANGED   = 118;
         public static final int CLEAN_UP_CONTEXT        = 119;
         public static final int GC_WHEN_IDLE            = 120;
@@ -1236,34 +1328,36 @@ public final class ActivityThread {
         public static final int ENTER_ANIMATION_COMPLETE = 149;
 
         String codeToString(int code) {
-            if (DEBUG_MESSAGES) {
+            /// M: ActivityThread log enhancement @{
+            if (DEBUG_MESSAGES || !mIsUserBuild) {
                 switch (code) {
-                    case LAUNCH_ACTIVITY: return "LAUNCH_ACTIVITY";
-                    case PAUSE_ACTIVITY: return "PAUSE_ACTIVITY";
-                    case PAUSE_ACTIVITY_FINISHING: return "PAUSE_ACTIVITY_FINISHING";
-                    case STOP_ACTIVITY_SHOW: return "STOP_ACTIVITY_SHOW";
-                    case STOP_ACTIVITY_HIDE: return "STOP_ACTIVITY_HIDE";
-                    case SHOW_WINDOW: return "SHOW_WINDOW";
-                    case HIDE_WINDOW: return "HIDE_WINDOW";
-                    case RESUME_ACTIVITY: return "RESUME_ACTIVITY";
+                    case LAUNCH_ACTIVITY: return "ACT-LAUNCH_ACTIVITY";
+                    case PAUSE_ACTIVITY: return "ACT-PAUSE_ACTIVITY";
+                    case PAUSE_ACTIVITY_FINISHING: return "ACT-PAUSE_ACTIVITY_FINISHING";
+                    case STOP_ACTIVITY_SHOW: return "ACT-STOP_ACTIVITY_SHOW";
+                    case STOP_ACTIVITY_HIDE: return "ACT-STOP_ACTIVITY_HIDE";
+                    case SHOW_WINDOW: return "ACT-SHOW_WINDOW";
+                    case HIDE_WINDOW: return "ACT-HIDE_WINDOW";
+                    case RESUME_ACTIVITY: return "ACT-RESUME_ACTIVITY";
                     case SEND_RESULT: return "SEND_RESULT";
-                    case DESTROY_ACTIVITY: return "DESTROY_ACTIVITY";
+                    case DESTROY_ACTIVITY: return "ACT-DESTROY_ACTIVITY";
                     case BIND_APPLICATION: return "BIND_APPLICATION";
                     case EXIT_APPLICATION: return "EXIT_APPLICATION";
-                    case NEW_INTENT: return "NEW_INTENT";
-                    case RECEIVER: return "RECEIVER";
-                    case CREATE_SERVICE: return "CREATE_SERVICE";
-                    case SERVICE_ARGS: return "SERVICE_ARGS";
-                    case STOP_SERVICE: return "STOP_SERVICE";
+                    case NEW_INTENT: return "ACT-NEW_INTENT";
+                    case RECEIVER: return "BDC-RECEIVER";
+                    case CREATE_SERVICE: return "SVC-CREATE_SERVICE";
+                    case SERVICE_ARGS: return "SVC-SERVICE_ARGS";
+                    case STOP_SERVICE: return "SVC-STOP_SERVICE";
+                    case REQUEST_THUMBNAIL: return "REQUEST_THUMBNAIL";
                     case CONFIGURATION_CHANGED: return "CONFIGURATION_CHANGED";
                     case CLEAN_UP_CONTEXT: return "CLEAN_UP_CONTEXT";
                     case GC_WHEN_IDLE: return "GC_WHEN_IDLE";
-                    case BIND_SERVICE: return "BIND_SERVICE";
-                    case UNBIND_SERVICE: return "UNBIND_SERVICE";
-                    case DUMP_SERVICE: return "DUMP_SERVICE";
+                    case BIND_SERVICE: return "SVC-BIND_SERVICE";
+                    case UNBIND_SERVICE: return "SVC-UNBIND_SERVICE";
+                    case DUMP_SERVICE: return "SVC-DUMP_SERVICE";
                     case LOW_MEMORY: return "LOW_MEMORY";
-                    case ACTIVITY_CONFIGURATION_CHANGED: return "ACTIVITY_CONFIGURATION_CHANGED";
-                    case RELAUNCH_ACTIVITY: return "RELAUNCH_ACTIVITY";
+                    case ACTIVITY_CONFIGURATION_CHANGED: return "ACT-ACTIVITY_CONFIGURATION_CHANGED";
+                    case RELAUNCH_ACTIVITY: return "ACT-RELAUNCH_ACTIVITY";
                     case PROFILER_CONTROL: return "PROFILER_CONTROL";
                     case CREATE_BACKUP_AGENT: return "CREATE_BACKUP_AGENT";
                     case DESTROY_BACKUP_AGENT: return "DESTROY_BACKUP_AGENT";
@@ -1289,19 +1383,92 @@ public final class ActivityThread {
                     case ENTER_ANIMATION_COMPLETE: return "ENTER_ANIMATION_COMPLETE";
                 }
             }
+            /// @}
             return Integer.toString(code);
         }
+
+        /// M: ActivityThread log enhancement
+        boolean isDebuggableMessage(int code) {
+            switch (code) {
+                 case LAUNCH_ACTIVITY: return true;
+                 case PAUSE_ACTIVITY: return true;
+                 case PAUSE_ACTIVITY_FINISHING: return true;
+                 case STOP_ACTIVITY_SHOW: return true;
+                 case STOP_ACTIVITY_HIDE: return true;
+                 case SHOW_WINDOW: return true;
+                 case HIDE_WINDOW: return true;
+                 case RESUME_ACTIVITY: return true;
+                 case SEND_RESULT: return true;
+                 case DESTROY_ACTIVITY: return true;
+                 case BIND_APPLICATION: return true;
+                 case EXIT_APPLICATION: return true;
+                 case NEW_INTENT: return true;
+                 case RECEIVER: return true;
+                 case CREATE_SERVICE: return true;
+                 case SERVICE_ARGS: return true;
+                 case STOP_SERVICE: return true;
+                 case REQUEST_THUMBNAIL: return false;
+                 case CONFIGURATION_CHANGED: return false;
+                 case CLEAN_UP_CONTEXT: return false;
+                 case GC_WHEN_IDLE: return false;
+                 case BIND_SERVICE: return true;
+                 case UNBIND_SERVICE: return true;
+                 case DUMP_SERVICE: return false;
+                 case LOW_MEMORY: return true;
+                 case ACTIVITY_CONFIGURATION_CHANGED: return true;
+                 case RELAUNCH_ACTIVITY: return true;
+                 case PROFILER_CONTROL: return false;
+                 case CREATE_BACKUP_AGENT: return false;
+                 case DESTROY_BACKUP_AGENT: return false;
+                 case SUICIDE: return false;
+                 case REMOVE_PROVIDER: return false;
+                 case ENABLE_JIT: return false;
+                 case DISPATCH_PACKAGE_BROADCAST: return false;
+                 case SCHEDULE_CRASH: return false;
+                 case DUMP_HEAP: return false;
+                 case DUMP_ACTIVITY: return false;
+                 case SLEEPING: return false;
+                 case SET_CORE_SETTINGS: return false;
+                 case UPDATE_PACKAGE_COMPATIBILITY_INFO: return false;
+                 case TRIM_MEMORY: return false;
+                 case DUMP_PROVIDER: return false;
+                 case UNSTABLE_PROVIDER_DIED: return false;
+                 case REQUEST_ASSIST_CONTEXT_EXTRAS: return false;
+                 case TRANSLUCENT_CONVERSION_COMPLETE: return false;
+                 case INSTALL_PROVIDER: return false;
+                 default:
+                    return false;
+             }
+
+        }
+
         public void handleMessage(Message msg) {
             if (DEBUG_MESSAGES) Slog.v(TAG, ">>> handling: " + codeToString(msg.what));
             switch (msg.what) {
                 case LAUNCH_ACTIVITY: {
-                    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "activityStart");
+                    /// M: enable profiling @{
+                    if (true == mEnableAppLaunchLog && !mIsUserBuild && false == mTraceEnabled) {
+                        try {
+                            FileInputStream fprofsts_in = new FileInputStream("/proc/mtprof/status");
+                            if (fprofsts_in.read() == '3') {
+                                Log.v(TAG, "start Profiling for empty process");
+                                mTraceEnabled = true;
+                                Debug.startMethodTracing("/data/data/applaunch"); //applaunch.trace
+                            }
+                        } catch (FileNotFoundException e) {
+                            Slog.e(TAG, "mtprof entry can not be found", e);
+                        } catch (java.io.IOException e) {
+                            Slog.e(TAG, "mtprof entry open failed", e);
+                        }
+                    }
+                    /// @}
+                    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF, "activityStart"); /// M: add TRACE_TAG_PERF for performance debug
                     final ActivityClientRecord r = (ActivityClientRecord) msg.obj;
 
                     r.packageInfo = getPackageInfoNoCheck(
                             r.activityInfo.applicationInfo, r.compatInfo);
                     handleLaunchActivity(r, null);
-                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF); /// M: add TRACE_TAG_PERF for performance debug
                 } break;
                 case RELAUNCH_ACTIVITY: {
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "activityRestart");
@@ -1343,9 +1510,9 @@ public final class ActivityThread {
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 case RESUME_ACTIVITY:
-                    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "activityResume");
+                    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF, "activityResume"); /// M: add TRACE_TAG_PERF for performance debug
                     handleResumeActivity((IBinder) msg.obj, true, msg.arg1 != 0, true);
-                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER | Trace.TRACE_TAG_PERF); /// M: add TRACE_TAG_PERF for performance debug
                     break;
                 case SEND_RESULT:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "activityDeliverResult");
@@ -1405,6 +1572,11 @@ public final class ActivityThread {
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "serviceStop");
                     handleStopService((IBinder)msg.obj);
                     maybeSnapshot();
+                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+                    break;
+                case REQUEST_THUMBNAIL:
+                    Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "requestThumbnail");
+                    handleRequestThumbnail((IBinder) msg.obj);
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 case CONFIGURATION_CHANGED:
@@ -1518,6 +1690,12 @@ public final class ActivityThread {
                     break;
             }
             if (DEBUG_MESSAGES) Slog.v(TAG, "<<< done: " + codeToString(msg.what));
+            /// M: ActivityThread log enhancement @{
+            if (!mIsUserBuild && isDebuggableMessage(msg.what)) {
+                Slog.d(TAG, codeToString(msg.what) + " handled "
+                + ": " + msg.arg1 + " / " + msg.obj);
+            }
+            /// @}
         }
 
         private void maybeSnapshot() {
@@ -1567,6 +1745,18 @@ public final class ActivityThread {
                         (a.activity != null && a.activity.mFinished));
                     if (a.activity != null && !a.activity.mFinished) {
                         try {
+                            /// M: Enable Profiling @{
+                            if (mTraceEnabled) {
+                                mTraceEnabled = false;
+                                Log.v(TAG, "Stop profiling after 2 seconds");
+                                mH.postDelayed(new Runnable() {
+                                    public void run() {
+                                        Log.v(TAG, "Stop profiling now!");
+                                        Debug.stopMethodTracing();
+                                    }
+                                }, 2000);
+                            }
+                            /// @}
                             am.activityIdle(a.token, a.createdConfig, stopProfiling);
                             a.createdConfig = null;
                         } catch (RemoteException ex) {
@@ -2233,6 +2423,19 @@ public final class ActivityThread {
             }
         } catch (Exception e) {
             if (!mInstrumentation.onException(activity, e)) {
+                /// M:ALPS02023612 Debug for cast receiver to activity @{
+                Slog.e(TAG, "Exception when newActivity r=" + r + " token=" + r.token);
+                Slog.d(TAG, "Dump mRelaunchingActivities:");
+                for (int i = 0; i < mRelaunchingActivities.size(); i++) {
+                    ActivityClientRecord acr = mRelaunchingActivities.get(i);
+                    Slog.d(TAG, "r=" + acr + " token=" + r.token);
+                }
+                Slog.d(TAG, "Dump mActivities:");
+                for (IBinder token : mActivities.keySet()) {
+                    ActivityClientRecord acr = mActivities.get(token);
+                    Slog.d(TAG, "r=" + acr + " token=" + token);
+                }
+                /// @}
                 throw new RuntimeException(
                     "Unable to instantiate activity " + component
                     + ": " + e.toString(), e);
@@ -2243,7 +2446,7 @@ public final class ActivityThread {
             Application app = r.packageInfo.makeApplication(false, mInstrumentation);
 
             if (localLOGV) Slog.v(TAG, "Performing launch of " + r);
-            if (localLOGV) Slog.v(
+            if (localLOGV || !mIsUserBuild) Slog.v(
                     TAG, r + ": app=" + app
                     + ", appName=" + app.getPackageName()
                     + ", pkg=" + r.packageInfo.getPackageName()
@@ -2312,6 +2515,12 @@ public final class ActivityThread {
                             " did not call through to super.onPostCreate()");
                     }
                 }
+                /// M: BMW, tell the activity manager we have created.
+                if (MultiWindowProxy.isFeatureSupport() && MultiWindowProxy.getInstance()!= null) {
+                    Slog.v(TAG, "activityCreated r=" + r);
+                    MultiWindowProxy.getInstance().activityCreated(r.token);
+                }
+                /// @}
             }
             r.paused = true;
 
@@ -2361,6 +2570,16 @@ public final class ActivityThread {
                 }
             }
         }
+
+        /// M: BMW @{
+        MultiWindowProxy proxy = MultiWindowProxy.getInstance();
+        if (MultiWindowProxy.isFeatureSupport() 
+                && proxy != null && proxy.isFloatingWindow(r.intent)) {
+            Configuration config = new Configuration(mConfiguration);
+            config = proxy.adjustActivityConfig(config, r.activityInfo, baseContext.getPackageName());
+            baseContext = baseContext.createConfigurationContext(config);
+        } 
+        /// @}
         return baseContext;
     }
 
@@ -2375,10 +2594,12 @@ public final class ActivityThread {
             mProfiler.startProfiling();
         }
 
+        logAppLaunchTime(TAG, "handleLaunchActivity is called"); /// M: It's for debugging App Launch time
+
         // Make sure we are running with the most recent config.
         handleConfigurationChanged(null, null);
 
-        if (localLOGV) Slog.v(
+        if (localLOGV || !mIsUserBuild) Slog.v(
             TAG, "Handling launch of " + r);
 
         // Initialize before creating the activity
@@ -2606,6 +2827,14 @@ public final class ActivityThread {
             ContextImpl context = (ContextImpl)app.getBaseContext();
             sCurrentBroadcastIntent.set(data.intent);
             receiver.setPendingResult(data);
+            /// M: ActivityThread log enhancement @{
+            if (!mIsUserBuild) {
+                Slog.d(ActivityThread.TAG, "BDC-Calling onReceive"
+                    + ": intent=" +  data.intent
+                    + ", receiver=" + receiver);
+
+            }
+            /// @}
             receiver.onReceive(context.getReceiverRestrictedContext(),
                     data.intent);
         } catch (Exception e) {
@@ -2751,6 +2980,11 @@ public final class ActivityThread {
 
         try {
             if (localLOGV) Slog.v(TAG, "Creating service " + data.info.name);
+            /// M: ActivityThread log enhancement @{
+            if (!mIsUserBuild) {
+                Slog.d(TAG, "SVC-Creating service: " + data);
+            }
+            /// @}
 
             ContextImpl context = ContextImpl.createAppContext(this, packageInfo);
             context.setOuterContext(service);
@@ -2891,6 +3125,13 @@ public final class ActivityThread {
                 }
                 int res;
                 if (!data.taskRemoved) {
+                    /// M: ActivityThread log enhancement @{
+                    if (!mIsUserBuild) {
+                        Log.d(TAG, "SVC-Calling onStartCommand: " + s
+                            + ", flags=" + data.flags
+                            + ", startId=" + data.startId);
+                    }
+                    /// @}
                     res = s.onStartCommand(data.args, data.flags, data.startId);
                 } else {
                     s.onTaskRemoved(data.args);
@@ -2921,6 +3162,11 @@ public final class ActivityThread {
         if (s != null) {
             try {
                 if (localLOGV) Slog.v(TAG, "Destroying service " + s);
+                /// M: ActivityThread log enhancement @{
+                if (!mIsUserBuild) {
+                    Slog.d(TAG, "SVC-Destroying service: " + s);
+                }
+                /// @}
                 s.onDestroy();
                 Context context = s.getBaseContext();
                 if (context instanceof ContextImpl) {
@@ -2955,9 +3201,12 @@ public final class ActivityThread {
     public final ActivityClientRecord performResumeActivity(IBinder token,
             boolean clearHide) {
         ActivityClientRecord r = mActivities.get(token);
-        if (localLOGV) Slog.v(TAG, "Performing resume of " + r
-                + " finished=" + r.activity.mFinished);
+        if (localLOGV || !mIsUserBuild) Slog.v(TAG, "Performing resume of " + r);
         if (r != null && !r.activity.mFinished) {
+            if (!r.paused && !r.stopped) {
+                Slog.w(TAG, "Skipping resume of activity that is already resumed");
+                return r;
+            }
             if (clearHide) {
                 r.hideForNow = false;
                 r.activity.mStartedActivity = false;
@@ -2976,6 +3225,10 @@ public final class ActivityThread {
 
                 EventLog.writeEvent(LOG_ON_RESUME_CALLED,
                         UserHandle.myUserId(), r.activity.getComponentName().getClassName());
+                /// M: ActivityThread log enhancement @{
+                if (!mIsUserBuild)
+                   Slog.d(TAG, "ACT-AM_ON_RESUME_CALLED " + r);
+                /// @}
 
                 r.paused = false;
                 r.stopped = false;
@@ -3019,7 +3272,7 @@ public final class ActivityThread {
         if (r != null) {
             final Activity a = r.activity;
 
-            if (localLOGV) Slog.v(
+            if (localLOGV || !mIsUserBuild) Slog.v(
                 TAG, "Resume " + r + " started activity: " +
                 a.mStartedActivity + ", hideForNow: " + r.hideForNow
                 + ", finished: " + a.mFinished);
@@ -3056,7 +3309,7 @@ public final class ActivityThread {
             // we started another activity, then don't yet make the
             // window visible.
             } else if (!willBeVisible) {
-                if (localLOGV) Slog.v(
+                if (localLOGV || !mIsUserBuild) Slog.v(
                     TAG, "Launch " + r + " mStartedActivity set");
                 r.hideForNow = true;
             }
@@ -3075,7 +3328,7 @@ public final class ActivityThread {
                     freeTextLayoutCachesIfNeeded(r.activity.mCurrentConfig.diff(r.newConfig));
                     r.newConfig = null;
                 }
-                if (localLOGV) Slog.v(TAG, "Resuming " + r + " with isForward="
+                if (localLOGV || !mIsUserBuild) Slog.v(TAG, "Resuming " + r + " with isForward="
                         + isForward);
                 WindowManager.LayoutParams l = r.window.getAttributes();
                 if ((l.softInputMode
@@ -3100,7 +3353,7 @@ public final class ActivityThread {
             if (!r.onlyLocalRequest) {
                 r.nextIdle = mNewActivities;
                 mNewActivities = r;
-                if (localLOGV) Slog.v(
+                if (localLOGV || !mIsUserBuild) Slog.v(
                     TAG, "Scheduling idle handler for " + r);
                 Looper.myQueue().addIdleHandler(new Idler());
             }
@@ -3246,6 +3499,10 @@ public final class ActivityThread {
             mInstrumentation.callActivityOnPause(r.activity);
             EventLog.writeEvent(LOG_ON_PAUSE_CALLED, UserHandle.myUserId(),
                     r.activity.getComponentName().getClassName());
+            /// M: ActivityThread log enhancement @{
+            if (!mIsUserBuild)
+                Slog.d(TAG, "ACT-AM_ON_PAUSE_CALLED " + r);
+            /// @}
             if (!r.activity.mCalled) {
                 throw new SuperNotCalledException(
                     "Activity " + r.intent.getComponent().toShortString() +
@@ -3419,12 +3676,20 @@ public final class ActivityThread {
 
     private void handleStopActivity(IBinder token, boolean show, int configChanges) {
         ActivityClientRecord r = mActivities.get(token);
+
+        /// M: ALPS00422018, JE due to null pointer of ActivityClientRecord @{
+        if (r == null) {
+            Log.w(TAG, "handleStopActivity: no activity for token " + token);
+            return;
+        }
+        /// @}
+
         r.activity.mConfigChangeFlags |= configChanges;
 
         StopInfo info = new StopInfo();
         performStopActivityInner(r, info, show, true);
 
-        if (localLOGV) Slog.v(
+        if (localLOGV || !mIsUserBuild) Slog.v(
             TAG, "Finishing stop of " + r + ": show=" + show
             + " win=" + r.window);
 
@@ -3643,6 +3908,10 @@ public final class ActivityThread {
                     mInstrumentation.callActivityOnPause(r.activity);
                     EventLog.writeEvent(LOG_ON_PAUSE_CALLED, UserHandle.myUserId(),
                             r.activity.getComponentName().getClassName());
+                    /// M: ActivityThread log enhancement @{
+                    if (!mIsUserBuild)
+                        Slog.d(TAG, "ACT-AM_ON_PAUSE_CALLED " + r);
+                    /// @}
                     if (!r.activity.mCalled) {
                         throw new SuperNotCalledException(
                             "Activity " + safeToComponentShortString(r.intent)
@@ -3945,6 +4214,30 @@ public final class ActivityThread {
         r.startsNotResumed = tmp.startsNotResumed;
 
         handleLaunchActivity(r, currentIntent);
+    }
+
+    private void handleRequestThumbnail(IBinder token) {
+/*    TODO: L has remove request thumbnail functionality? check it.
+        ActivityClientRecord r = mActivities.get(token);
+        Bitmap thumbnail = createThumbnailBitmap(r);
+        CharSequence description = null;
+        try {
+            description = r.activity.onCreateDescription();
+        } catch (Exception e) {
+            if (!mInstrumentation.onException(r.activity, e)) {
+                throw new RuntimeException(
+                        "Unable to create description of activity "
+                        + r.intent.getComponent().toShortString()
+                        + ": " + e.toString(), e);
+            }
+        }
+        //System.out.println("Reporting top thumbnail " + thumbnail);
+        try {
+            ActivityManagerNative.getDefault().reportThumbnail(
+                token, thumbnail, description);
+        } catch (RemoteException ex) {
+        }
+*/
     }
 
     private void callCallActivityOnSaveInstanceState(ActivityClientRecord r) {
@@ -4282,7 +4575,10 @@ public final class ActivityThread {
                     + DisplayMetrics.DENSITY_DEVICE + " to "
                     + mCurDefaultDisplayDpi);
             DisplayMetrics.DENSITY_DEVICE = mCurDefaultDisplayDpi;
-            Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEFAULT);
+            /// M: When density is changed, we should set default density from
+            /// always DENSITY_DEFAULT to mCurDefaultDisplayDpi @{
+            Bitmap.setDefaultDensity(mCurDefaultDisplayDpi);
+            /// @}
         }
     }
 
@@ -4299,6 +4595,8 @@ public final class ActivityThread {
             mProfiler.autoStopProfiler = data.initProfilerInfo.autoStopProfiler;
         }
 
+        logAppLaunchTime(TAG, "handleBindApplication is called"); /// M: It's for debugging App Launch time
+
         // send up app name; do this *before* waiting for debugger
         Process.setArgV0(data.processName);
         android.ddm.DdmHandleAppName.setAppName(data.processName,
@@ -4309,7 +4607,14 @@ public final class ActivityThread {
             // use hardware accelerated drawing, since this can add too much
             // overhead to the process.
             if (!ActivityManager.isHighEndGfx()) {
-                HardwareRenderer.disable(false);
+                /// M: ALPS01978329 for 512m project
+                final long LOW_MEMORY_SIZE = 256*1024*1024;
+                MemInfoReader minfo = new MemInfoReader();
+                minfo.readMemInfo();
+                if ((minfo.getTotalSize() <= LOW_MEMORY_SIZE) || (!"com.android.systemui".equals(data.processName))) {
+                    HardwareRenderer.disable(false);
+                    Slog.w(TAG, "Disable HWUI for Process("+data.processName+"); Total Memory = "+minfo.getTotalSize());
+                }
             }
         }
 
@@ -4629,11 +4934,31 @@ public final class ActivityThread {
             Slog.e(TAG, "Failed to find provider info for " + auth);
             return null;
         }
-
+        Slog.d(TAG, "hoder:" + holder + ",provider,holder.Provider:" + holder.provider);
         // Install provider will increment the reference count for us, and break
         // any ties in the race.
-        holder = installProvider(c, holder, holder.info,
+
+        /// M: if provider is killed for some reasons when getContentProvider from AMS,
+        /// M: restart the provider one time @{
+        try {
+            holder = installProvider(c, holder, holder.info,
                 true /*noisy*/, holder.noReleaseNeeded, stable);
+        } catch (SecurityException sex) {
+            try {
+                 holder = ActivityManagerNative.getDefault().getContentProvider(
+                         getApplicationThread(), auth, userId, stable);
+            } catch (RemoteException ex) {
+            }
+
+            if (holder == null) {
+                Slog.e(TAG, "Failed to find provider info for " + auth);
+                return null;
+            }
+
+            holder = installProvider(c, holder, holder.info,
+                true /*noisy*/, holder.noReleaseNeeded, stable);
+        }
+        /// M: @}
         return holder.provider;
     }
 
@@ -4962,6 +5287,7 @@ public final class ActivityThread {
             }
             Context c = null;
             ApplicationInfo ai = info.applicationInfo;
+            Slog.d(TAG, "installProvider: context.getPackageName()=" + context.getPackageName());
             if (context.getPackageName().equals(ai.packageName)) {
                 c = context;
             } else if (mInitialApplication != null &&
@@ -5076,6 +5402,24 @@ public final class ActivityThread {
     private void attach(boolean system) {
         sCurrentActivityThread = this;
         mSystemThread = system;
+
+        /// M: Enable Profiling @{
+        if (mEnableAppLaunchLog && !mIsUserBuild && !mTraceEnabled) {
+            try {
+                FileInputStream fprofsts_in = new FileInputStream("/proc/mtprof/status");
+                if (fprofsts_in.read() != '0') {
+                        Log.v(TAG, "start Profiling");
+                        mTraceEnabled = true;
+                        Debug.startMethodTracing("/data/data/applaunch"); //applaunch.trace
+                }
+            } catch (FileNotFoundException e) {
+                Slog.e("MTPROF", "mtprof entry can not be found!", e);
+            } catch (java.io.IOException e) {
+                Slog.e("MTPROF", "mtprof entry open failed", e);
+            }
+        }
+        /// @}
+
         if (!system) {
             ViewRootImpl.addFirstDrawHandler(new Runnable() {
                 @Override
@@ -5088,6 +5432,7 @@ public final class ActivityThread {
             RuntimeInit.setApplicationObject(mAppThread.asBinder());
             final IActivityManager mgr = ActivityManagerNative.getDefault();
             try {
+                logAppLaunchTime(TAG, "attachApplication -> AMS"); /// M: It's for debugging App Launch time
                 mgr.attachApplication(mAppThread);
             } catch (RemoteException ex) {
                 // Ignore
@@ -5217,6 +5562,29 @@ public final class ActivityThread {
     }
 
     public static void main(String[] args) {
+        /// M: Retrieve the information from AMS @{
+        if (args != null && args.length == 4) {
+            if (args[0].equals("enable")) {
+                mEnableAppLaunchLog = true;
+            }
+            if (args[1].equals("true")) {
+                mIsUserBuild = true;
+            }
+            if (args[2].equals("true")) {
+                mBooted = true;
+            }
+            if (args.length >= 4 && args[3].equals("true")) { //Prevention args.length < 4, then exception.
+                mEnableLooperLog = true;
+            }
+            if (!mIsUserBuild) {
+                Slog.v(TAG, "MAIN-ARGS launch log: " + mEnableAppLaunchLog + ", user build: "
+                     + mIsUserBuild + ", booted: " + mBooted + ", looper log: " + mEnableLooperLog);
+            }
+        }
+        /// @}
+
+        logAppLaunchTime(TAG, "ActivityThread is created"); /// M: It's for debugging App Launch time
+
         SamplingProfilerIntegration.start();
 
         // CloseGuard defaults to true and can be quite spammy.  We
@@ -5251,8 +5619,378 @@ public final class ActivityThread {
                     LogPrinter(Log.DEBUG, "ActivityThread"));
         }
 
+        /// M: ALPS00270724 message history mechanism @{
+        /// M: for build type revise @{
+        try {
+            /// M: Enable/disable ANR mechanism from adb command @{
+            if ( ENABLE_ALL_ANR_MECHANISM == Settings.System.getInt(mSystemContext.getContentResolver(), Settings.System.ANR_DEBUGGING_MECHANISM, 0)) {
+            //if(!IS_USER_BUILD){
+            /// M: for build type revise @}
+                ANRAppManager mANRAppManager = ANRAppManager.getDefault(new ANRAppFrameworks());
+                Looper.myLooper().setMessageLogging(mANRAppManager.newMessageLogger(mEnableLooperLog));
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "set ANR debugging mechanism state fair " + e);
+        }
+        /// @}
+        /// M: Enable/disable ANR mechanism from adb command @}
         Looper.loop();
 
         throw new RuntimeException("Main thread loop unexpectedly exited");
     }
+
+    /// M: mediatek added functions start
+
+    /// M: It's for debugging App Launch time
+    public static void logAppLaunchTime(String tag, String str) {
+        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "logAppLaunchTime : " + str);
+        if (mEnableAppLaunchLog) {
+            Slog.i(tag, "[AppLaunch] " + str);
+        }
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+    }
+
+    /// M: ActivityThread looper log enhancement
+    public static void enableLooperLog() {
+        Log.d(TAG, "Enable Looper Log");
+        mEnableLooperLog = true;
+        /// M: enable message history debugging log
+        MessageLogger.mEnableLooperLog = true;
+    }
+
+    /// M: for ContentProvider Leak Detect, incudlue Cursor and ParcelFileDescriptor @{
+    private final class QueryHistoryRecord {
+        public String mUri;
+        public Throwable mStackTrace;
+
+        QueryHistoryRecord(String uri, Throwable stackTrace) {
+            mUri = uri;
+            mStackTrace = stackTrace;
+        }
+    }
+
+    private final class QueryHistory {
+        private final boolean mProviderLeakDetect
+                                    = Log.isLoggable("ProviderLeakDetecter", Log.VERBOSE);
+
+        // Hashmap to keep cursor query uri
+        private Map<Integer, QueryHistoryRecord> mCursorMap =
+                                                 new HashMap<Integer, QueryHistoryRecord>();
+        private Map<String, Integer> mUriMap = new HashMap<String, Integer>();
+
+        // Hashmap to keep ParcelFileDescriptor query uri
+        private Map<Integer, QueryHistoryRecord> mPfdMap =
+                                                 new HashMap<Integer, QueryHistoryRecord>();
+        private Map<String, Integer> mUriPfdMap = new HashMap<String, Integer>();
+
+        /**
+         * M: Read uid from resmon monitored uid list file,
+         *    only report red screen warning for these uid
+         * @return true if pid in the resmon monitored list.
+         */
+        @SuppressWarnings("illegalcatch")
+        private boolean checkAeeWarningList() {
+            int uid = android.os.Process.myUid();
+            InputStream inStream = null;
+
+            try {
+                inStream = new FileInputStream("/data/system/resmon-uid.txt");
+
+                if (inStream != null) {
+                    InputStreamReader inputReader = new InputStreamReader(inStream);
+                    BufferedReader buffReader = new BufferedReader(inputReader);
+
+                    String line = buffReader.readLine();
+                    while (line != null) {
+                        if (uid == Integer.valueOf(line)) {
+                            return true;
+                        }
+                        line = buffReader.readLine();
+                    }
+                }
+                return false;
+            } catch (IOException e) {
+                return false;
+            } finally {
+                if (inStream != null) {
+                    try {
+                        inStream.close();
+                    } catch (IOException e) {
+                    }
+                }
+            }
+        }
+
+        /**
+         * add this qury to queryHisitory
+         * @param uri ther uri of this query
+         * @param stackTrace the stackTrace of this query
+         * @param cursorHashCode the hashcode of the CursorWrapperInner Object
+         * @hide
+         */
+        @SuppressWarnings("illegalcatch")
+        public boolean add(String uri, Throwable stackTrace, int cursorHashCode) {
+            boolean reportException = false;
+
+            synchronized (mCursorMap) {
+                if (mUriMap.get(uri) == null) {
+                    mUriMap.put(uri, 1);
+                } else {
+                    mUriMap.put(uri, mUriMap.get(uri) + 1);
+                }
+                // when uri>5, print log information
+                if (mProviderLeakDetect && mUriMap.get(uri) >= 5) {
+                    Log.e(QUERY_TAG,
+                          "PossibleCursorLeak:" + uri + ",QueryCounter:" + mUriMap.get(uri),
+                          stackTrace);
+                }
+
+                if (mCursorMap.get(cursorHashCode) == null) {
+                    QueryHistoryRecord qhr = new QueryHistoryRecord(uri, stackTrace);
+                    mCursorMap.put(cursorHashCode, qhr);
+                }
+
+                if (mProviderLeakDetect) {
+                    Log.v(QUERY_TAG,
+                          "Cursor Open:" + cursorHashCode +
+                          " Total Opened Cursor Count:" + mCursorMap.size() + ".");
+                }
+
+                // Email app may use more than 50 cursors at the same time
+                if (mCursorMap.size() == 70 || mCursorMap.size() == 80) {
+                    Log.v(QUERY_TAG, "Total Opened Cursor Count:" + mCursorMap.size() + ".");
+                    dump();
+                    reportException = true;
+                }
+            }
+
+            // For cursor leak aee warning
+            if (reportException) {
+                // Only show red screen warning for resmon monitored applications
+                if (checkAeeWarningList()) {
+                    ExceptionLog exceptionLog = null;
+                    try {
+                        if (SystemProperties.get("ro.have_aee_feature").equals("1")) {
+                            exceptionLog = new ExceptionLog();
+                        }
+                        if (exceptionLog != null) {
+                            exceptionLog.systemreport(
+                                exceptionLog.AEE_WARNING_JNI,
+                                "CursorLeakDetecter",
+                                "Total Opened Cursor Count:" + mCursorMap.size() + ".",
+                                "/data/cursorleak/traces.txt");
+                        }
+                    }
+                    catch (Exception e) {
+                        // AEE disabled or failed to allocate AEE object, no need to show message
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /**
+         * Revome from queryHistory by cursorHashCode
+         * @param cursorHashCode the hashcod of cursorWrpperInner boject
+         * @hide
+         */
+        public void remove(int cursorHashCode) {
+            synchronized (mCursorMap) {
+                QueryHistoryRecord qhr = mCursorMap.get(cursorHashCode);
+                if (qhr == null || mUriMap.get(qhr.mUri) == null) {
+                    Log.e(QUERY_TAG, "bad request for cursor:" + cursorHashCode + ".");
+                    return;
+                } else if (mUriMap.get(qhr.mUri) == 1) {
+                    mUriMap.remove(qhr.mUri);
+                    mCursorMap.remove(cursorHashCode);
+                } else if (mUriMap.get(qhr.mUri) > 1) {
+                    mUriMap.put(qhr.mUri, mUriMap.get(qhr.mUri) - 1);
+                    mCursorMap.remove(cursorHashCode);
+                }
+
+                if (mProviderLeakDetect) {
+                    Log.v(QUERY_TAG,
+                          "Cursor Close:" + cursorHashCode +
+                          " Total Opened Cursor Count:" + mCursorMap.size() + ".");
+                }
+            }
+        }
+
+        /**
+         * Add this qury to queryHisitory.
+         * @param uri ther uri of this query
+         * @param stackTrace the stackTrace of this query
+         * @param hashCode the hashcode of the ParcelFileDescriptorInner Object
+         * @hide
+         */
+        @SuppressWarnings("illegalcatch")
+        public boolean addPfd(String uri, Throwable stackTrace, int hashCode) {
+            boolean reportException = false;
+
+            synchronized (mPfdMap) {
+                if (mUriPfdMap.get(uri) == null) {
+                    mUriPfdMap.put(uri, 1);
+                } else {
+                    mUriPfdMap.put(uri, mUriPfdMap.get(uri) + 1);
+                }
+                // when uri>5, print log information
+                if (mProviderLeakDetect && mUriPfdMap.get(uri) >= 5) {
+                    Log.e(QUERY_TAG,
+                          "Possible PFD Leak:" + uri + ",QueryCounter:" + mUriPfdMap.get(uri),
+                          stackTrace);
+                }
+
+                if (mPfdMap.get(hashCode) == null) {
+                    QueryHistoryRecord qhr = new QueryHistoryRecord(uri, stackTrace);
+                    mPfdMap.put(hashCode, qhr);
+                }
+
+                if (mProviderLeakDetect) {
+                    Log.v(QUERY_TAG,
+                          "PFD Open:" + hashCode +
+                          " Total Opened PFD Count:" + mPfdMap.size() + ".");
+                }
+
+                // Email has no upper limit and Bluetooth has 500 limit, change threshold to 250.
+                if (mPfdMap.size() == 250) {
+                    Log.v(QUERY_TAG, "Total Opened PFD Count:" + mPfdMap.size() + ".");
+                    dump();
+                    reportException = true;
+                }
+            }
+
+            // For cursor leak aee warning
+            if (reportException) {
+                // Only show red screen warning for resmon monitored applications
+                if (checkAeeWarningList()) {
+                    ExceptionLog exceptionLog = null;
+                    try {
+                        if (SystemProperties.get("ro.have_aee_feature").equals("1")) {
+                            exceptionLog = new ExceptionLog();
+                        }
+                        if (exceptionLog != null) {
+                            exceptionLog.systemreport(
+                                exceptionLog.AEE_WARNING_JNI,
+                                "PFDLeakDetecter",
+                                "Total Opened PFD Count:" + mPfdMap.size() + ".",
+                                "/data/cursorleak/traces.txt");
+                        }
+                    } catch (Exception e) {
+                        // AEE disabled or failed to allocate AEE object, no need to show message
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /**
+         * Revome from queryHistory by cursorHashCode.
+         * @param hashCode the hashcod of ParcelFileDescriptorInner boject
+         * @hide
+         */
+        public void removePfd(int hashCode) {
+            synchronized (mPfdMap) {
+                QueryHistoryRecord qhr = mPfdMap.get(hashCode);
+                if (qhr == null || mUriPfdMap.get(qhr.mUri) == null) {
+                    Log.e(QUERY_TAG, "bad request for pfd:" + hashCode + ".");
+                    return;
+                } else if (mUriPfdMap.get(qhr.mUri) == 1) {
+                    mUriPfdMap.remove(qhr.mUri);
+                    mPfdMap.remove(hashCode);
+                } else if (mUriPfdMap.get(qhr.mUri) > 1) {
+                    mUriPfdMap.put(qhr.mUri, mUriPfdMap.get(qhr.mUri) - 1);
+                    mPfdMap.remove(hashCode);
+                }
+
+                if (mProviderLeakDetect) {
+                    Log.v(QUERY_TAG,
+                          "PFD Close:" + hashCode +
+                          " Total Opened PFD Count:" + mCursorMap.size() + ".");
+                }
+            }
+        }
+
+        /**
+         * Log query infromation
+         * @hide
+         */
+        public void dump() {
+            // Dump opened Cursor
+            Log.v(QUERY_TAG, "Total Opened Cursor Count:" + mCursorMap.size() + ".");
+            Iterator iterator = mCursorMap.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry entry = (Map.Entry) iterator.next();
+                QueryHistoryRecord qhr = (QueryHistoryRecord) entry.getValue();
+                Log.v(QUERY_TAG, "CursorQueryHistory:" + qhr.mUri, qhr.mStackTrace);
+            }
+
+            // Dump opened ParcelFileDescriptor
+            Log.v(QUERY_TAG, "Total Opened PFD Count:" + mPfdMap.size() + ".");
+            iterator = mPfdMap.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry entry = (Map.Entry) iterator.next();
+                QueryHistoryRecord qhr = (QueryHistoryRecord) entry.getValue();
+                Log.v(QUERY_TAG, "PFDQueryHistory:" + qhr.mUri, qhr.mStackTrace);
+            }
+        }
+    }
+
+    /**
+     * add this qury to queryHisitory
+     * @param uri the uri of this query
+     * @param stackTrace the stackTrace of this query
+     * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+     * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+     * @return return add result
+     * @hide
+     */
+    public boolean addToQueryHistory(String uri, Throwable stackTrace, int hashCode, int type) {
+        try {
+            if (type == QUERY_HISTORY_CURSOR) {
+                return mQueryHistory.add(uri, stackTrace, hashCode);
+            } else if (type == QUERY_HISTORY_PFD) {
+                return mQueryHistory.addPfd(uri, stackTrace, hashCode);
+            }
+        } catch (Exception e) {
+            Log.e(QUERY_TAG, "AddToQueryHistory", e);
+        }
+        return true;
+    }
+
+    /**
+     * remove this query from queryHistory
+     * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+     * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+     * @hide
+     */
+    public void removeFromQueryHistory(int hashCode, int type) {
+        try {
+            if (type == QUERY_HISTORY_CURSOR) {
+                mQueryHistory.remove(hashCode);
+            } else if (type == QUERY_HISTORY_PFD) {
+                mQueryHistory.removePfd(hashCode);
+            }
+        } catch (Exception e) {
+            Log.e(QUERY_TAG, "RemoveFromQueryHistory", e);
+        }
+    }
+
+    /**
+     * for Cursor leak detect
+     * @hide
+     */
+    public void dumpQueryHistory() {
+        mQueryHistory.dump();
+    }
+
+    private QueryHistory mQueryHistory = new QueryHistory();
+
+    public static final String QUERY_TAG = "ProviderLeakDetecter";
+    public static final int QUERY_HISTORY_CURSOR = 1;
+    public static final int QUERY_HISTORY_PFD = 2;
+    /// M: @}
+
+    /// M: mediatek added functions end
 }

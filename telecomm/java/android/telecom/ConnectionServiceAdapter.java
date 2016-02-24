@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +22,7 @@
 package android.telecom;
 
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.IBinder.DeathRecipient;
 import android.os.RemoteException;
 
@@ -369,4 +375,86 @@ final class ConnectionServiceAdapter implements DeathRecipient {
             }
         }
     }
+
+    /* M: CC part start */
+    void notifyConnectionLost(String callId) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifyConnectionLost(callId);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    void notifyActionFailed(String callId, int action) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifyActionFailed(callId, action);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    void notifySSNotificationToast(String callId, int notiType, int type, int code, String number, int index) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifySSNotificationToast(callId, notiType, type, code, number, index);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    void notifyNumberUpdate(String callId, String number) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifyNumberUpdate(callId, number);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    void notifyIncomingInfoUpdate(String callId, int type, String alphaid, int cli_validity) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifyIncomingInfoUpdate(callId, type, alphaid, cli_validity);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    void notifyCdmaCallAccepted(String callId) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.notifyCdmaCallAccepted(callId);
+            } catch (RemoteException e) {
+                Log.e(this, e, "Exception trying to notify CDMA call really be accepted!");
+            }
+        }
+    }
+    /* M: CC part end */
+
+    /// M: for volte @{
+    void updateExtras(String callId, Bundle bundle) {
+        Log.v(this, "updateExtras: %s, %s", callId, bundle);
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.updateExtras(callId, bundle);
+            } catch (RemoteException ignored) {
+            }
+        }
+    }
+
+    void handleCreateConferenceComplete(
+            String conferenceId,
+            ConnectionRequest request,
+            ParcelableConference conference) {
+        Log.v(this, "handleCreateConferenceComplete: %s, %s", conferenceId, conference);
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.handleCreateConferenceComplete(conferenceId, request, conference);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+    /// @}
 }

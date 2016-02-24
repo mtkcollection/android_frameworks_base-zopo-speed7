@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,6 +86,11 @@ static const char* kExcludeExtension = ".EXCLUDE";
 static Asset* const kExcludedAsset = (Asset*) 0xd000000d;
 
 static volatile int32_t gCount = 0;
+///M:add the resource path
+static const char* kMediatekAssets = "framework/mediatek-res/mediatek-res.apk";
+///M:for CIP feature
+static const char* kCIPSystemAssets = "customer/framework/framework-res.apk";
+static const char* kCIPMediatekAssets = "customer/framework/mediatek-res.apk";
 
 const char* AssetManager::RESOURCES_FILENAME = "resources.arsc";
 const char* AssetManager::IDMAP_BIN = "/system/bin/idmap";
@@ -326,11 +336,40 @@ bool AssetManager::addDefaultAssets()
 {
     const char* root = getenv("ANDROID_ROOT");
     LOG_ALWAYS_FATAL_IF(root == NULL, "ANDROID_ROOT not set");
-
-    String8 path(root);
-    path.appendPath(kSystemAssets);
-
-    return addAssetPath(path, NULL);
+    
+    ///M:add for CIP feature @{	
+    String8 pathCip(root);
+    pathCip.appendPath(kCIPSystemAssets);
+    FILE *fp;
+    if((fp= fopen(pathCip,"w+"))!= NULL) {
+       ALOGW("AssetManager-->addDefaultAssets CIP path exsit!"); 
+       bool isOK1 = addAssetPath(pathCip, NULL); 
+       if(!isOK1){
+	       ALOGW("AssetManager-->addDefaultAssets CIP path isok1 is false");  
+       }
+       String8 pathCip2(root); 
+       pathCip2.appendPath(kCIPMediatekAssets); 
+       bool isOK2 = addAssetPath(pathCip2, NULL);
+       if(!isOK2){
+	       ALOGW("AssetManager-->addDefaultAssets CIP path isok2 is false");  
+       }        
+       return isOK1;
+    } else {
+       //ALOGD("AssetManager-->addDefaultAssets CIP path not exsit!");         
+       String8 path(root);
+       path.appendPath(kSystemAssets);
+       ///M:add the new resource path into default path,so all the app can reference,@{	
+	   bool isOK1 =addAssetPath(path, NULL);
+	   String8 path2(root);
+       path2.appendPath(kMediatekAssets);
+	   bool isOK2 =addAssetPath(path2, NULL);
+       if(!isOK2){
+	      ALOGW("AssetManager-->addDefaultAssets isok2 is false");
+	   }
+       return isOK1;
+       ///@}       
+    }
+    ///@}
 }
 
 int32_t AssetManager::nextAssetPath(const int32_t cookie) const

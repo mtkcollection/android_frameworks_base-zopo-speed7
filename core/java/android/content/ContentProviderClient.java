@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,13 +32,19 @@ import android.os.ICancellationSignal;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.os.SystemProperties; /// M: For aee warning
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
+import com.mediatek.aee.ExceptionLog; /// M: For aee warning
 
 import dalvik.system.CloseGuard;
 
+import java.io.BufferedReader; /// M: For aee warning
+import java.io.FileInputStream; /// M: For aee warning
 import java.io.FileNotFoundException;
+import java.io.InputStream; /// M: For aee warning
+import java.io.InputStreamReader; /// M: For aee warning
 import java.util.ArrayList;
 
 /**
@@ -67,6 +78,14 @@ public class ContentProviderClient {
 
     private boolean mReleased;
 
+    /// M: To check ContentProviderClient leak @{
+    private final Throwable mStackTrace;
+    private static final boolean PROVIDER_LEAK_DETECT
+                                         = Log.isLoggable("ProviderLeakDetecter", Log.VERBOSE);
+    private static final boolean IS_ENG_BUILD
+                                         = SystemProperties.get("ro.build.type").equals("eng");
+    /// M: @}
+
     /** {@hide} */
     ContentProviderClient(
             ContentResolver contentResolver, IContentProvider contentProvider, boolean stable) {
@@ -76,6 +95,16 @@ public class ContentProviderClient {
         mStable = stable;
 
         mGuard.open("release");
+
+        /// M: To check ContentProviderClient leak @{
+        if (IS_ENG_BUILD) {
+            mStackTrace = new
+              RuntimeException("Ensure that resources ContentProviderClient are closed after use")
+              .fillInStackTrace();
+        } else {
+            mStackTrace = null;
+        }
+        /// M: @}
     }
 
     /** {@hide} */
@@ -421,9 +450,78 @@ public class ContentProviderClient {
     }
 
     @Override
+    @SuppressWarnings("illegalcatch") /// M: to avoid aee exception warning
     protected void finalize() throws Throwable {
         if (mGuard != null) {
             mGuard.warnIfOpen();
+        }
+
+        /** M: For ContentProviderClient leak aee warning @{
+            Only show red screen warning for resmon monitored applications */
+        if (IS_ENG_BUILD && !mReleased) {
+            if (mStackTrace != null) {
+                Log.v(TAG,
+                      "Ensure that resources ContentProviderClient are closed after use.",
+                      mStackTrace);
+            }
+
+            if (PROVIDER_LEAK_DETECT && checkAeeWarningList()) {
+                try {
+                    ExceptionLog exceptionLog = null;
+                    if (SystemProperties.get("ro.have_aee_feature").equals("1")) {
+                        exceptionLog = new ExceptionLog();
+                    }
+                    if (exceptionLog != null) {
+                        exceptionLog.systemreport(
+                            exceptionLog.AEE_WARNING_JNI,
+                            "ContentProviderClient.java",
+                            "Ensure that resources ContentProviderClient are closed after use.",
+                            "/data/leak/traces.txt");
+                    }
+                } catch (Exception e) {
+                    // AEE disabled or failed to allocate AEE object, no need to show message
+                }
+            }
+        }
+        /** @} */
+    }
+
+    /**
+     * M: Read uid from resmon monitored uid list file,
+     *    only report red screen warning for these uid.
+     * @return true if pid in the resmon monitored list.
+     */
+    @SuppressWarnings("illegalcatch")
+    private boolean checkAeeWarningList() {
+        int uid = android.os.Process.myUid();
+        InputStream inStream = null;
+
+        try {
+            inStream = new FileInputStream("/data/system/resmon-uid.txt");
+
+            if (inStream != null) {
+                InputStreamReader inputReader = new InputStreamReader(inStream);
+                BufferedReader buffReader = new BufferedReader(inputReader);
+
+                String line = buffReader.readLine();
+                while (line != null) {
+                    if (uid == Integer.valueOf(line)) {
+                        return true;
+                    }
+                    line = buffReader.readLine();
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (inStream != null) {
+                try {
+                    inStream.close();
+                } catch (Exception e) {
+                    // Do nothing
+                }
+            }
         }
     }
 

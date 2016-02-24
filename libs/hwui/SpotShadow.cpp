@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,9 +127,11 @@ static float rayIntersectPoints(const Vector2& rayOrigin, float dx, float dy,
     if (divisor == 0) return -1.0f; // error, invalid divisor
 
 #if DEBUG_SHADOW
-    float interpVal = (dx * (p1.y - rayOrigin.y) + dy * rayOrigin.x - dy * p1.x) / divisor;
-    if (interpVal < 0 || interpVal > 1) {
-        ALOGW("rayIntersectPoints is hitting outside the segment %f", interpVal);
+    if (g_HWUI_debug_shadow) {
+        float interpVal = (dx * (p1.y - rayOrigin.y) + dy * rayOrigin.x - dy * p1.x) / divisor;
+        if (interpVal < 0 || interpVal > 1) {
+            ALOGW("rayIntersectPoints is hitting outside the segment %f", interpVal);
+        }
     }
 #endif
 
@@ -514,11 +521,9 @@ void SpotShadow::createSpotShadow(bool isCasterOpaque, const Vector3& lightCente
 
         int currentCornerSliceNumber = 1 + currentExtraSliceNumber;
         totalExtraCornerSliceNumber += currentExtraSliceNumber;
-#if DEBUG_SHADOW
-        ALOGD("currentExtraSliceNumber should be %d", currentExtraSliceNumber);
-        ALOGD("currentCornerSliceNumber should be %d", currentCornerSliceNumber);
-        ALOGD("totalCornerSliceNumber is %d", totalExtraCornerSliceNumber);
-#endif
+        SHADOW_LOGD("currentExtraSliceNumber should be %d", currentExtraSliceNumber);
+        SHADOW_LOGD("currentCornerSliceNumber should be %d", currentCornerSliceNumber);
+        SHADOW_LOGD("totalCornerSliceNumber is %d", totalExtraCornerSliceNumber);
         if (CC_UNLIKELY(totalExtraCornerSliceNumber > SPOT_MAX_EXTRA_CORNER_VERTEX_NUMBER)) {
             currentCornerSliceNumber = 1;
         }
@@ -594,11 +599,13 @@ void SpotShadow::createSpotShadow(bool isCasterOpaque, const Vector3& lightCente
     int umbraLength = polyLength;
 
 #if DEBUG_SHADOW
-    ALOGD("penumbraLength is %d , allocatedPenumbraLength %d", penumbraLength, allocatedPenumbraLength);
-    dumpPolygon(poly, polyLength, "input poly");
-    dumpPolygon(penumbra, penumbraLength, "penumbra");
-    dumpPolygon(umbra, umbraLength, "umbra");
-    ALOGD("hasValidUmbra is %d and shadowStrengthScale is %f", hasValidUmbra, shadowStrengthScale);
+    if (g_HWUI_debug_shadow) {
+        ALOGD("penumbraLength is %d , allocatedPenumbraLength %d", penumbraLength, allocatedPenumbraLength);
+        dumpPolygon(poly, polyLength, "input poly");
+        dumpPolygon(penumbra, penumbraLength, "penumbra");
+        dumpPolygon(umbra, umbraLength, "umbra");
+        ALOGD("hasValidUmbra is %d and shadowStrengthScale is %f", hasValidUmbra, shadowStrengthScale);
+    }
 #endif
 
     // The penumbra and umbra needs to be in convex shape to keep consistency
@@ -700,7 +707,7 @@ inline int findPolyIndex(bool isPositiveCross, int startPolyIndex, const Vector2
         float umbraCrossNext = umbraDir.cross(nextToCentroid);
         if (sameDirections(isPositiveCross, currentCrossUmbra, umbraCrossNext)) {
 #if DEBUG_SHADOW
-            ALOGD("findPolyIndex loop %d times , index %d", i, currentIndex );
+            SHADOW_LOGD("findPolyIndex loop %d times , index %d", i, currentIndex );
 #endif
             return currentIndex;
         }
@@ -929,14 +936,16 @@ void SpotShadow::generateTriangleStrip(bool isCasterOpaque, float shadowStrength
     ShadowTessellator::checkOverflow(verticesPairIndex, maxNewPenumbraLength, "Spot pair");
     ShadowTessellator::checkOverflow(newPenumbraIndex, maxNewPenumbraLength, "Spot new penumbra");
 #if DEBUG_SHADOW
-    for (int i = 0; i < umbraLength; i++) {
-        ALOGD("umbra i %d,  [%f, %f]", i, umbra[i].x, umbra[i].y);
-    }
-    for (int i = 0; i < newPenumbraIndex; i++) {
-        ALOGD("new penumbra i %d,  [%f, %f]", i, newPenumbra[i].x, newPenumbra[i].y);
-    }
-    for (int i = 0; i < verticesPairIndex; i++) {
-        ALOGD("index i %d,  [%d, %d]", i, verticesPair[i].outerIndex, verticesPair[i].innerIndex);
+    if (g_HWUI_debug_shadow) {
+        for (int i = 0; i < umbraLength; i++) {
+            ALOGD("umbra i %d,  [%f, %f]", i, umbra[i].x, umbra[i].y);
+        }
+        for (int i = 0; i < newPenumbraIndex; i++) {
+            ALOGD("new penumbra i %d,  [%f, %f]", i, newPenumbra[i].x, newPenumbra[i].y);
+        }
+        for (int i = 0; i < verticesPairIndex; i++) {
+            ALOGD("index i %d,  [%d, %d]", i, verticesPair[i].outerIndex, verticesPair[i].innerIndex);
+        }
     }
 #endif
 

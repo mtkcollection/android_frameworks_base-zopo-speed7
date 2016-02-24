@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +45,7 @@ class MeasuredText {
 
     private int mPos;
     private TextPaint mWorkPaint;
+    static final String TAG = "MeasuredText";
 
     private MeasuredText() {
         mWorkPaint = new TextPaint();
@@ -151,8 +157,12 @@ class MeasuredText {
     }
 
     float addStyleRun(TextPaint paint, int len, Paint.FontMetricsInt fm) {
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG,"[addStyleRun_NoSpan] " + "start");
+        }
         if (fm != null) {
-            paint.getFontMetricsInt(fm);
+            /// M: new FontMetrics method for complex text support.
+            paint.getFontMetricsInt(mChars, fm, mPos, len);
         }
 
         int p = mPos;
@@ -160,7 +170,14 @@ class MeasuredText {
 
         if (mEasy) {
             boolean isRtl = mDir != Layout.DIR_LEFT_TO_RIGHT;
-            return paint.getTextRunAdvances(mChars, p, len, p, len, isRtl, mWidths, p);
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG,"[addStyleRun_NoSpan_1] " + "getTextRunAdvances start");
+            }
+            float ret = paint.getTextRunAdvances(mChars, p, len, p, len, isRtl, mWidths, p);
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG,"[addStyleRun_NoSpan_1] " + "getTextRunAdvances end");
+            }
+            return ret ;
         }
 
         float totalAdvance = 0;
@@ -168,14 +185,23 @@ class MeasuredText {
         for (int q = p, i = p + 1, e = p + len;; ++i) {
             if (i == e || mLevels[i] != level) {
                 boolean isRtl = (level & 0x1) != 0;
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG,"[addStyleRun_NoSpan_2] " + "getTextRunAdvances start");
+                }
                 totalAdvance +=
                         paint.getTextRunAdvances(mChars, q, i - q, q, i - q, isRtl, mWidths, q);
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG,"[addStyleRun_NoSpan_2] " + "getTextRunAdvances end");
+                }
                 if (i == e) {
                     break;
                 }
                 q = i;
                 level = mLevels[i];
             }
+        }
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG,"[addStyleRun_NoSapn] " + "end");
         }
         return totalAdvance;
     }
@@ -187,7 +213,9 @@ class MeasuredText {
         workPaint.set(paint);
         // XXX paint should not have a baseline shift, but...
         workPaint.baselineShift = 0;
-
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG,"[addStyleRun_Span] " + "start");
+        }
         ReplacementSpan replacement = null;
         for (int i = 0; i < spans.length; i++) {
             MetricAffectingSpan span = spans[i];
@@ -220,6 +248,9 @@ class MeasuredText {
                 fm.descent += workPaint.baselineShift;
                 fm.bottom += workPaint.baselineShift;
             }
+        }
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG,"[addStyleRun_Span] " + "end");
         }
 
         return wid;

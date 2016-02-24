@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,11 +32,13 @@ import android.os.Message;
 import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.SparseArray;
 
 import com.android.internal.util.Preconditions;
+import com.google.android.collect.Lists;
 
 import java.io.File;
 import java.io.IOException;
@@ -61,6 +68,13 @@ public class StorageManager {
     private static final String TAG = "StorageManager";
 
     private final ContentResolver mResolver;
+
+    /// M: @{
+    private static final String ICS_STORAGE_PATH_SD1 = "/mnt/sdcard";
+    private static final String ICS_STORAGE_PATH_SD2 = "/mnt/sdcard2";
+    private static final String STORAGE_PATH_SD1 = "/storage/sdcard0";
+    private static final String STORAGE_PATH_SD2 = "/storage/sdcard1";
+    /// @}
 
     /*
      * Our internal MountService binder reference
@@ -553,7 +567,17 @@ public class StorageManager {
      * @hide
      */
     public String getVolumeState(String mountPoint) {
-         if (mMountService == null) return Environment.MEDIA_REMOVED;
+        if (mountPoint.equals(ICS_STORAGE_PATH_SD1)) {
+            Log.d(TAG, "For backwards compatibility, replace " + mountPoint +
+                " to /storage/sdcard0");
+            mountPoint = STORAGE_PATH_SD1;
+        } else if (mountPoint.equals(ICS_STORAGE_PATH_SD2)) {
+            Log.d(TAG, "For backwards compatibility, replace " + mountPoint +
+                " to /storage/sdcard1");
+            mountPoint = STORAGE_PATH_SD2;
+        }
+
+        if (mMountService == null) return Environment.MEDIA_REMOVED;
         try {
             return mMountService.getVolumeState(mountPoint);
         } catch (RemoteException e) {
@@ -654,6 +678,27 @@ public class StorageManager {
     public long getStorageFullBytes(File path) {
         return Settings.Global.getLong(mResolver, Settings.Global.SYS_STORAGE_FULL_THRESHOLD_BYTES,
                 DEFAULT_FULL_THRESHOLD_BYTES);
+    }
+
+    /**
+        * Returns list of all mountable volumes for current user.
+        * Force to get volume list as user, even has accessAll permission.
+        * @hide
+        * @internal
+        */
+    public StorageVolume[] getVolumeListAsUser() {
+        StorageVolume[] volumes = getVolumeList();
+        ArrayList<StorageVolume> filtered = Lists.newArrayList();
+        int callingUserId = UserHandle.getCallingUserId();
+        for (StorageVolume volume : volumes) {
+            UserHandle owner = volume.getOwner();
+            boolean ownerMatch = owner == null || owner.getIdentifier() == callingUserId;
+            if (ownerMatch) {
+                filtered.add(volume);
+                Log.d(TAG, "getVolumeListAsUser add volume=" + volume);
+            }
+        }
+        return filtered.toArray(new StorageVolume[filtered.size()]);
     }
 
     /// Consts to match the password types in cryptfs.h

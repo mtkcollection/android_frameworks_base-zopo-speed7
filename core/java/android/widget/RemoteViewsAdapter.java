@@ -1338,6 +1338,14 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
         // connect
         if (!mServiceConnection.isConnected()) {
             if (mNotifyDataSetChangedAfterOnServiceConnected) {
+                /// M: post onNotifyDataSetChanged() after Service has been connected @{
+                mWorkerQueue.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        onNotifyDataSetChanged();
+                    }
+                });
+                /// @}
                 return;
             }
 

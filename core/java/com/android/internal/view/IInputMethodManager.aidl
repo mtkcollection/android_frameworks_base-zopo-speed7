@@ -75,7 +75,11 @@ interface IInputMethodManager {
     boolean switchToNextInputMethod(in IBinder token, boolean onlyCurrentIme);
     boolean shouldOfferSwitchingToNextInputMethod(in IBinder token);
     boolean setInputMethodEnabled(String id, boolean enabled);
-    void setAdditionalInputMethodSubtypes(String id, in InputMethodSubtype[] subtypes);
+    oneway void setAdditionalInputMethodSubtypes(String id, in InputMethodSubtype[] subtypes);
     int getInputMethodWindowVisibleHeight();
     oneway void notifyUserAction(int sequenceNumber);
+    oneway void switchInputMethodFromWindowManager(boolean isForward);
+    oneway void sendCharacterToCurClient(int unicode);
+    void refreshImeWindowVisibilityLocked();
+
 }

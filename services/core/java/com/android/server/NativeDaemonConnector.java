@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,9 +53,9 @@ import java.util.LinkedList;
  * {@code libsysutils} FrameworkListener protocol.
  */
 final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdog.Monitor {
-    private static final boolean LOGD = false;
+    private static final boolean LOGD = true;
 
-    private final static boolean VDBG = false;
+    private final static boolean VDBG = true;
 
     private final String TAG;
 

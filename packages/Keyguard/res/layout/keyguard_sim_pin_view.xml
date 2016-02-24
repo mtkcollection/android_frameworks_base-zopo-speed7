@@ -26,18 +26,60 @@
         android:layout_height="match_parent"
         androidprv:layout_maxWidth="@dimen/keyguard_security_width"
         androidprv:layout_maxHeight="@dimen/keyguard_security_max_height"
-        android:gravity="center_horizontal">
+        android:gravity="center_horizontal"
+        android:contentDescription="@string/keyguard_accessibility_pin_unlock">
 
     <ImageView
-            android:id="@+id/keyguard_sim"
+            android:id="@+id/sim_icon"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:src="@drawable/ic_lockscreen_sim"/>
-
+            android:src="@drawable/ic_lockscreen_sim"
+            />
     <include layout="@layout/keyguard_message_area"
              android:layout_width="match_parent"
              android:layout_height="wrap_content"
-            />
+             />
+    <LinearLayout
+            android:id="@+id/sim_info_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_gravity="center_horizontal"
+            android:visibility="gone"
+            >
+        <TextView
+                android:id="@+id/for_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:ellipsize="marquee"
+                android:singleLine="true"
+                android:textDirection = "locale"
+                android:textAppearance="?android:attr/textAppearanceLarge"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="16sp"
+                />
+        <ImageView
+                android:id="@+id/sub_icon"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:paddingRight="8dp"
+                />
+        <TextView
+                android:id="@+id/sim_card_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:ellipsize="middle"
+                android:maxWidth="110dip"
+                android:singleLine="true"
+                android:textDirection = "locale"
+                android:textAppearance="?android:attr/textAppearanceLarge"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="16sp"
+                />
+    </LinearLayout>
     <LinearLayout
             android:id="@+id/keyguard_bouncer_frame"
             android:layout_width="match_parent"
@@ -61,7 +103,6 @@
                     android:layout_centerHorizontal="true"
                     android:layout_marginRight="72dp"
                     androidprv:scaledTextSize="28"
-                    android:contentDescription="@string/keyguard_accessibility_sim_pin_area"
                     />
             <ImageButton
                     android:id="@+id/delete_button"
@@ -186,11 +227,14 @@
                 android:layout_weight="1"
                 android:orientation="horizontal"
                 >
-            <Space
-                    android:layout_width="0px"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    />
+            <Button
+               android:id="@+id/key_dismiss"
+               style="@style/DismissPadKey"
+               android:layout_width="0px"
+               android:layout_height="match_parent"
+               android:layout_weight="1"
+               />
+               
             <com.android.keyguard.NumPadKey
                     android:id="@+id/key0"
                     android:layout_width="0px"

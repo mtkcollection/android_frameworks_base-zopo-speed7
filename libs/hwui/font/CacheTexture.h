@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,16 @@
 
 namespace android {
 namespace uirenderer {
+
+#if DEBUG_FONT_RENDERER
+    #define FONT_RENDERER_LOGD(...) \
+    {                                   \
+        if (g_HWUI_debug_font_renderer) \
+            ALOGD(__VA_ARGS__); \
+    }
+#else
+    #define FONT_RENDERER_LOGD(...)
+#endif
 
 class Caches;
 

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -134,6 +139,32 @@ public final class DisplayManagerGlobal {
         } catch (RemoteException ex) {
             Log.e(TAG, "Could not get display information from display manager.", ex);
             return null;
+        }
+    }
+
+    /**
+     * Get real state of the specified display no matter whether SmartBook plug in/out.
+     *
+     * @param displayId The logical display id.
+     * @return The real state of the specified display.
+     */
+    public int getRealState(int displayId) {
+        try {
+            synchronized (mLock) {
+                int state = Display.STATE_UNKNOWN;
+
+                state = mDm.getRealState(displayId);
+
+                registerCallbackIfNeededLocked();
+
+                if (DEBUG) {
+                    Log.d(TAG, "getRealState: displayId=" + displayId + ", state=" + state);
+                }
+                return state;
+            }
+        } catch (RemoteException ex) {
+            Log.e(TAG, "Could not get display information from display manager.", ex);
+            return Display.STATE_UNKNOWN;
         }
     }
 
@@ -370,6 +401,16 @@ public final class DisplayManagerGlobal {
         }
     }
 
+    /// M:[SmartBook] Query SmartBook plug in status
+    public boolean isSmartBookPluggedIn() {
+        try {
+            return mDm.isSmartBookPluggedIn();
+        } catch (RemoteException ex) {
+            Log.e(TAG, "Failed to get SmartBook plug status.", ex);
+            return false;
+        }
+    }
+
     public VirtualDisplay createVirtualDisplay(Context context, MediaProjection projection,
             String name, int width, int height, int densityDpi, Surface surface, int flags,
             VirtualDisplay.Callback callback, Handler handler) {
@@ -430,6 +471,48 @@ public final class DisplayManagerGlobal {
             mDm.releaseVirtualDisplay(token);
         } catch (RemoteException ex) {
             Log.w(TAG, "Failed to release virtual display.", ex);
+        }
+    }
+
+    public boolean isSinkEnabled() {
+        boolean enabled = false;
+        try {
+            enabled = mDm.isSinkEnabled();
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Failed to get sink status.", ex);
+        }
+        return enabled;
+    }
+
+    public void enableSink(boolean enable) {
+        try {
+            mDm.enableSink(enable);
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Failed to request sink", ex);
+        }
+    }
+
+    public void waitWifiDisplayConnection(Surface surface) {
+        try {
+            mDm.waitWifiDisplayConnection(surface);
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Failed to request wait connection", ex);
+        }
+    }
+
+    public void suspendWifiDisplay(boolean suspend, Surface surface) {
+        try {
+            mDm.suspendWifiDisplay(suspend, surface);
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Failed to request suspend display", ex);
+        }
+    }
+
+    public void sendUibcInputEvent(String input) {
+        try {
+            mDm.sendUibcInputEvent(input);
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Failed to send uibc input event", ex);
         }
     }
 

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,6 +119,18 @@ class PackageSettingBase extends GrantedPermissions {
             String secondaryCpuAbiString, String cpuAbiOverrideString,
             int pVersionCode, int pkgFlags) {
         super(pkgFlags);
+        this.name = name;
+        this.realName = realName;
+        init(codePath, resourcePath, legacyNativeLibraryPathString, primaryCpuAbiString,
+                secondaryCpuAbiString, cpuAbiOverrideString, pVersionCode);
+    }
+
+    /// M: [FlagExt] Additional constructor for MTK flags
+    PackageSettingBase(String name, String realName, File codePath, File resourcePath,
+            String legacyNativeLibraryPathString, String primaryCpuAbiString,
+            String secondaryCpuAbiString, String cpuAbiOverrideString,
+            int pVersionCode, int pkgFlags, int flagsEx) {
+        super(pkgFlags, flagsEx);
         this.name = name;
         this.realName = realName;
         init(codePath, resourcePath, legacyNativeLibraryPathString, primaryCpuAbiString,

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,8 +18,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include "DrawFrameTask.h"
 
@@ -102,6 +105,8 @@ void DrawFrameTask::run() {
         canUnblockUiThread = syncFrameState(info);
         canDrawThisFrame = info.out.canDrawThisFrame;
     }
+    CC_LOGD("DrawFrameTask %p, canUnblockUiThread %d, canDrawThisFrame %d",
+        this, canUnblockUiThread, canDrawThisFrame);
 
     // Grab a copy of everything we need
     CanvasContext* context = mContext;
@@ -149,6 +154,7 @@ bool DrawFrameTask::syncFrameState(TreeInfo& info) {
 
 void DrawFrameTask::unblockUiThread() {
     AutoMutex _lock(mLock);
+    ATRACE_CALL_L1();
     mSignal.signal();
 }
 

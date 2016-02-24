@@ -62,7 +62,16 @@ public class Typeface {
     private static final LongSparseArray<SparseArray<Typeface>> sTypefaceCache =
             new LongSparseArray<SparseArray<Typeface>>(3);
 
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:13:50 +0800
+ *for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
     static Typeface sDefaultTypeface;
+ */
+    /**
+     * @hide
+     */
+    public static Typeface sDefaultTypeface;
+// End of Vanzo:zhangjingzhi
+
     static Map<String, Typeface> sSystemFontMap;
     static FontFamily[] sFallbackFonts;
 
@@ -391,4 +400,12 @@ public class Typeface {
     private static native int  nativeGetStyle(long native_instance);
     private static native long nativeCreateFromArray(long[] familyArray);
     private static native void nativeSetDefault(long native_instance);
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:14:10 +0800
+ *for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+    /**
+     * @hide
+     */
+    public static native void nativeUpdateLovelyfonts(long native_instance);
+// End of Vanzo:zhangjingzhi
 }

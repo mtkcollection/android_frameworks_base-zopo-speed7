@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,10 +39,12 @@ import android.os.ParcelFileDescriptor;
 import android.os.ParcelFileDescriptor.OnCloseListener;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
+import android.os.SystemProperties;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsContract.Root;
 import android.provider.DocumentsProvider;
+import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.util.Log;
 import android.webkit.MimeTypeMap;
@@ -73,6 +80,10 @@ public class ExternalStorageProvider extends DocumentsProvider {
     private static final String[] DEFAULT_DOCUMENT_PROJECTION = new String[] {
             Document.COLUMN_DOCUMENT_ID, Document.COLUMN_MIME_TYPE, Document.COLUMN_DISPLAY_NAME,
             Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SIZE,
+            /// M: add to support drm
+            MediaStore.MediaColumns.DATA,
+            MediaStore.MediaColumns.IS_DRM,
+            MediaStore.MediaColumns.DRM_METHOD
     };
 
     private static class RootInfo {
@@ -123,15 +134,15 @@ public class ExternalStorageProvider extends DocumentsProvider {
         mRoots.clear();
         mIdToPath.clear();
         mIdToRoot.clear();
-
         final StorageVolume[] volumes = mStorageManager.getVolumeList();
         for (StorageVolume volume : volumes) {
-            final boolean mounted = Environment.MEDIA_MOUNTED.equals(volume.getState())
-                    || Environment.MEDIA_MOUNTED_READ_ONLY.equals(volume.getState());
+            Log.d(TAG, " volume info: " + volume + " userLabel: " + volume.getUserLabel());
+            final boolean mounted = Environment.MEDIA_MOUNTED.equals(mStorageManager.getVolumeState(volume.getPath()))
+                    || Environment.MEDIA_MOUNTED_READ_ONLY.equals(mStorageManager.getVolumeState(volume.getPath()));
             if (!mounted) continue;
 
             final String rootId;
-            if (volume.isPrimary() && volume.isEmulated()) {
+            if ((volume.isPrimary() && volume.isEmulated()) || (isMtkSdSwap() && volume.isEmulated())) {
                 rootId = ROOT_ID_PRIMARY_EMULATED;
             } else if (volume.getUuid() != null) {
                 rootId = volume.getUuid();
@@ -156,17 +167,13 @@ public class ExternalStorageProvider extends DocumentsProvider {
                 if (ROOT_ID_PRIMARY_EMULATED.equals(rootId)) {
                     root.title = getContext().getString(R.string.root_internal_storage);
                 } else {
-                    final String userLabel = volume.getUserLabel();
-                    if (!TextUtils.isEmpty(userLabel)) {
-                        root.title = userLabel;
-                    } else {
                         root.title = volume.getDescription(getContext());
-                    }
                 }
                 root.docId = getDocIdForFile(path);
                 mRoots.add(root);
                 mIdToRoot.put(rootId, root);
             } catch (FileNotFoundException e) {
+                Log.d(TAG, "file not found exception");
                 throw new IllegalStateException(e);
             }
         }
@@ -243,6 +250,7 @@ public class ExternalStorageProvider extends DocumentsProvider {
             throws FileNotFoundException {
         if (docId == null) {
             docId = getDocIdForFile(file);
+            Log.d(TAG, "includeFile docId: " + docId);
         } else {
             file = getFileForDocId(docId);
         }
@@ -262,7 +270,7 @@ public class ExternalStorageProvider extends DocumentsProvider {
         }
 
         final String displayName = file.getName();
-        final String mimeType = getTypeForFile(file);
+        String mimeType = getTypeForFile(file);
         if (mimeType.startsWith("image/")) {
             flags |= Document.FLAG_SUPPORTS_THUMBNAIL;
         }
@@ -271,7 +279,7 @@ public class ExternalStorageProvider extends DocumentsProvider {
         row.add(Document.COLUMN_DOCUMENT_ID, docId);
         row.add(Document.COLUMN_DISPLAY_NAME, displayName);
         row.add(Document.COLUMN_SIZE, file.length());
-        row.add(Document.COLUMN_MIME_TYPE, mimeType);
+        //row.add(Document.COLUMN_MIME_TYPE, mimeType);
         row.add(Document.COLUMN_FLAGS, flags);
 
         // Only publish dates reasonably after epoch
@@ -279,6 +287,45 @@ public class ExternalStorageProvider extends DocumentsProvider {
         if (lastModified > 31536000000L) {
             row.add(Document.COLUMN_LAST_MODIFIED, lastModified);
         }
+
+        /// M: add to support drm
+        if (isMtkDrmApp() && !file.isDirectory()) {
+            final int lastDot = displayName.lastIndexOf('.');
+            String extension = null;
+            if (lastDot >= 0) {
+                extension = displayName.substring(lastDot + 1).toLowerCase();
+            }
+            if (extension != null && extension.equalsIgnoreCase("dcf")) {
+                // query drm info from file table of media provider
+                Uri fileUri = MediaStore.Files.getContentUri("external");
+                String whereClause = MediaStore.MediaColumns.DATA + " = ?";
+                String[] projection = new String[] {MediaStore.MediaColumns.IS_DRM, MediaStore.MediaColumns.DRM_METHOD,
+                        MediaStore.MediaColumns.MIME_TYPE};
+                Cursor drmCursor = null;
+
+                try {
+                    drmCursor = getContext().getContentResolver().query(fileUri, projection,
+                            whereClause, new String[]{file.getAbsolutePath()}, null);
+
+                    if (drmCursor != null && drmCursor.moveToFirst()) {
+                        int isDrm = drmCursor.getInt(drmCursor.getColumnIndex(MediaStore.MediaColumns.IS_DRM));
+                        int drmMethod = drmCursor.getInt(drmCursor.getColumnIndex(MediaStore.MediaColumns.DRM_METHOD));
+                        mimeType = drmCursor.getString(drmCursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE));
+                        row.add(MediaStore.MediaColumns.IS_DRM, isDrm);
+                        row.add(MediaStore.MediaColumns.DRM_METHOD, drmMethod);
+                        Log.d(TAG, "includeFile " + file.getAbsolutePath() + ", isDrm: " + isDrm + ", drmMethod: " + drmMethod);
+                    }
+                } catch (IllegalStateException e) {
+                    Log.d(TAG, "includeFile " + file.getAbsolutePath() + "query media occur error.");
+                } finally {
+                    if (drmCursor != null) {
+                        drmCursor.close();
+                    }
+                }
+            }
+        }
+        row.add(Document.COLUMN_MIME_TYPE, mimeType);
+        row.add(MediaStore.MediaColumns.DATA, file.getAbsolutePath());
     }
 
     @Override
@@ -623,5 +670,18 @@ public class ExternalStorageProvider extends DocumentsProvider {
             super.close();
             stopObserving(mFile);
         }
+    }
+
+    /// M: add to support drm
+    /**
+     *
+     * @return is MtkDrmApp, or not.
+     */
+    public static boolean isMtkDrmApp() {
+        return SystemProperties.getBoolean("ro.mtk_oma_drm_support", false);
+    }
+
+    private static boolean isMtkSdSwap() {
+        return SystemProperties.getBoolean("ro.mtk_2sdcard_swap", false);
     }
 }

@@ -362,4 +362,8 @@
     <string name="quick_settings_reset_confirmation_title" msgid="748792586749897883">"<xliff:g id="TILE_LABEL">%1$s</xliff:g> ဝှက်မည်လား?"</string>
     <string name="quick_settings_reset_confirmation_message" msgid="2235970126803317374">"နောက်တစ်ကြိမ်သင် ချိန်ညှိချက်များဖွင့်လျှင် ၎င်းပေါ်လာပါမည်။"</string>
     <string name="quick_settings_reset_confirmation_button" msgid="2660339101868367515">"ဖျောက်ထားမည်"</string>
+    <plurals name="zen_mode_duration_hours">
+        <item quantity="one">တစ်နာရီအတွက်</item>
+        <item quantity="other">%d နာရီအတွက်</item>
+    </plurals>
 </resources>

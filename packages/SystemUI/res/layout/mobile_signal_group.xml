@@ -17,20 +17,45 @@
 ** limitations under the License.
 */
 -->
-<FrameLayout
+<!-- M: Support "Service Network Type on Statusbar". @{ -->
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/mobile_combo"
-    android:layout_width="wrap_content"
+    android:id="@+id/mobile_network_combo"
     android:layout_height="wrap_content"
+    android:layout_width="wrap_content"
     >
     <ImageView
-        android:id="@+id/mobile_signal"
+        android:id="@+id/network_type"
         android:layout_height="wrap_content"
         android:layout_width="wrap_content"
+        android:visibility="gone"
         />
-    <ImageView
-        android:id="@+id/mobile_type"
-        android:layout_height="wrap_content"
+    <!-- M: Support "Service Network Type on Statusbar". }@ -->
+
+    <FrameLayout
+        android:id="@+id/mobile_combo"
         android:layout_width="wrap_content"
-        />
-</FrameLayout>
+        android:layout_height="wrap_content"
+        >
+        <ImageView
+            android:id="@+id/mobile_signal"
+            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            />
+        <ImageView
+            android:id="@+id/mobile_type"
+            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            />
+<!-- Vanzo:qiukai on: Sat, 08 Aug 2015 16:04:26 +0800
+    add signal up and down icon
+-->
+        <ImageView
+            android:id="@+id/data_inout"
+            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:tag="data_inout"
+            />
+<!-- End of Vanzo:qiukai -->
+    </FrameLayout>
+</LinearLayout>

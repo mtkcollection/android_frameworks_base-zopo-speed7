@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +39,11 @@ import android.util.AttributeSet;
 import android.view.View;
 
 import com.android.systemui.statusbar.policy.BatteryController;
+import com.mediatek.systemui.statusbar.util.BatteryHelper;
+/* Vanzo:qiukai on: Wed, 13 May 2015 22:07:18 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:qiukai
 
 public class BatteryMeterView extends View implements DemoMode,
         BatteryController.BatteryStateChangeCallback {
@@ -51,6 +61,12 @@ public class BatteryMeterView extends View implements DemoMode,
     private final int[] mColors;
 
     boolean mShowPercent = true;
+/* Vanzo:qiukai on: Mon, 11 May 2015 22:10:58 +0800
+ * add show battery percent switch
+ */
+    private int mShouldShowBatteryPercentage = FeatureOption.VANZO_FEATURE_SHOW_BATTERY_PERCENT;
+    private static final String ACTION_BATTERY_PERCENTAGE_SWITCH = "com.intent.action.BATTERY_PERCENTAGE_SWITCH";
+// End of Vanzo:qiukai
     private float mButtonHeightFraction;
     private float mSubpixelSmoothingLeft;
     private float mSubpixelSmoothingRight;
@@ -70,6 +86,8 @@ public class BatteryMeterView extends View implements DemoMode,
     private final RectF mBoltFrame = new RectF();
 
     private final Path mShapePath = new Path();
+    /// M:Optimize the draw methord of battery path
+    private final Path mShapePath2 = new Path();
     private final Path mClipPath = new Path();
     private final Path mTextPath = new Path();
 
@@ -146,6 +164,16 @@ public class BatteryMeterView extends View implements DemoMode,
                     }
                 });
             }
+/* Vanzo:qiukai on: Mon, 11 May 2015 22:07:26 +0800
+ * add show battery percent switch
+ */
+        else if (action.equals(ACTION_BATTERY_PERCENTAGE_SWITCH)) {
+            mShowPercent = (intent.getIntExtra("state",0) == 1);
+            android.util.Log.d("qiukai", "mShowPercent ==" + mShowPercent);
+            postInvalidate();
+        }
+// End of Vanzo:qiukai
+
         }
     }
 
@@ -158,6 +186,11 @@ public class BatteryMeterView extends View implements DemoMode,
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_BATTERY_CHANGED);
         filter.addAction(ACTION_LEVEL_TEST);
+/* Vanzo:qiukai on: Wed, 13 May 2015 20:47:14 +0800
+ * add show battery percent switch
+ */
+        filter.addAction(ACTION_BATTERY_PERCENTAGE_SWITCH);
+// End of Vanzo:qiukai
         final Intent sticky = getContext().registerReceiver(mTracker, filter);
         if (sticky != null) {
             // preload the battery level
@@ -202,8 +235,14 @@ public class BatteryMeterView extends View implements DemoMode,
         levels.recycle();
         colors.recycle();
         atts.recycle();
+/* Vanzo:qiukai on: Mon, 11 May 2015 22:11:49 +0800
+ * add show battery percent switch
         mShowPercent = ENABLE_PERCENT && 0 != Settings.System.getInt(
                 context.getContentResolver(), "status_bar_show_battery_percent", 0);
+ */
+        mShowPercent = ENABLE_PERCENT && 0 != Settings.System.getInt(
+                context.getContentResolver(), "status_bar_show_battery_percent", mShouldShowBatteryPercentage);
+// End of Vanzo:qiukai
         mWarningString = context.getString(R.string.battery_meter_very_low_overlay_symbol);
         mCriticalLevel = mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_criticalBatteryWarningLevel);
@@ -301,6 +340,9 @@ public class BatteryMeterView extends View implements DemoMode,
     public void draw(Canvas c) {
         BatteryTracker tracker = mDemoMode ? mDemoTracker : mTracker;
         final int level = tracker.level;
+        /// M: Support "Battery Protection".
+        final boolean mChargingProtection =
+            tracker.plugged && BatteryHelper.isPlugForProtection(tracker.status, tracker.level);
 
         if (level == BatteryTracker.UNKNOWN_LEVEL) return;
 
@@ -309,8 +351,13 @@ public class BatteryMeterView extends View implements DemoMode,
         final int pl = getPaddingLeft();
         final int pr = getPaddingRight();
         final int pb = getPaddingBottom();
-        final int height = mHeight - pt - pb;
+        int height = mHeight - pt - pb;
         final int width = mWidth - pl - pr;
+        /// M: Support "Wireless Charging". @{
+        if (mChargingProtection && BatteryHelper.isWirelessCharging(tracker.plugType)) {
+            height = (int) ((mHeight - pt - pb) * 0.95);
+        }
+        /// M: Support "Wireless Charging". @}
 
         final int buttonHeight = (int) (height * mButtonHeightFraction);
 
@@ -359,7 +406,8 @@ public class BatteryMeterView extends View implements DemoMode,
         mShapePath.lineTo(mButtonFrame.left, mFrame.top);
         mShapePath.lineTo(mButtonFrame.left, mButtonFrame.top);
 
-        if (tracker.plugged) {
+        /// M: Support "Battery Protection".
+        if (mChargingProtection) {
             // define the bolt shape
             final float bl = mFrame.left + mFrame.width() / 4.5f;
             final float bt = mFrame.top + mFrame.height() / 6f;
@@ -391,6 +439,16 @@ public class BatteryMeterView extends View implements DemoMode,
                 // otherwise cut the bolt out of the overall shape
                 mShapePath.op(mBoltPath, Path.Op.DIFFERENCE);
             }
+
+            /// M: Support "Wireless Charging". @{
+            if (BatteryHelper.isWirelessCharging(tracker.plugType)) {
+                c.drawLine(mFrame.left,
+                            mHeight,
+                            mFrame.right,
+                            mHeight,
+                            mBatteryPaint);
+            }
+            /// M: Support "Wireless Charging". @}
         }
 
         // compute percentage text
@@ -423,8 +481,12 @@ public class BatteryMeterView extends View implements DemoMode,
         mFrame.top = levelTop;
         mClipPath.reset();
         mClipPath.addRect(mFrame,  Path.Direction.CCW);
-        mShapePath.op(mClipPath, Path.Op.INTERSECT);
-        c.drawPath(mShapePath, mBatteryPaint);
+        /// M:Optimize the draw methord of battery path @{
+        mShapePath2.reset();
+        mShapePath2.op(mShapePath, Path.Op.UNION);
+        mShapePath2.op(mClipPath, Path.Op.INTERSECT);
+        /// M:Optimize the draw methord of battery path @}
+        c.drawPath(mShapePath2, mBatteryPaint);
 
         if (!tracker.plugged) {
             if (level <= mCriticalLevel) {

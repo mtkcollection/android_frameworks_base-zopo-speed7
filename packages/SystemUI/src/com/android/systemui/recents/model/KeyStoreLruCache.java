@@ -91,4 +91,19 @@ public class KeyStoreLruCache<V> {
     final void trimToSize(int cacheSize) {
         mCache.resize(cacheSize);
     }
+
+    /// M: For Debug
+    /**
+     * Dump the lastActiveTime for debug the cache.
+     */
+    final String getLastActiveTimeInfo(Task.TaskKey key) {
+        String info = "";
+        Task.TaskKey lastKey = mTaskKeys.get(key.id);
+        if (lastKey != null) {
+           info = "LastActiveTime: " +
+               lastKey.lastActiveTime + ", " +
+               key.lastActiveTime;
+        }
+        return info;
+    }
 }

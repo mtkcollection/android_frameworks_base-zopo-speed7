@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
 **
 ** Copyright 2006, The Android Open Source Project
 **
@@ -147,8 +152,8 @@ void NinePatch_Draw(SkCanvas* canvas, const SkRect& bounds,
     if (gTrace) {
         ALOGV("======== ninepatch bounds [%g %g]\n", SkScalarToFloat(bounds.width()), SkScalarToFloat(bounds.height()));
         ALOGV("======== ninepatch paint bm [%d,%d]\n", bitmap.width(), bitmap.height());
-        ALOGV("======== ninepatch xDivs [%d,%d]\n", xDivs[0], xDivs[1]);
-        ALOGV("======== ninepatch yDivs [%d,%d]\n", yDivs[0], yDivs[1]);
+        if(chunk.numXDivs >= 2) ALOGV("======== ninepatch xDivs [%d,%d]\n", xDivs[0], xDivs[1]);
+        if(chunk.numYDivs >= 2) ALOGV("======== ninepatch yDivs [%d,%d]\n", yDivs[0], yDivs[1]);
     }
 #endif
 
@@ -173,11 +178,26 @@ void NinePatch_Draw(SkCanvas* canvas, const SkRect& bounds,
     SkRect      dst;
     SkIRect     src;
 
-    const int32_t x0 = xDivs[0];
-    const int32_t y0 = yDivs[0];
     const SkColor initColor = ((SkPaint*)paint)->getColor();
     const uint8_t numXDivs = chunk.numXDivs;
     const uint8_t numYDivs = chunk.numYDivs;
+
+	/// M: Draw bitmap directly when numXDiv = 0 or numYDiv = 0. @{
+    if (numXDivs == 0 || numYDivs == 0) {
+        ALOGW("Do not stretch NinePatch[%d %d] bounds [%g %g %g %g] divs [%d %d]", 
+            bitmap.width(), bitmap.height(),
+            SkScalarToFloat(bounds.fLeft), SkScalarToFloat(bounds.fTop),
+            SkScalarToFloat(bounds.width()), SkScalarToFloat(bounds.height()),
+            numXDivs, numYDivs);
+        if (canvas) {
+            canvas->drawBitmap(bitmap, bounds.fLeft, bounds.fTop, paint);
+        }
+        return;
+    }
+    /// @}
+
+	const int32_t x0 = xDivs[0];
+    const int32_t y0 = yDivs[0];
     int i;
     int j;
     int colorIndex = 0;

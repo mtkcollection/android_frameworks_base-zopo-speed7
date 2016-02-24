@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemProperties;
+import android.util.DisplayMetrics;
 import android.os.Trace;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -140,12 +146,20 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private int[] mRefreshRateConfigIndices;
         private float mLastRequestedRefreshRate;
 
+        /// M:[SmartBook] Add extra info for smartbook
+        private final SurfaceControl.PhysicalDisplayInfoEx mPhysEx = new SurfaceControl.PhysicalDisplayInfoEx();
+
         public LocalDisplayDevice(IBinder displayToken, int builtInDisplayId,
                 SurfaceControl.PhysicalDisplayInfo[] physicalDisplayInfos, int activeDisplayInfo) {
             super(LocalDisplayAdapter.this, displayToken, UNIQUE_ID_PREFIX + builtInDisplayId);
             mBuiltInDisplayId = builtInDisplayId;
             mPhys = new SurfaceControl.PhysicalDisplayInfo(
                     physicalDisplayInfos[activeDisplayInfo]);
+            /// M:[SmartBook] Identifiy smartbook @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                SurfaceControl.getDisplayInfoEx(displayToken, mPhysEx);
+            }
+            /// @}
             mDefaultPhysicalDisplayInfo = activeDisplayInfo;
             updateSupportedRefreshRatesLocked(physicalDisplayInfos, mPhys);
         }
@@ -214,6 +228,15 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         mInfo.rotation = Surface.ROTATION_270;
                     }
 
+                    /// M:[SmartBook] Identifiy smartbook @{
+                    if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                        if (mPhysEx.subtype == DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK) {
+                            mInfo.subtype = DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK;
+                            mInfo.densityDpi = findDensityBucket();
+                        }
+                    }
+                    /// @}
+
                     // For demonstration purposes, allow rotation of the external display
                     // to follow the built-in display.
                     if (SystemProperties.getBoolean("persist.demo.hdmirotates", false)) {
@@ -222,6 +245,23 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 }
             }
             return mInfo;
+        }
+
+
+        private int findDensityBucket() {
+            int density = (int) (mPhys.density * 160 + 0.5f);
+            if (density != DisplayMetrics.DENSITY_TV) {
+                if (density < (DisplayMetrics.DENSITY_LOW + DisplayMetrics.DENSITY_MEDIUM) / 2)
+                    density = DisplayMetrics.DENSITY_MEDIUM;
+                else if (density < (DisplayMetrics.DENSITY_MEDIUM + DisplayMetrics.DENSITY_HIGH) / 2)
+                    density = DisplayMetrics.DENSITY_MEDIUM;
+                else if (density < (DisplayMetrics.DENSITY_HIGH + DisplayMetrics.DENSITY_XHIGH) / 2)
+                    density = DisplayMetrics.DENSITY_HIGH;
+                else
+                    density = DisplayMetrics.DENSITY_XHIGH;
+            }
+            Slog.d(TAG, "density mapping from " + (int) (mPhys.density * 160 + 0.5f) + " to " + density);
+            return density;
         }
 
         @Override
@@ -242,6 +282,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         Trace.traceBegin(Trace.TRACE_TAG_POWER, "requestDisplayState("
                                 + Display.stateToString(state) + ", id=" + displayId + ")");
                         try {
+                            /// M: Add log
+                            Slog.d(TAG, "requestDisplayState(" + Display.stateToString(state)
+                                    + ", id=" + displayId + ")");
                             SurfaceControl.setDisplayPowerMode(token, mode);
                         } finally {
                             Trace.traceEnd(Trace.TRACE_TAG_POWER);

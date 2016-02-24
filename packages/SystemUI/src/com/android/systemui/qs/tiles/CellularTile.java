@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +28,13 @@ import android.content.res.Resources;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 
 import com.android.systemui.R;
 import com.android.systemui.qs.QSTile;
+import com.android.systemui.qs.QSTile.Icon;
+import com.android.systemui.qs.QSTile.ResourceIcon;
 import com.android.systemui.qs.QSTileView;
 import com.android.systemui.qs.SignalTileView;
 import com.android.systemui.statusbar.policy.NetworkController;
@@ -33,20 +42,40 @@ import com.android.systemui.statusbar.policy.NetworkController.MobileDataControl
 import com.android.systemui.statusbar.policy.NetworkController.MobileDataController.DataUsageInfo;
 import com.android.systemui.statusbar.policy.NetworkController.NetworkSignalChangedCallback;
 
+/// M: add DataUsage in quicksetting @{
+import com.mediatek.systemui.ext.IQuickSettingsPlugin;
+import com.mediatek.systemui.ext.PluginFactory;
+/// add DataUsage in quicksetting @}
+import com.mediatek.xlog.Xlog;
+
 /** Quick settings tile: Cellular **/
 public class CellularTile extends QSTile<QSTile.SignalState> {
     private static final Intent CELLULAR_SETTINGS = new Intent().setComponent(new ComponentName(
             "com.android.settings", "com.android.settings.Settings$DataUsageSummaryActivity"));
 
+    private static final String TAG = "CellularTile";
+    private static final boolean DBG = true;
+    
     private final NetworkController mController;
     private final MobileDataController mDataController;
     private final CellularDetailAdapter mDetailAdapter;
+    /// M: add DataUsage for operator @{
+    private IQuickSettingsPlugin mQuickSettingsPlugin;
+    private boolean mDisplayDataUsage;
+    private Icon mIcon;
+    /// add DataUsage for operator @}
 
     public CellularTile(Host host) {
         super(host);
         mController = host.getNetworkController();
         mDataController = mController.getMobileDataController();
         mDetailAdapter = new CellularDetailAdapter();
+        /// M: add DataUsage for operator @{
+        mQuickSettingsPlugin = PluginFactory
+                .getQuickSettingsPlugin(mContext);
+        mDisplayDataUsage = mQuickSettingsPlugin.customizeDisplayDataUsage(false);
+        mIcon = ResourceIcon.get(R.drawable.ic_qs_data_usage);
+        /// add DataUsage for operator @}
     }
 
     @Override
@@ -75,7 +104,9 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
 
     @Override
     protected void handleClick() {
-        if (mDataController.isMobileDataSupported()) {
+        // M: Start setting activity when default SIM isn't setted
+        if (mDataController.isMobileDataSupported()
+                && SubscriptionManager.getDefaultDataSubId() != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
             showDetail(true);
         } else {
             mHost.startSettingsActivity(CELLULAR_SETTINGS);
@@ -84,6 +115,16 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
 
     @Override
     protected void handleUpdateState(SignalState state, Object arg) {
+        /// M: add DataUsage for operator @{
+        if (mDisplayDataUsage) {
+            Xlog.i(TAG, "customize datausage, displayDataUsage = " + mDisplayDataUsage);
+            state.visible = true;
+            state.icon = mIcon;
+            state.label = mContext.getString(R.string.data_usage);
+            state.contentDescription = mContext.getString(R.string.data_usage);
+            return;
+        }
+        /// add DataUsage for operator @}
         state.visible = mController.hasMobileDataFeature();
         if (!state.visible) return;
         final CallbackInfo cb = (CallbackInfo) arg;
@@ -97,7 +138,15 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
         state.icon = ResourceIcon.get(iconId);
         state.isOverlayIconWide = cb.isDataTypeIconWide;
         state.autoMirrorDrawable = !cb.noSim;
-        state.overlayIconId = cb.enabled && (cb.dataTypeIconId > 0) ? cb.dataTypeIconId : 0;
+
+        /// M: Update roaming icon with airplane mode state @{
+        if (cb.enabled && (cb.dataTypeIconId > 0) && !cb.airplaneModeEnabled) {
+            state.overlayIconId = cb.dataTypeIconId;
+        } else {
+            state.overlayIconId = 0;
+        }
+        /// M: Update roaming icon with airplane mode state @}
+
         state.filter = iconId != R.drawable.ic_qs_no_sim;
         state.activityIn = cb.enabled && cb.activityIn;
         state.activityOut = cb.enabled && cb.activityOut;
@@ -112,6 +161,17 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
         final String dataContentDesc = cb.enabled && (cb.dataTypeIconId > 0) && !cb.wifiEnabled
                 ? cb.dataContentDescription
                 : r.getString(R.string.accessibility_no_data);
+
+        // /M: Change the label when default SIM isn't setted @{
+        if (cb.enabled
+                && TelephonyManager.from(mContext).getNetworkOperator() != null
+                && SubscriptionManager.getDefaultDataSubId() == SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                && !cb.noSim) {
+            Xlog.d(TAG, "No default data sim");
+            state.icon = ResourceIcon.get(R.drawable.ic_qs_data_sim_not_set);
+            state.label = r.getString(R.string.quick_settings_data_sim_notset);
+        }
+        // @}
         state.contentDescription = r.getString(
                 R.string.accessibility_quick_settings_mobile,
                 signalContentDesc, dataContentDesc,
@@ -172,6 +232,17 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
             mInfo.activityOut = activityOut;
             mInfo.enabledDesc = description;
             mInfo.isDataTypeIconWide = isDataTypeIconWide;
+            if (DBG) {
+                Xlog.d(TAG, "onMobileDataSignalChanged info.enabled = " + mInfo.enabled +
+                    " mInfo.mobileSignalIconId = " + mInfo.mobileSignalIconId +
+                    " mInfo.signalContentDescription = " + mInfo.signalContentDescription +
+                    " mInfo.dataTypeIconId = " + mInfo.dataTypeIconId +
+                    " mInfo.dataContentDescription = " + mInfo.dataContentDescription +
+                    " mInfo.activityIn = " + mInfo.activityIn +
+                    " mInfo.activityOut = " + mInfo.activityOut +
+                    " mInfo.enabledDesc = " + mInfo.enabledDesc +
+                    " mInfo.isDataTypeIconWide = " + mInfo.isDataTypeIconWide);
+            }
             refreshState(mInfo);
         }
 
@@ -187,6 +258,8 @@ public class CellularTile extends QSTile<QSTile.SignalState> {
                 mInfo.enabledDesc = mContext.getString(
                         R.string.keyguard_missing_sim_message_short);
                 mInfo.signalContentDescription = mInfo.enabledDesc;
+
+                Xlog.d(TAG, "NoSim");
             }
             refreshState(mInfo);
         }

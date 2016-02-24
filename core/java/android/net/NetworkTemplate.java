@@ -38,6 +38,8 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -158,7 +160,7 @@ public class NetworkTemplate implements Parcelable {
      * Since the merge set is dynamic, it should <em>not</em> be persisted or
      * used for determining equality.
      */
-    private final String[] mMatchSubscriberIds;
+    private String[] mMatchSubscriberIds;
 
     private final String mNetworkId;
 
@@ -442,4 +444,27 @@ public class NetworkTemplate implements Parcelable {
             return new NetworkTemplate[size];
         }
     };
+
+    /**
+     * M: Add for multi-sub in one SIM; For example, Cdma + svLte
+     */
+    public String[] getMatchSubscriberIds() {
+        return mMatchSubscriberIds;
+    }
+
+    public boolean addMatchSubscriberIds(String subscriberId) {
+        if( ArrayUtils.contains(mMatchSubscriberIds, subscriberId)){
+            return false;
+        } else {
+            ArrayList<String> newlist = new ArrayList<String>();
+            for (String id : mMatchSubscriberIds) {
+                newlist.add(id);
+            }
+            newlist.add(subscriberId);
+			String tmp[] = new String[newlist.size()];
+            newlist.toArray(tmp);
+			mMatchSubscriberIds = tmp;
+            return true;
+        }
+    }
 }

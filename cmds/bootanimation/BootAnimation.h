@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +30,7 @@
 
 #include <EGL/egl.h>
 #include <GLES/gl.h>
+#include <cutils/xlog.h>
 
 class SkBitmap;
 
@@ -41,6 +47,7 @@ class BootAnimation : public Thread, public IBinder::DeathRecipient
 {
 public:
                 BootAnimation();
+				BootAnimation(bool bSetBootOrShutDown,bool bSetPlayMP3,bool bSetRotated);
     virtual     ~BootAnimation();
 
     sp<SurfaceComposerClient> session() const;
@@ -61,6 +68,7 @@ private:
         struct Frame {
             String8 name;
             FileMap* map;
+            String8 fullPath;
             mutable GLuint tid;
             bool operator < (const Frame& rhs) const {
                 return name < rhs.name;
@@ -83,12 +91,18 @@ private:
 
     status_t initTexture(Texture* texture, AssetManager& asset, const char* name);
     status_t initTexture(const Animation::Frame& frame);
+    status_t initTexture(const char* EntryName);
+    void initBootanimationZip();
+    void initShutanimationZip();
+    char* initAudioPath();
     bool android();
     bool readFile(const char* name, String8& outString);
     bool movie();
-
+    bool MTKmovie();
     void checkExit();
-
+    void initShader();
+    GLuint buildShader(const char* source, GLenum shaderType);
+    GLuint buildProgram (const char* vertexShaderSource, const char* fragmentShaderSource);
     sp<SurfaceComposerClient>       mSession;
     sp<AudioPlayer>                 mAudioPlayer;
     AssetManager mAssets;
@@ -100,6 +114,14 @@ private:
     EGLDisplay  mSurface;
     sp<SurfaceControl> mFlingerSurfaceControl;
     sp<Surface> mFlingerSurface;
+    bool bBootOrShutDown;
+    bool bShutRotate;
+    bool bPlayMP3;
+    GLuint mProgram;
+    GLint mAttribPosition;
+    GLint mAttribTexCoord;
+    GLint mUniformTexture;
+    bool bMTKMovie;
     ZipFileRO   *mZip;
 };
 

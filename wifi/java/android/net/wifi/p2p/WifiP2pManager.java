@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +47,11 @@ import com.android.internal.util.Protocol;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+///M:@{
+import android.net.wifi.p2p.fastconnect.WifiP2pFastConnectInfo;
+import android.net.wifi.p2p.link.WifiP2pLinkInfo;
+///@}
 
 /**
  * This class provides the API for managing Wi-Fi peer-to-peer connectivity. This lets an
@@ -468,6 +478,80 @@ public class WifiP2pManager {
     /** @hide */
     public static final int REPORT_NFC_HANDOVER_FAILED              = BASE + 81;
 
+    ///M:@{
+    /** @hide */
+    public static final int REQUEST_LINK_INFO                       = BASE + 85;
+    /** @hide */
+    public static final int RESPONSE_LINK_INFO                      = BASE + 86;
+
+    /** @hide */
+    public static final int SET_AUTO_CHANNEL_SELECT                 = BASE + 87;
+    /** @hide */
+    public static final int SET_AUTO_CHANNEL_SELECT_FAILED          = BASE + 88;
+    /** @hide */
+    public static final int SET_AUTO_CHANNEL_SELECT_SUCCEEDED       = BASE + 89;
+
+    /** @hide */
+    public static final int START_FAST_CONNECT_AS_GO                = BASE + 90;
+    /** @hide */
+    public static final int START_FAST_CONNECT_AS_GC                = BASE + 91;
+    /** @hide */
+    public static final int FAST_CONNECT_AS_GO                      = BASE + 92;
+    /** @hide */
+    public static final int FAST_CONNECT_AS_GC                      = BASE + 93;
+    /** @hide */
+    public static final int FAST_DISCOVER_PEERS                     = BASE + 94;
+
+    /** M: NFC Float II @{ */
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int GET_NFC_REQUEST_TOKEN                   = BASE + 95;
+    /** @hide */
+    public static final int GET_NFC_REQUEST_TOKEN_FAILED            = BASE + 96;
+    /** @hide */
+    public static final int GET_NFC_REQUEST_TOKEN_SUCCEEDED         = BASE + 97;
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int GET_NFC_SELECT_TOKEN                    = BASE + 98;
+    /** @hide */
+    public static final int GET_NFC_SELECT_TOKEN_FAILED             = BASE + 99;
+    /** @hide */
+    public static final int GET_NFC_SELECT_TOKEN_SUCCEEDED          = BASE + 100;
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int GET_NFC_CONFIG_TOKEN                    = BASE + 101;
+    /** @hide */
+    public static final int GET_NFC_CONFIG_TOKEN_FAILED             = BASE + 102;
+    /** @hide */
+    public static final int GET_NFC_CONFIG_TOKEN_SUCCEEDED          = BASE + 103;
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int GET_NFC_WPS_CONFIG_TOKEN                = BASE + 104;
+    /** @hide */
+    public static final int GET_NFC_WPS_CONFIG_TOKEN_FAILED         = BASE + 105;
+    /** @hide */
+    public static final int GET_NFC_WPS_CONFIG_TOKEN_SUCCEEDED      = BASE + 106;
+    /** @} */
+
+    /** @hide */
+    public static final int PEER_CONNECTION_USER_ACCEPT_FROM_OUTER  = BASE + 107;
+    /** @hide */
+    public static final int PEER_CONNECTION_USER_REJECT_FROM_OUTER  = BASE + 108;
+
+    /** @hide */
+    public static final int FREQ_CONFLICT_EX_RESULT                 = BASE + 109;
+
+    /** @hide */
+    public static final int UPPER_BOUND                             = BASE + 128;
+    ///@}
 
     /**
      * Create a new WifiP2pManager instance. Applications use
@@ -718,6 +802,12 @@ public class WifiP2pManager {
                     case STOP_LISTEN_FAILED:
                     case SET_CHANNEL_FAILED:
                     case REPORT_NFC_HANDOVER_FAILED:
+                    /** M: NFC Float II @{ */
+                    case WifiP2pManager.GET_NFC_REQUEST_TOKEN_FAILED:
+                    case WifiP2pManager.GET_NFC_SELECT_TOKEN_FAILED:
+                    case WifiP2pManager.GET_NFC_CONFIG_TOKEN_FAILED:
+                    case WifiP2pManager.GET_NFC_WPS_CONFIG_TOKEN_FAILED:
+                    /** @} */
                         if (listener != null) {
                             ((ActionListener) listener).onFailure(message.arg1);
                         }
@@ -744,6 +834,12 @@ public class WifiP2pManager {
                     case STOP_LISTEN_SUCCEEDED:
                     case SET_CHANNEL_SUCCEEDED:
                     case REPORT_NFC_HANDOVER_SUCCEEDED:
+                    /** M: NFC Float II @{ */
+                    case WifiP2pManager.GET_NFC_REQUEST_TOKEN_SUCCEEDED:
+                    case WifiP2pManager.GET_NFC_SELECT_TOKEN_SUCCEEDED:
+                    case WifiP2pManager.GET_NFC_CONFIG_TOKEN_SUCCEEDED:
+                    case WifiP2pManager.GET_NFC_WPS_CONFIG_TOKEN_SUCCEEDED:
+                    /** @} */
                         if (listener != null) {
                             ((ActionListener) listener).onSuccess();
                         }
@@ -787,6 +883,14 @@ public class WifiP2pManager {
                                     .onHandoverMessageAvailable(handoverMessage);
                         }
                         break;
+                    ///M:@{
+                    case WifiP2pManager.RESPONSE_LINK_INFO:
+                        WifiP2pLinkInfo s = (WifiP2pLinkInfo) message.obj;
+                        if (listener != null) {
+                            ((WifiP2pLinkInfoListener) listener).onLinkInfoAvailable(s);
+                        }
+                        break;
+                    ///@}
                     default:
                         Log.d(TAG, "Ignored " + message);
                         break;
@@ -852,6 +956,14 @@ public class WifiP2pManager {
                 return mListenerMap.remove(key);
             }
         }
+
+        ///M: ALPS00713080: apk clean listener when it is onDestroy() @{
+        private void clearListener() {
+            synchronized (mListenerMapLock) {
+                mListenerMap.clear();
+            }
+        }
+        ///@}
     }
 
     private static void checkChannel(Channel c) {
@@ -1367,6 +1479,17 @@ public class WifiP2pManager {
         }
     }
 
+    ///M: wfd sink MCC mechanism  @{
+    /** Internal use only @hide */
+    public void setMiracastMode(int mode, int freq) {
+        try {
+            mService.setMiracastModeEx(mode, freq);
+        } catch(RemoteException e) {
+           // ignore
+        }
+    }
+    ///@}
+
     /**
      * Get a reference to WifiP2pService handler. This is used to establish
      * an AsyncChannel communication with WifiService
@@ -1440,4 +1563,193 @@ public class WifiP2pManager {
         c.mAsyncChannel.sendMessage(RESPONDER_REPORT_NFC_HANDOVER, 0,
                 c.putListener(listener), bundle);
     }
+
+    ///M:@{
+    /**
+     * Interface for callback invocation when p2p link information is available
+     * @hide
+     */
+    public interface WifiP2pLinkInfoListener {
+        /**
+         * The requested p2p link info is available
+         * @param status Wi-Fi p2p link info.
+         */
+        public void onLinkInfoAvailable(WifiP2pLinkInfo status);
+    }
+
+    /**
+     * get Fast Connect info from p2p framework, and start fast connect as GO
+     *
+     * @param info is used to set GC MAC Address to p2p framework
+     *  if the connection is a WFD connection, need not to set device type of WFD
+     * @return WifiP2pFastConnectInfo the credential info got from P2psupplicant
+     * @hide
+     * @internal
+     */
+    public WifiP2pFastConnectInfo fastConnectAsGo(WifiP2pFastConnectInfo info) {
+        try {
+            return mService.fastConnectAsGo(info);
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+    /**
+     * set Fast Connect info to p2p framework, and start fast connect as GC
+     * if the connection is a WFD connection, need to set device type in info.wfdDeviceType
+
+     * @param c is the channel created at {@link #initialize}
+     * @param info is used to set GO MAC Address and crendential to p2p framework
+     *  if the connection is a WFD connection, need not to set device type of WFD
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     * @internal
+     */
+    public void fastConnectAsGc(Channel c, WifiP2pFastConnectInfo info,
+            ActionListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(START_FAST_CONNECT_AS_GC, 0, c.putListener(listener), info);
+    }
+
+    /**
+     * get p2p interface MAC address
+     * @hide
+     */
+    public String getMacAddress() {
+        try {
+            return mService.getMacAddress();
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+    /**
+     * request wifi p2p link info
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param interfaceAddress is the "interfaceAddress" attribute in WifiP2pDevice.java
+     * @param listener for callback when wifi p2p link info is available. Can be null.
+     * @hide
+     */
+    public void requestWifiP2pLinkInfo(Channel c, String interfaceAddress,
+            WifiP2pLinkInfoListener listener) {
+        WifiP2pLinkInfo info = new WifiP2pLinkInfo();
+        info.interfaceAddress = interfaceAddress;
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(REQUEST_LINK_INFO, 0, c
+                .putListener(listener), info);
+    }
+
+    /**
+     * set p2p auto channel selection
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param enable is the auto channel selection willing to set
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     */
+    public void setP2pAutoChannel(Channel c, boolean enable, ActionListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(SET_AUTO_CHANNEL_SELECT, (enable ? 1 : 0), c.putListener(listener));
+    }
+
+    /**
+     * Clear all registered listener
+     * M: ALPS00713080: apk should clean listener when it is onDestroy()
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @hide
+     * @internal
+     */
+    public void deinitialize(Channel c) {
+        Log.i(TAG, "deinitialize()");
+        checkChannel(c);
+        //can't use this
+        //c.mAsyncChannel.disconnect();
+        c.clearListener();
+    }
+
+    /**
+     * Get peer device IP after group formed
+     *
+     * @param peerMacAddress is the peer device p2p MAC
+     * @hide
+     * @internal
+     */
+    public String getPeerIpAddress(String peerMacAddress) {
+        try {
+            return mService.getPeerIpAddress(peerMacAddress);
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+    /**
+     * This device acts as GO, and accept/ignore invitation from GC request
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param accept is the invitation result from user
+     * @param go_intent is the go intent for group negotiation
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     */
+    public void setGCInviteResult(Channel c, boolean accept, int go_intent, ActionListener listener) {
+        checkChannel(c);
+        if (true == accept) {
+            c.mAsyncChannel.sendMessage(PEER_CONNECTION_USER_ACCEPT_FROM_OUTER, go_intent, c.putListener(listener));
+        } else {
+            c.mAsyncChannel.sendMessage(PEER_CONNECTION_USER_REJECT_FROM_OUTER, -1, c.putListener(listener));
+        }
+    }
+
+    /**
+     * The decision of freqency conflict enhancement flow
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param accept is the freqency conflict enhancement result from user
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     */
+    public void setFreqConflictExResult(Channel c, boolean accept, ActionListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(FREQ_CONFLICT_EX_RESULT, (accept ? 1 : 0), c.putListener(listener));
+    }
+
+    /** M: NFC Float II @{ */
+    /**
+     * Get P2P handover select token synchronously
+     * @hide
+     * @internal
+     */
+    public byte[] getNfcSelectToken() {
+        try {
+            return mService.getP2pHandoverSelectToken();
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Get NFC token
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param type is the NFC token type
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     * @internal
+     */
+    public void generateNfcToken(Channel c, int type, ActionListener listener) {
+        checkChannel(c);
+        Log.i(TAG, "generateNfcToken(): type=" + type);
+
+        if (GET_NFC_REQUEST_TOKEN == type ||
+                GET_NFC_SELECT_TOKEN == type ||
+                GET_NFC_CONFIG_TOKEN == type ||
+                GET_NFC_WPS_CONFIG_TOKEN == type) {
+            c.mAsyncChannel.sendMessage(type, 0, c.putListener(listener));
+        } else {
+            Log.e(TAG, "generateNfcToken(): invalid type");
+        }
+    }
+    ///@}
 }

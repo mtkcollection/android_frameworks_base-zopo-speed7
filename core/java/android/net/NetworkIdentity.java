@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +29,13 @@ import android.content.Context;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.util.Slog;
 
 import java.util.Objects;
+
+import static android.net.wifi.WifiInfo.removeDoubleQuotes;
 
 /**
  * Network definition that includes strong identity. Analogous to combining
@@ -162,14 +170,23 @@ public class NetworkIdentity implements Comparable<NetworkIdentity> {
         String subscriberId = null;
         String networkId = null;
         boolean roaming = false;
-
+        Slog.i(TAG, "buildNetworkIdentity:");
         if (isNetworkTypeMobile(type)) {
             if (state.subscriberId == null) {
                 Slog.w(TAG, "Active mobile network without subscriber!");
             }
-
-            subscriberId = state.subscriberId;
-            roaming = state.networkInfo.isRoaming();
+            // M: keep MTK design since not sure Google consider DSDS
+            //roaming = state.networkInfo.isRoaming();
+            roaming = isDdsRoaming();
+            Slog.i(TAG, "roaming:" + (roaming ? "true" : "false"));
+            if (state.subscriberId != null) {
+                subscriberId = state.subscriberId;
+                Slog.i(TAG, "state.subscriberId = " + subscriberId);
+            } else {
+                //used for dual sim data traffic statistics
+                subscriberId = getDdsSubscriberId();
+                Slog.i(TAG, "getDdsSubscriberId = " + subscriberId);
+            }
 
         } else if (type == TYPE_WIFI) {
             if (state.networkId != null) {
@@ -178,7 +195,9 @@ public class NetworkIdentity implements Comparable<NetworkIdentity> {
                 final WifiManager wifi = (WifiManager) context.getSystemService(
                         Context.WIFI_SERVICE);
                 final WifiInfo info = wifi.getConnectionInfo();
-                networkId = info != null ? info.getSSID() : null;
+                ///M: fix google issue
+                networkId = info != null ? removeDoubleQuotes(info.getSSID()) : null;
+                Slog.i(TAG, "networkId = " + networkId);
             }
         }
 
@@ -201,5 +220,15 @@ public class NetworkIdentity implements Comparable<NetworkIdentity> {
             res = Boolean.compare(mRoaming, another.mRoaming);
         }
         return res;
+    }
+
+    private static boolean isDdsRoaming() {
+        TelephonyManager tm = TelephonyManager.getDefault();
+        return tm.isNetworkRoaming(SubscriptionManager.getDefaultDataSubId());
+    }
+
+    public static String getDdsSubscriberId() {
+        TelephonyManager tm = TelephonyManager.getDefault();
+        return tm.getSubscriberId(SubscriptionManager.getDefaultDataSubId());
     }
 }

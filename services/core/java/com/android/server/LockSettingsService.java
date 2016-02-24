@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -410,7 +415,10 @@ public class LockSettingsService extends ILockSettings.Stub {
         LockPatternUtils.LOCK_PASSWORD_SALT_KEY,
         LockPatternUtils.DISABLE_LOCKSCREEN_KEY,
         LockPatternUtils.LOCKSCREEN_OPTIONS,
-        LockPatternUtils.LOCKSCREEN_BIOMETRIC_WEAK_FALLBACK,
+        LockPatternUtils.LOCKSCREEN_BIOMETRIC_WEAK_FALLBACK, /// M: no use - replaced by followings
+        LockPatternUtils.LOCKSCREEN_WEAK_FALLBACK,           /// M: whether fallback has been set
+        LockPatternUtils.LOCKSCREEN_WEAK_FALLBACK_FOR,       /// M: fallback has been set for which, face or voice
+        LockPatternUtils.VOICE_WEAK_FALLBACK_SET_KEY,        /// M: whether voice unlock fallback has been set
         LockPatternUtils.BIOMETRIC_WEAK_EVER_CHOSEN_KEY,
         LockPatternUtils.LOCKSCREEN_POWER_BUTTON_INSTANTLY_LOCKS,
         LockPatternUtils.PASSWORD_HISTORY_KEY,

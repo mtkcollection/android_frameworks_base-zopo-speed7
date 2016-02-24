@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,9 @@ import android.annotation.SdkConstant;
 import android.annotation.SystemApi;
 import android.content.Context;
 import android.util.Log;
+
+// Mediatek AAL support
+import android.os.SystemProperties;
 
 /**
  * This class gives you control of the power state of the device.
@@ -350,10 +358,42 @@ public final class PowerManager {
     public static final int GO_TO_SLEEP_REASON_HDMI = 5;
 
     /**
+     * Go to sleep reason code: Going to sleep due to smartbook.
+     * @hide
+     */
+    public static final int GO_TO_SLEEP_REASON_SMARTBOOK = 6;
+
+    /**
+     * Go to sleep reason code: Going to sleep due to shutdown.
+     * @hide
+     * @internal
+     */
+    public static final int GO_TO_SLEEP_REASON_SHUTDOWN = 7;
+
+    /**
+     * Go to sleep reason code: Going to sleep due to proximity sensor.
+     * @hide
+     */
+    public static final int GO_TO_SLEEP_REASON_PROXIMITY = 8;
+
+    /**
      * Go to sleep flag: Skip dozing state and directly go to full sleep.
      * @hide
      */
     public static final int GO_TO_SLEEP_FLAG_NO_DOZE = 1 << 0;
+
+    /**
+     * Wake up reason code: Wake up due to smartbook.
+     * @hide
+     */
+    public static final int WAKE_UP_REASON_SMARTBOOK = 0;
+
+    /**
+     * Wake up reason code: Wake up due to shutdown.
+     * @hide
+     * @internal
+     */
+    public static final int WAKE_UP_REASON_SHUTDOWN = 1;
 
     /**
      * The value to pass as the 'reason' argument to reboot() to
@@ -388,6 +428,10 @@ public final class PowerManager {
      * @hide
      */
     public int getMinimumScreenBrightnessSetting() {
+        // Mediatek AAL: ultra dimming support
+        if (MTK_ULTRA_DIMMING_SUPPORT)
+            return ULTRA_DIMMING_BRIGHTNESS_MINIMUM;
+    
         return mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_screenBrightnessSettingMinimum);
     }
@@ -399,6 +443,19 @@ public final class PowerManager {
      * @hide
      */
     public int getMaximumScreenBrightnessSetting() {
+        // Mediatek AAL: ultra dimming support
+        if (MTK_ULTRA_DIMMING_SUPPORT) {
+            int settingMaximum = mContext.getResources().getInteger(
+                    com.android.internal.R.integer.config_screenBrightnessSettingMaximum);
+            final boolean screenBrightnessVirtualValues = mContext.getResources().getBoolean(
+                    com.mediatek.internal.R.bool.config_screenBrightnessVirtualValues);
+            if (!screenBrightnessVirtualValues) {
+                settingMaximum = dimmingPhysicalToVirtual(settingMaximum);
+            }
+
+            return settingMaximum;
+        }
+    
         return mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_screenBrightnessSettingMaximum);
     }
@@ -408,6 +465,19 @@ public final class PowerManager {
      * @hide
      */
     public int getDefaultScreenBrightnessSetting() {
+        // Mediatek AAL: ultra dimming support
+        if (MTK_ULTRA_DIMMING_SUPPORT) {
+            int defaultValue = mContext.getResources().getInteger(
+                    com.android.internal.R.integer.config_screenBrightnessSettingDefault);
+            final boolean screenBrightnessVirtualValues = mContext.getResources().getBoolean(
+                    com.mediatek.internal.R.bool.config_screenBrightnessVirtualValues);
+            if (!screenBrightnessVirtualValues) {
+                defaultValue = dimmingPhysicalToVirtual(defaultValue);
+            }
+
+            return defaultValue;
+        }
+    
         return mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_screenBrightnessSettingDefault);
     }
@@ -641,6 +711,53 @@ public final class PowerManager {
     }
 
     /**
+     * Forces the device to wake up by reason from sleep.
+     * <p>
+     * If the device is currently asleep, wakes it up, otherwise does nothing.
+     * This is what happens when the power key is pressed to turn on the screen.
+     * </p><p>
+     * Requires the {@link android.Manifest.permission#DEVICE_POWER} permission.
+     * </p>
+     *
+     * @param time The time when the request to wake up was issued, in the
+     * {@link SystemClock#uptimeMillis()} time base.  This timestamp is used to correctly
+     * order the wake up request with other power management functions.  It should be set
+     * to the timestamp of the input event that caused the request to wake up.
+     * @param reason The reason the device is waking up.
+     *
+     * @see #userActivity
+     * @see #goToSleep
+     *
+     * @hide
+     * @internal
+     */
+    public void wakeUpByReason(long time, int reason) {
+        try {
+            mService.wakeUpByReason(time, reason);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Set smart book screen on/off.
+     * <p>
+     * Requires the {@link android.Manifest.permission#DEVICE_POWER} permission.
+     * </p>
+     *
+     * @param on The on is used to set the smart book screen on/off.
+     *
+     * @hide
+     */
+    public void setSmartBookScreen(boolean on) {
+        try {
+            mService.setSmartBookScreen(on);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
      * Forces the device to start napping.
      * <p>
      * If the device is currently awake, starts dreaming, otherwise does nothing.
@@ -704,6 +821,34 @@ public final class PowerManager {
         try {
             mService.setTemporaryScreenBrightnessSettingOverride(brightness);
         } catch (RemoteException e) {
+        }
+    }
+
+    /**
+     * Sets the brightness of LCD backlight and blanks LCM overlay.
+     *
+     * @param enable The enable value is for backlight on/off.
+     *
+     * @hide
+     */
+    public void setBacklightOffForWfd(boolean enable) {
+        try {
+            mService.setBacklightOffForWfd(enable);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Backlight notify for screen on/off check point.
+     *
+     * @hide
+     */
+    public void setBlNotify() {
+        try {
+            mService.setBlNotify();
+        } catch (RemoteException e) {
+            e.printStackTrace();
         }
     }
 
@@ -1097,5 +1242,61 @@ public final class PowerManager {
                     + " held=" + mHeld + ", refCount=" + mCount + "}";
             }
         }
+    }
+
+
+    // Mediatek AAL: ultra dimming support
+
+    /**
+     * Feature option of ultra dimming
+     * @hide
+     */
+    public static final boolean MTK_ULTRA_DIMMING_SUPPORT =
+        SystemProperties.get("ro.mtk_ultra_dimming_support").equals("1");
+    
+    /**
+     * The minimum virtual brightness which ultra dimming allowed
+     * @hide
+     */
+    public static final int ULTRA_DIMMING_BRIGHTNESS_MINIMUM = BRIGHTNESS_OFF + 1;
+
+    /**
+     * Control point of ultra dimming in [0, 255].
+     * Must sync with cust_aal_main.cpp
+     * @hide
+     */
+    public static final int ULTRA_DIMMING_VIRTUAL_CONTROL = 80;
+    /** @hide */
+    public static final int ULTRA_DIMMING_PHYSICAL_CONTROL = 10;
+
+    /**
+      * Minimum of physical backlight value in [0, 255].
+      * Under the minimum, the brightness is emulated by content processing.
+      * Must be the same with (MinBLOut / 4) in cust_aal.cpp
+      * @hide
+      */
+    public static final int ULTRA_DIMMING_PHYSICAL_MININUM = 8;
+
+    private static final float dimmingGammaHighInv = (float)(
+        Math.log((float)ULTRA_DIMMING_VIRTUAL_CONTROL / (float)BRIGHTNESS_ON) /
+        Math.log((float)ULTRA_DIMMING_PHYSICAL_CONTROL / (float)BRIGHTNESS_ON) );
+
+
+    /**
+     * Convert physical 8-bit brightness to virtual 8-bit brightness by
+     * applying CONTROL configurations.
+     * @hide
+     */
+    public static int dimmingPhysicalToVirtual(int physicalValue) {
+        if (!MTK_ULTRA_DIMMING_SUPPORT)
+            return physicalValue;
+            
+        if (physicalValue <= ULTRA_DIMMING_PHYSICAL_CONTROL) {
+            return (int)( ((float)physicalValue / (float)ULTRA_DIMMING_PHYSICAL_CONTROL) *
+                    (float)ULTRA_DIMMING_VIRTUAL_CONTROL + 0.5f );
+        }
+
+        return (int)(Math.pow((float)physicalValue / (float)BRIGHTNESS_ON, dimmingGammaHighInv) *
+                (float)BRIGHTNESS_ON + 0.5f);
     }
 }

@@ -1,0 +1,32 @@
+﻿<!--
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- For Power Reboot -->
+  <string name="global_action_reboot">ரீபூட்</string>
+  <string name="reboot_confirm_question">நீங்கள் ரீபூட் செய்வதற்கு விரும்புகிறீர்களா?</string>
+  <string name="reboot_confirm">உங்களுடைய போன் மறுதுவக்கமாகும்.</string>
+  <string name="global_action_shotscreen">திரைஷாட்</string>
+  <string name="global_actions_toggle_dataconnection_mode">தரவு நெட்வொர்க் மோடு</string>
+  <string name="global_actions_dataconnection_mode_on_status">தரவு இணைப்பு ஆனில் உள்ளது</string>
+  <string name="global_actions_dataconnection_mode_off_status">தரவு இணைப்பு ஆஃப் செய்யப்பட்டுள்ளது</string>
+  <string name="global_actions_toggle_wifi_mode">வைஃபை மோடு</string>
+  <string name="global_actions_wifi_mode_on_status">வைஃபை ஆனாக உள்ளது</string>
+  <string name="global_actions_wifi_mode_off_status">வைஃபை ஆஃப்பாக உள்ளது</string>
+  <string name="global_actions_toggle_longclick_notice">உடனடியான: \n விரைவான ஷட்டவுன்: போன் திரை ஆஃப் ஆகும் வரைக்கும் 6 விநாடிகளக்கு பவர் பட்டனை நீண்டு அழுத்தவும்.</string>
+</resources>

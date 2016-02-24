@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +28,7 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.os.SystemProperties;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
@@ -31,6 +37,8 @@ import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
+
+import com.mediatek.xlog.Xlog;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -61,6 +69,12 @@ import java.lang.annotation.RetentionPolicy;
  */
 @RemoteView
 public class LinearLayout extends ViewGroup {
+    /// M: Log tag.
+    private static final String DEBUG_LOG_TAG = "Layout";
+    /// M: System property used to enable or disable log debugging.
+    private static final String DEBUG_LAYOUT_PROPERTY = "debug.layout.log";
+    /// M: Flag for indicating enable or disable log debugging.
+    private static boolean sDebugLayout = false;
     /** @hide */
     @IntDef({HORIZONTAL, VERTICAL})
     @Retention(RetentionPolicy.SOURCE)
@@ -192,12 +206,14 @@ public class LinearLayout extends ViewGroup {
         this(context, attrs, 0);
     }
     
+
     public LinearLayout(Context context, AttributeSet attrs, int defStyleAttr) {
         this(context, attrs, defStyleAttr, 0);
     }
 
     public LinearLayout(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
         super(context, attrs, defStyleAttr, defStyleRes);
+        initLinearLayout();
 
         final TypedArray a = context.obtainStyledAttributes(
                 attrs, com.android.internal.R.styleable.LinearLayout, defStyleAttr, defStyleRes);
@@ -674,6 +690,10 @@ public class LinearLayout extends ViewGroup {
 
         int largestChildHeight = Integer.MIN_VALUE;
 
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.1, this=" + this);
+        }
+
         // See how tall everyone is. Also remember max width.
         for (int i = 0; i < count; ++i) {
             final View child = getVirtualChildAt(i);
@@ -686,6 +706,11 @@ public class LinearLayout extends ViewGroup {
             if (child.getVisibility() == View.GONE) {
                i += getChildrenSkipCount(child, i);
                continue;
+            }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Child in Pass1: " + i + ", child=" + child
+                        + ", this=" + this);
             }
 
             if (hasDividerBeforeChildAt(i)) {
@@ -702,6 +727,13 @@ public class LinearLayout extends ViewGroup {
                 // there is any leftover space.
                 final int totalLength = mTotalLength;
                 mTotalLength = Math.max(totalLength, totalLength + lp.topMargin + lp.bottomMargin);
+
+                if (sDebugLayout) {
+                    Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-1: " + i
+                            + ", child=" + child + ", this=" + this + ", "
+                            + "status=Skipped, mTotalLength=" + mTotalLength
+                            + ", totalWeight=" + totalWeight);
+                }
                 skippedMeasure = true;
             } else {
                 int oldHeight = Integer.MIN_VALUE;
@@ -713,6 +745,12 @@ public class LinearLayout extends ViewGroup {
                     // with a height of 0
                     oldHeight = 0;
                     lp.height = LayoutParams.WRAP_CONTENT;
+
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-2-1: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "status=Modified, LayoutParams.height change to WRAP_CONTENT");
+                    }
                 }
 
                 // Determine how big this child would like to be. If this or
@@ -734,6 +772,13 @@ public class LinearLayout extends ViewGroup {
 
                 if (useLargestChild) {
                     largestChildHeight = Math.max(childHeight, largestChildHeight);
+                }
+
+                if (sDebugLayout) {
+                    Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-2-2: " + i
+                            + ", child=" + child + ", this=" + this + ", "
+                            + "status=Measured, mTotalLength=" + mTotalLength
+                            + ", totalWeight=" + totalWeight);
                 }
             }
 
@@ -783,7 +828,22 @@ public class LinearLayout extends ViewGroup {
                         matchWidthLocally ? margin : measuredWidth);
             }
 
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1: " + i + ", child=" + child
+                        + ", this=" + this + ", " + "matchWidth=" + matchWidth
+                        + ", matchWidthLocally=" + matchWidthLocally + ", "
+                        + "weightedMaxWidth=" + weightedMaxWidth
+                        + ", alternativeMaxWidth=" + alternativeMaxWidth);
+            }
+
             i += getChildrenSkipCount(child, i);
+        }
+
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.1, this=" + this + ", "
+                    + "maxWidth=" + maxWidth + ", weightedMaxWidth=" + weightedMaxWidth
+                    + ", alternativeMaxWidth=" + alternativeMaxWidth + ", "
+                    + "mTotalLength=" + mTotalLength + ", totalWeight=" + totalWeight);
         }
 
         if (mTotalLength > 0 && hasDividerBeforeChildAt(count)) {
@@ -792,6 +852,10 @@ public class LinearLayout extends ViewGroup {
 
         if (useLargestChild &&
                 (heightMode == MeasureSpec.AT_MOST || heightMode == MeasureSpec.UNSPECIFIED)) {
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.1.5, this=" + this);
+            }
+
             mTotalLength = 0;
 
             for (int i = 0; i < count; ++i) {
@@ -814,6 +878,12 @@ public class LinearLayout extends ViewGroup {
                 mTotalLength = Math.max(totalLength, totalLength + largestChildHeight +
                         lp.topMargin + lp.bottomMargin + getNextLocationOffset(child));
             }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.1.5, this=" + this
+                        + ", largestChildHeight=" + largestChildHeight
+                        + ", mTotalLength=" + mTotalLength);
+            }
         }
 
         // Add in our padding
@@ -832,6 +902,11 @@ public class LinearLayout extends ViewGroup {
         // shrink them if they extend beyond our current bounds. If we skipped
         // measurement on any children, we need to measure them now.
         int delta = heightSize - mTotalLength;
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.2, this=" + this + ", "
+                    + "delta=" + delta + ", " + "heightSize=" + heightSize
+                    + ", mTotalLength=" + mTotalLength);
+        }
         if (skippedMeasure || delta != 0 && totalWeight > 0.0f) {
             float weightSum = mWeightSum > 0.0f ? mWeightSum : totalWeight;
 
@@ -844,6 +919,11 @@ public class LinearLayout extends ViewGroup {
                     continue;
                 }
                 
+                if (sDebugLayout) {
+                    Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Child in Pass2: " + i + ", "
+                            + "child=" + child + ", this=" + this);
+                }
+
                 LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) child.getLayoutParams();
                 
                 float childExtra = lp.weight;
@@ -869,17 +949,39 @@ public class LinearLayout extends ViewGroup {
                         
                         child.measure(childWidthMeasureSpec,
                                 MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY));
+
+                        if (sDebugLayout) {
+                            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-1-1-1: " + i
+                                    + ", child=" + child + ", this=" + this + ", "
+                                    + "status=Measured, share=" + share
+                                    + ", childHeight=" + childHeight
+                                    + ", mTotalLength=" + mTotalLength);
+                        }
                     } else {
                         // child was skipped in the loop above.
                         // Measure for this first time here      
                         child.measure(childWidthMeasureSpec,
                                 MeasureSpec.makeMeasureSpec(share > 0 ? share : 0,
                                         MeasureSpec.EXACTLY));
+
+                        if (sDebugLayout) {
+                            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-1-1-2: " + i
+                                    + ", child=" + child + ", this=" + this + ", "
+                                    + "status=Measured, share=" + share
+                                    + ", mTotalLength=" + mTotalLength);
+                        }
                     }
 
                     // Child may now not fit in vertical dimension.
                     childState = combineMeasuredStates(childState, child.getMeasuredState()
                             & (MEASURED_STATE_MASK>>MEASURED_HEIGHT_STATE_SHIFT));
+                } else {
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-1-2: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "status=Skipped, ChildExtra=" + childExtra
+                                + ", mTotalLength=" + mTotalLength);
+                    }
                 }
 
                 final int margin =  lp.leftMargin + lp.rightMargin;
@@ -901,6 +1003,14 @@ public class LinearLayout extends ViewGroup {
 
             // Add in our padding
             mTotalLength += mPaddingTop + mPaddingBottom;
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.2-1, this=" + this + ", "
+                        + "maxWidth=" + maxWidth + ", weightedMaxWidth=" + weightedMaxWidth
+                        + ", alternativeMaxWidth=" + alternativeMaxWidth + ", "
+                        + "delta=" + delta + ", mTotalLength=" + mTotalLength);
+
+            }
             // TODO: Should we recompute the heightSpec based on the new total length?
         } else {
             alternativeMaxWidth = Math.max(alternativeMaxWidth,
@@ -928,7 +1038,22 @@ public class LinearLayout extends ViewGroup {
                                 MeasureSpec.makeMeasureSpec(largestChildHeight,
                                         MeasureSpec.EXACTLY));
                     }
+
+                    if (sDebugLayout) {
+                        String measureString = (childExtra > 0)
+                                ? "status=Measured" : "status=Skipped";
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-2: " + i
+                                + ", child=" + child + ", this=" + this + ", " + measureString);
+                    }
                 }
+            }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.2-2, this=" + this + ", "
+                        + "maxWidth=" + maxWidth + ", weightedMaxWidth=" + weightedMaxWidth
+                        + ", alternativeMaxWidth=" + alternativeMaxWidth + ", " + "delta=" + delta
+                        + ", mTotalLength=" + mTotalLength
+                        + ", useLargestChild=" + useLargestChild);
             }
         }
 
@@ -945,7 +1070,16 @@ public class LinearLayout extends ViewGroup {
                 heightSizeAndState);
 
         if (matchWidth) {
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.3, this=" + this
+                        + ", uniformWidth=" + getMeasuredWidth() + ", this=" + this);
+            }
+
             forceUniformWidth(count, heightMeasureSpec);
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.3, this=" + this);
+            }
         }
     }
 
@@ -1018,6 +1152,10 @@ public class LinearLayout extends ViewGroup {
 
         int largestChildWidth = Integer.MIN_VALUE;
 
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.1 (Horizontal), this=" + this);
+        }
+
         // See how wide everyone is. Also remember max height.
         for (int i = 0; i < count; ++i) {
             final View child = getVirtualChildAt(i);
@@ -1030,6 +1168,11 @@ public class LinearLayout extends ViewGroup {
             if (child.getVisibility() == GONE) {
                 i += getChildrenSkipCount(child, i);
                 continue;
+            }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Child in Pass1: " + i
+                        + ", child=" + child + ", this=" + this);
             }
 
             if (hasDividerBeforeChildAt(i)) {
@@ -1052,7 +1195,6 @@ public class LinearLayout extends ViewGroup {
                     mTotalLength = Math.max(totalLength, totalLength +
                             lp.leftMargin + lp.rightMargin);
                 }
-
                 // Baseline alignment requires to measure widgets to obtain the
                 // baseline offset (in particular for TextViews). The following
                 // defeats the optimization mentioned above. Allow the child to
@@ -1061,7 +1203,20 @@ public class LinearLayout extends ViewGroup {
                 if (baselineAligned) {
                     final int freeSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
                     child.measure(freeSpec, freeSpec);
+
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-1-1: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "status=Measured(BaselineAligned), mTotalLength=" + mTotalLength
+                                + ", totalWeight=" + totalWeight);
+                    }
                 } else {
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-1-2: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "status=Skipped, mTotalLength=" + mTotalLength
+                                + ", totalWeight=" + totalWeight);
+                    }
                     skippedMeasure = true;
                 }
             } else {
@@ -1074,6 +1229,12 @@ public class LinearLayout extends ViewGroup {
                     // WRAP_CONTENT so that it does not end up with a width of 0
                     oldWidth = 0;
                     lp.width = LayoutParams.WRAP_CONTENT;
+
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-2-1: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "status=Modified, LayoutParams.height change to WRAP_CONTENT");
+                    }
                 }
 
                 // Determine how big this child would like to be. If this or
@@ -1100,6 +1261,13 @@ public class LinearLayout extends ViewGroup {
 
                 if (useLargestChild) {
                     largestChildWidth = Math.max(childWidth, largestChildWidth);
+                }
+
+                if (sDebugLayout) {
+                    Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1-2-2: " + i
+                            + ", child=" + child + ", this=" + this + ", "
+                            + "status=Measured, mTotalLength=" + mTotalLength
+                            + ", totalWeight=" + totalWeight);
                 }
             }
 
@@ -1146,7 +1314,22 @@ public class LinearLayout extends ViewGroup {
                         matchHeightLocally ? margin : childHeight);
             }
 
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass1: " + i
+                        + ", child=" + child + ", this=" + this + ", " + "maxHeight=" + maxHeight
+                        + ", matchHeightLocally=" + matchHeightLocally + ", "
+                        + "weightedMaxHeight=" + weightedMaxHeight
+                        + ", alternativeMaxHeight=" + alternativeMaxHeight);
+            }
             i += getChildrenSkipCount(child, i);
+        }
+
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.1, this=" + this
+                    + ", maxHeight = " + maxHeight + ", "
+                    + "weightedMaxHeight = " + weightedMaxHeight
+                    + ", alternativeMaxHeight = " + alternativeMaxHeight + ", "
+                    + "mTotalLength=" + mTotalLength);
         }
 
         if (mTotalLength > 0 && hasDividerBeforeChildAt(count)) {
@@ -1170,6 +1353,9 @@ public class LinearLayout extends ViewGroup {
 
         if (useLargestChild &&
                 (widthMode == MeasureSpec.AT_MOST || widthMode == MeasureSpec.UNSPECIFIED)) {
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.1.5 (Horizontal), this=" + this);
+            }
             mTotalLength = 0;
 
             for (int i = 0; i < count; ++i) {
@@ -1196,6 +1382,12 @@ public class LinearLayout extends ViewGroup {
                             lp.leftMargin + lp.rightMargin + getNextLocationOffset(child));
                 }
             }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.1.5, this=" + this
+                        + ", largestChildWidth=" + largestChildWidth
+                        + ", mTotalLength=" + mTotalLength);
+            }
         }
 
         // Add in our padding
@@ -1214,6 +1406,11 @@ public class LinearLayout extends ViewGroup {
         // shrink them if they extend beyond our current bounds. If we skipped
         // measurement on any children, we need to measure them now.
         int delta = widthSize - mTotalLength;
+        if (sDebugLayout) {
+            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.2 (Horizontal), this=" + this
+                    + ", delta = " + delta + ", " + "widthSize = " + widthSize
+                    + ", mTotalLength = " + mTotalLength);
+        }
         if (skippedMeasure || delta != 0 && totalWeight > 0.0f) {
             float weightSum = mWeightSum > 0.0f ? mWeightSum : totalWeight;
 
@@ -1230,6 +1427,11 @@ public class LinearLayout extends ViewGroup {
                     continue;
                 }
                 
+                if (sDebugLayout) {
+                    Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Child in Pass2: " + i
+                            + ", child=" + child + ", this=" + this);
+                }
+
                 final LinearLayout.LayoutParams lp =
                         (LinearLayout.LayoutParams) child.getLayoutParams();
 
@@ -1258,16 +1460,38 @@ public class LinearLayout extends ViewGroup {
                         child.measure(
                             MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
                             childHeightMeasureSpec);
+
+                        if (sDebugLayout) {
+                            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-1-1: " + i
+                                    + ", child=" + child + ", this=" + this + ", "
+                                    + "status=Measured, share=" + share
+                                    + ", childWidth=" + childWidth
+                                    + ", mTotalLength=" + mTotalLength);
+                        }
                     } else {
                         // child was skipped in the loop above. Measure for this first time here
                         child.measure(MeasureSpec.makeMeasureSpec(
                                 share > 0 ? share : 0, MeasureSpec.EXACTLY),
                                 childHeightMeasureSpec);
+
+                        if (sDebugLayout) {
+                            Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] -, Child in Pass2-1-2: " + i
+                                    + ", child=" + child + ", this=" + this + ", "
+                                    + "status=Measured, share=" + share
+                                    + ", mTotalLength=" + mTotalLength);
+                        }
                     }
 
                     // Child may now not fit in horizontal dimension.
                     childState = combineMeasuredStates(childState,
                             child.getMeasuredState() & MEASURED_STATE_MASK);
+                } else {
+                    if (sDebugLayout) {
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-1-3: " + i
+                                + ", child=" + child + ", this=" + this + ", "
+                                + "childExtra=" + childExtra
+                                + ", mTotalLength=" + mTotalLength);
+                    }
                 }
 
                 if (isExactly) {
@@ -1308,6 +1532,14 @@ public class LinearLayout extends ViewGroup {
 
             // Add in our padding
             mTotalLength += mPaddingLeft + mPaddingRight;
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.2-1, this=" + this + ", "
+                        + "maxHeight=" + maxHeight + ", weightedMaxHeight=" + weightedMaxHeight
+                        + ", alternativeMaxHeight=" + alternativeMaxHeight + ", "
+                        + "delta=" + delta + ", mTotalLength=" + mTotalLength);
+
+            }
             // TODO: Should we update widthSize with the new total length?
 
             // Check mMaxAscent[INDEX_TOP] first because it maps to Gravity.TOP,
@@ -1347,7 +1579,22 @@ public class LinearLayout extends ViewGroup {
                                 MeasureSpec.makeMeasureSpec(child.getMeasuredHeight(),
                                         MeasureSpec.EXACTLY));
                     }
+
+                    if (sDebugLayout) {
+                        String measureString = (childExtra > 0)
+                                ? "status=Measured" : "status=Skipped";
+                        Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Child in Pass2-2: " + i
+                                + ", child=" + child + ", this=" + this + ", " + measureString);
+                    }
                 }
+                }
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.2-2, this=" + this + ", "
+                        + "maxHeight=" + maxHeight + ", weightedMaxHeight=" + weightedMaxHeight
+                        + ", alternativeMaxHeight=" + alternativeMaxHeight + ", "
+                        + "delta=" + delta + ", mTotalLength=" + mTotalLength
+                        + ", useLargestChild=" + useLargestChild);
             }
         }
 
@@ -1365,7 +1612,16 @@ public class LinearLayout extends ViewGroup {
                         (childState<<MEASURED_HEIGHT_STATE_SHIFT)));
 
         if (matchHeight) {
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] + Pass.3 (Horizontal), this=" + this
+                        + ", uniformHeight=" + getMeasuredHeight());
+            }
+
             forceUniformHeight(count, widthMeasureSpec);
+
+            if (sDebugLayout) {
+                Xlog.d(DEBUG_LOG_TAG, "[LinearLayout] - Pass.3, this=" + this);
+            }
         }
     }
 
@@ -1923,8 +2179,20 @@ public class LinearLayout extends ViewGroup {
 
         @Override
         public String debug(String output) {
-            return output + "LinearLayout.LayoutParams={width=" + sizeToString(width) +
-                    ", height=" + sizeToString(height) + " weight=" + weight +  "}";
+            return output + "LinearLayout.LayoutParams={ width=" + sizeToString(width)
+                    + ", height=" + sizeToString(height) + ", leftMargin=" + leftMargin
+                    + ", rightMargin=" + rightMargin + ", topMargin=" + topMargin
+                    + ", bottomMargin=" + bottomMargin + ", weight=" + weight
+                    + ((gravity != -1) ? (", gravity=" + Integer.toHexString(gravity)) : "")
+                    + " }";
         }
     }
+
+    /*
+     * M: Initialize layout debugging.
+     */
+    private void initLinearLayout() {
+        sDebugLayout = SystemProperties.getBoolean(DEBUG_LAYOUT_PROPERTY, false);
+    }
+
 }

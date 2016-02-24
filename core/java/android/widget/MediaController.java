@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,33 +75,115 @@ import java.util.Locale;
  * </ul>
  */
 public class MediaController extends FrameLayout {
+    /**
+     * @hide
+     */
+    protected MediaPlayerControl  mPlayer;
+    /**
+     * @hide
+     */
+    protected Context             mContext;
+    /**
+     * @hide
+     */
+    protected View                mAnchor;
+    /**
+     * @hide
+     */
+    protected View                mRoot;
+    /**
+     * @hide
+     */
+    protected WindowManager       mWindowManager;
+    /**
+     * @hide
+     */
+    protected Window              mWindow;
+    /**
+     * @hide
+     */
+    protected View                mDecor;
+    /**
+     * @hide
+     */
+    protected WindowManager.LayoutParams mDecorLayoutParams;
+    /**
+     * @hide
+     */
+    protected ProgressBar         mProgress;
+    /**
+     * @hide
+     */
+    protected TextView            mEndTime, mCurrentTime;
+    /**
+     * @hide
+     */
+    protected boolean             mShowing;
+    /**
+     * @hide
+     */
+    protected boolean             mDragging;
+    /**
+     * @hide
+     */
+    protected static final int    sDefaultTimeout = 3000;
+    /**
+     * @hide
+     */
+    protected static final int    FADE_OUT = 1;
+    /**
+     * @hide
+     */
+    protected static final int    SHOW_PROGRESS = 2;
+    /**
+     * @hide
+     */
+    protected boolean             mUseFastForward;
+    /**
+     * @hide
+     */
+    protected boolean             mFromXml;
+    /**
+     * @hide
+     */
+    protected boolean             mListenersSet;
+    /**
+     * @hide
+     */
+    protected View.OnClickListener mNextListener, mPrevListener;
+    /**
+     * @hide
+     */
+    protected StringBuilder               mFormatBuilder;
+    /**
+     * @hide
+     */
+    protected Formatter                   mFormatter;
+    /**
+     * @hide
+     */
+    protected ImageButton         mPauseButton;
+    /**
+     * @hide
+     */
+    protected ImageButton         mFfwdButton;
+    /**
+     * @hide
+     */
+    protected ImageButton         mRewButton;
+    /**
+     * @hide
+     */
+    protected ImageButton         mNextButton;
+    /**
+     * @hide
+     */
+    protected ImageButton         mPrevButton;
+    /**
+     * @hide
+     */
+    protected long                duration;
 
-    private MediaPlayerControl mPlayer;
-    private Context mContext;
-    private View mAnchor;
-    private View mRoot;
-    private WindowManager mWindowManager;
-    private Window mWindow;
-    private View mDecor;
-    private WindowManager.LayoutParams mDecorLayoutParams;
-    private ProgressBar mProgress;
-    private TextView mEndTime, mCurrentTime;
-    private boolean mShowing;
-    private boolean mDragging;
-    private static final int sDefaultTimeout = 3000;
-    private static final int FADE_OUT = 1;
-    private static final int SHOW_PROGRESS = 2;
-    private boolean mUseFastForward;
-    private boolean mFromXml;
-    private boolean mListenersSet;
-    private View.OnClickListener mNextListener, mPrevListener;
-    StringBuilder mFormatBuilder;
-    Formatter mFormatter;
-    private ImageButton mPauseButton;
-    private ImageButton mFfwdButton;
-    private ImageButton mRewButton;
-    private ImageButton mNextButton;
-    private ImageButton mPrevButton;
     private CharSequence mPlayDescription;
     private CharSequence mPauseDescription;
 
@@ -172,13 +259,20 @@ public class MediaController extends FrameLayout {
 
         // we need to know the size of the controller so we can properly position it
         // within its space
-        mDecor.measure(MeasureSpec.makeMeasureSpec(mAnchor.getWidth(), MeasureSpec.AT_MOST),
-                MeasureSpec.makeMeasureSpec(mAnchor.getHeight(), MeasureSpec.AT_MOST));
+        /// M: fix nullpointer from xml @{
+        if (mDecor != null) {
+            mDecor.measure(MeasureSpec.makeMeasureSpec(mAnchor.getWidth(), MeasureSpec.AT_MOST),
+                    MeasureSpec.makeMeasureSpec(mAnchor.getHeight(), MeasureSpec.AT_MOST));
+        }
 
         WindowManager.LayoutParams p = mDecorLayoutParams;
-        p.width = mAnchor.getWidth();
-        p.x = anchorPos[0] + (mAnchor.getWidth() - p.width) / 2;
-        p.y = anchorPos[1] + mAnchor.getHeight() - mDecor.getMeasuredHeight();
+        if (p != null) {
+            p.width = mAnchor.getWidth();
+            p.x = anchorPos[0] + (mAnchor.getWidth() - p.width) / 2;
+            p.y = anchorPos[1] + mAnchor.getHeight()
+                    - ((mDecor != null) ? mDecor.getMeasuredHeight() : 0);
+        }
+        /// @}
     }
 
     // This is called whenever mAnchor's layout bound changes
@@ -194,7 +288,10 @@ public class MediaController extends FrameLayout {
         }
     };
 
-    private OnTouchListener mTouchListener = new OnTouchListener() {
+    /**
+     * @hide
+     */
+    protected OnTouchListener mTouchListener = new OnTouchListener() {
         public boolean onTouch(View v, MotionEvent event) {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 if (mShowing) {
@@ -251,12 +348,18 @@ public class MediaController extends FrameLayout {
         return mRoot;
     }
 
-    private void initControllerView(View v) {
+
+    /**
+     * @hide
+     */
+    protected void initControllerView(View v) {
         Resources res = mContext.getResources();
         mPlayDescription = res
                 .getText(com.android.internal.R.string.lockscreen_transport_play_description);
         mPauseDescription = res
                 .getText(com.android.internal.R.string.lockscreen_transport_pause_description);
+
+
         mPauseButton = (ImageButton) v.findViewById(com.android.internal.R.id.pause);
         if (mPauseButton != null) {
             mPauseButton.requestFocus();
@@ -317,8 +420,9 @@ public class MediaController extends FrameLayout {
     /**
      * Disable pause or seek buttons if the stream cannot be paused or seeked.
      * This requires the control interface to be a MediaPlayerControlExt
+     * @hide
      */
-    private void disableUnsupportedButtons() {
+    protected void disableUnsupportedButtons() {
         try {
             if (mPauseButton != null && !mPlayer.canPause()) {
                 mPauseButton.setEnabled(false);
@@ -389,8 +493,10 @@ public class MediaController extends FrameLayout {
             mShowing = false;
         }
     }
-
-    private Handler mHandler = new Handler() {
+    /**
+     * @hide
+     */
+    protected Handler mHandler = new Handler() {
         @Override
         public void handleMessage(Message msg) {
             int pos;
@@ -408,8 +514,10 @@ public class MediaController extends FrameLayout {
             }
         }
     };
-
-    private String stringForTime(int timeMs) {
+    /**
+     * @hide
+     */
+    protected String stringForTime(int timeMs) {
         int totalSeconds = timeMs / 1000;
 
         int seconds = totalSeconds % 60;
@@ -423,8 +531,10 @@ public class MediaController extends FrameLayout {
             return mFormatter.format("%02d:%02d", minutes, seconds).toString();
         }
     }
-
-    private int setProgress() {
+    /**
+     * @hide
+     */
+    protected int setProgress() {
         if (mPlayer == null || mDragging) {
             return 0;
         }
@@ -519,15 +629,19 @@ public class MediaController extends FrameLayout {
         show(sDefaultTimeout);
         return super.dispatchKeyEvent(event);
     }
-
-    private View.OnClickListener mPauseListener = new View.OnClickListener() {
+    /**
+     * @hide
+     */
+    protected View.OnClickListener mPauseListener = new View.OnClickListener() {
         public void onClick(View v) {
             doPauseResume();
             show(sDefaultTimeout);
         }
     };
-
-    private void updatePausePlay() {
+    /**
+     * @hide
+     */
+    protected void updatePausePlay() {
         if (mRoot == null || mPauseButton == null)
             return;
 
@@ -539,8 +653,10 @@ public class MediaController extends FrameLayout {
             mPauseButton.setContentDescription(mPlayDescription);
         }
     }
-
-    private void doPauseResume() {
+    /**
+     * @hide
+     */
+    protected void doPauseResume() {
         if (mPlayer.isPlaying()) {
             mPlayer.pause();
         } else {
@@ -560,7 +676,10 @@ public class MediaController extends FrameLayout {
     // The second scenario involves the user operating the scroll ball, in this
     // case there WON'T BE onStartTrackingTouch/onStopTrackingTouch notifications,
     // we will simply apply the updated position without suspending regular updates.
-    private OnSeekBarChangeListener mSeekListener = new OnSeekBarChangeListener() {
+    /**
+     * @hide
+     */
+    protected OnSeekBarChangeListener mSeekListener = new OnSeekBarChangeListener() {
         public void onStartTrackingTouch(SeekBar bar) {
             show(3600000);
 
@@ -658,8 +777,10 @@ public class MediaController extends FrameLayout {
             show(sDefaultTimeout);
         }
     };
-
-    private void installPrevNextListeners() {
+    /**
+     * @hide
+     */
+    protected void installPrevNextListeners() {
         if (mNextButton != null) {
             mNextButton.setOnClickListener(mNextListener);
             mNextButton.setEnabled(mNextListener != null);

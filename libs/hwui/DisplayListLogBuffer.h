@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +26,13 @@
 
 #include <stdio.h>
 
+/// M: performance index enhancements
+#include <utils/KeyedVector.h>
+
 namespace android {
 namespace uirenderer {
+
+class OpenGLRenderer;
 
 class DisplayListLogBuffer: public Singleton<DisplayListLogBuffer> {
     DisplayListLogBuffer();
@@ -41,7 +51,38 @@ public:
     struct OpLog {
         int level;
         const char* label;
+        nsecs_t start;
+        nsecs_t end;
     };
+
+    /// M: performance index enhancements
+    struct OpEntry {
+        const char* mName;
+        int mCount;
+        nsecs_t mMaxDuration;
+        nsecs_t mTotalDuration;
+        nsecs_t mLastDuration;
+
+        OpEntry():
+           mName(NULL), mCount(0), mMaxDuration(0), mTotalDuration(0), mLastDuration(0) {
+        }
+
+        OpEntry(const char* name, int count, nsecs_t duration):
+           mName(name), mCount(count), mMaxDuration(duration), mTotalDuration(duration), mLastDuration(duration) {
+        }
+        ~OpEntry(){}
+    };
+
+    /// M: Write before/after a command to log it's executing time,
+    /// it's helpful to find who is running and to check ANR
+    OpLog* writeCommandStart(int level, const char* label);
+    nsecs_t writeCommandEnd(OpLog* op);
+    bool checkIsAllFinished(const char* command, int timeoutNs = 0);
+    void preFlush();
+    void postFlush();
+
+    /// M: ops may use current renderer to output more info
+    OpenGLRenderer* currentRenderer;
 
 private:
     OpLog* mBufferFirst; // where the memory starts
@@ -49,6 +90,14 @@ private:
     OpLog* mEnd;         // where the current commands end
     OpLog* mBufferLast;  // where the buffer memory ends
 
+    /// M: performance index enhancements
+    void outputCommandsInternal(FILE *file = NULL);
+
+    KeyedVector<const char*, OpEntry> mOpBuffer;
+    KeyedVector<const char*, OpEntry> mOpBufferPerFrame;
+    bool mIsLogCommands;
+    nsecs_t mLastCheckTime;
+    Mutex mLock;
 };
 
 }; // namespace uirenderer

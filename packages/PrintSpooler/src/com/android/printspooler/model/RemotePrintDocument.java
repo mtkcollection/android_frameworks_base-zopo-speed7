@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,7 +60,7 @@ import java.util.Arrays;
 public final class RemotePrintDocument {
     private static final String LOG_TAG = "RemotePrintDocument";
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
 
     private static final int STATE_INITIAL = 0;
     private static final int STATE_STARTED = 1;
@@ -66,6 +71,9 @@ public final class RemotePrintDocument {
     private static final int STATE_CANCELING = 6;
     private static final int STATE_CANCELED = 7;
     private static final int STATE_DESTROYED = 8;
+    ///M: Add variable indicates print app has died. @{
+    private boolean isPrintAppDied = false;
+    ///M: @}
 
     private final Context mContext;
 
@@ -82,6 +90,11 @@ public final class RemotePrintDocument {
             new CommandDoneCallback() {
         @Override
         public void onDone() {
+          ///M: Do nothing when there is no current command @{
+          if (mCurrentCommand == null) {
+            return;
+          }
+          ///M: @}
             if (mCurrentCommand.isCompleted()) {
                 if (mCurrentCommand instanceof LayoutCommand) {
                     // If there is a next command after a layout is done, then another
@@ -118,6 +131,9 @@ public final class RemotePrintDocument {
                 }
                 runPendingCommand();
             } else if (mCurrentCommand.isFailed()) {
+                ///M: @{
+                Log.e(LOG_TAG, "Command is Failed");
+                ///M: @}
                 mState = STATE_FAILED;
                 CharSequence error = mCurrentCommand.getError();
                 mCurrentCommand = null;
@@ -167,12 +183,25 @@ public final class RemotePrintDocument {
         mDocumentInfo.fileProvider = fileProvider;
         mUpdateCallbacks = callbacks;
         connectToRemoteDocument();
+
+        ///M: @{
+        mState = STATE_INITIAL;
+        isPrintAppDied = false;
+        ///M: @}
     }
 
     public void start() {
         if (DEBUG) {
             Log.i(LOG_TAG, "[CALLED] start()");
         }
+
+        ///M: In case print app has died, just return and wait for finalization. @{
+        if (mState == STATE_FAILED && isPrintAppDied) {
+            Log.w(LOG_TAG, "Do not start due to print app has died");
+            return;
+        }
+        ///M: @}
+
         if (mState != STATE_INITIAL) {
             throw new IllegalStateException("Cannot start in state:" + stateToString(mState));
         }
@@ -258,6 +287,11 @@ public final class RemotePrintDocument {
         if (DEBUG) {
             Log.i(LOG_TAG, "[CALLED] finish()");
         }
+
+        if (isUpdating()) {
+            cancel();
+        }
+
         if (mState != STATE_STARTED && mState != STATE_UPDATED
                 && mState != STATE_FAILED && mState != STATE_CANCELING
                 && mState != STATE_CANCELED) {
@@ -288,7 +322,9 @@ public final class RemotePrintDocument {
 
         mState = STATE_CANCELING;
 
-        mCurrentCommand.cancel();
+        ///M: Protect command @{
+        releaseCommand(true);
+        ///M: @}
     }
 
     public void destroy() {
@@ -300,6 +336,10 @@ public final class RemotePrintDocument {
         }
 
         mState = STATE_DESTROYED;
+
+        ///M: @{
+        releaseCommand(false);
+        ///M: @}
 
         disconnectFromRemoteDocument();
     }
@@ -397,7 +437,12 @@ public final class RemotePrintDocument {
             mPrintDocumentAdapter.asBinder().linkToDeath(mDeathRecipient, 0);
         } catch (RemoteException re) {
             Log.w(LOG_TAG, "The printing process is dead.");
-            destroy();
+            ///M: No need to destroy here, since later binder death recipient will
+            //      be posted to main thread, and later main thread will ask
+            //      <code>RemotePrintDocument</code> to finalize itself.
+            //      Destroy ahead of time will cause some curious scenarios @{
+            //destroy();
+            ///M: @}
             return;
         }
 
@@ -405,7 +450,12 @@ public final class RemotePrintDocument {
             mPrintDocumentAdapter.setObserver(new PrintDocumentAdapterObserver(this));
         } catch (RemoteException re) {
             Log.w(LOG_TAG, "Error setting observer to the print adapter.");
-            destroy();
+            ///M: No need to destroy here, since later binder death recipient will
+            //      be posted to main thread, and later main thread will ask
+            //      <code>RemotePrintDocument</code> to finalize itself.
+            //      Destroy ahead of time will cause some curious scenarios @{
+            //destroy();
+            ///M: @}
         }
     }
 
@@ -445,6 +495,32 @@ public final class RemotePrintDocument {
             mState = STATE_UPDATED;
         }
     }
+
+    ///M:
+    // 1. Protect empty command
+    // 2. Set call back as null, thus <code>onLayoutFailed</code> and
+    //     <code>onWriteFailed</code> can be noticed once <code>RemotePrintDucoment</code>
+    //     has been destroyed @{
+    private void releaseCommand(boolean isCancelCommand) {
+
+        if (mCurrentCommand != null) {
+          ///M: Once this command has been cancelled, no need to cancel again
+          if (isCancelCommand) {
+              mCurrentCommand.cancel();
+          }
+
+          if (mCurrentCommand instanceof LayoutCommand) {
+            ((LayoutCommand) mCurrentCommand).mRemoteResultCallback = null;
+            Log.w(LOG_TAG, "CB for current layout command has been cleared");
+            }
+
+            if (mCurrentCommand instanceof WriteCommand) {
+              ((WriteCommand) mCurrentCommand).mRemoteResultCallback = null;
+              Log.w(LOG_TAG, "CB for current write command has been cleared");
+            }
+        }
+    }
+    ///M: @}
 
     private static String stateToString(int state) {
         switch (state) {
@@ -581,7 +657,7 @@ public final class RemotePrintDocument {
 
         protected final void canceled() {
             if (mState != STATE_CANCELING) {
-                throw new IllegalStateException("Not canceling.");
+                throw new IllegalStateException("Not canceling in state:" + stateToString(mState));
             }
             mState = STATE_CANCELED;
         }
@@ -602,8 +678,12 @@ public final class RemotePrintDocument {
         }
 
         protected final void completed() {
-            if (mState != STATE_RUNNING && mState != STATE_CANCELING) {
-                throw new IllegalStateException("Not running.");
+          ///M: In case user has cancelled this print before callback @{
+            if (mState != STATE_RUNNING
+                && mState != STATE_CANCELING
+                && mState != STATE_CANCELED) {
+                throw new IllegalStateException("Not running with illegal state: " + mState);
+            ///M: @}
             }
             mState = STATE_COMPLETED;
         }
@@ -616,6 +696,7 @@ public final class RemotePrintDocument {
             if (mState != STATE_RUNNING) {
                 throw new IllegalStateException("Not running.");
             }
+
             mState = STATE_FAILED;
 
             mError = error;
@@ -635,7 +716,10 @@ public final class RemotePrintDocument {
         private final PrintAttributes mNewAttributes = new PrintAttributes.Builder().build();
         private final Bundle mMetadata = new Bundle();
 
-        private final ILayoutResultCallback mRemoteResultCallback;
+        ///M: It should never be <code>final</code>, since <code>PrintManager</code>
+        //      needs to check it`s null or not @{
+        private ILayoutResultCallback mRemoteResultCallback = null;
+        ///M: @}
 
         private final Handler mHandler;
 
@@ -727,6 +811,13 @@ public final class RemotePrintDocument {
             if (sequence != mSequence) {
                 return;
             }
+
+            ///M: Maybe user has chosen to cancel print,
+            //      nothing should be done @{
+            if (isCanceling() || isCanceled()) {
+              return;
+            }
+            ///M: @}
 
             if (DEBUG) {
                 Log.i(LOG_TAG, "[CALLBACK] onLayoutFailed");
@@ -869,11 +960,17 @@ public final class RemotePrintDocument {
         private final PageRange[] mPages;
         private final MutexFileProvider mFileProvider;
 
-        private final IWriteResultCallback mRemoteResultCallback;
+        ///M: It should never be <code>final</code>, since <code>PrintManager</code>
+        //      needs to check it`s null or not @{
+        private IWriteResultCallback mRemoteResultCallback;
+        ///M: @}
         private final CommandDoneCallback mDoneCallback;
 
         private final Context mContext;
         private final Handler mHandler;
+        ///M: @{
+        private boolean isAbortedByIOException = false;
+        ///M: @}
 
         public WriteCommand(Context context, Looper looper, IPrintDocumentAdapter adapter,
                 RemotePrintDocumentInfo document, int pageCount, PageRange[] pages,
@@ -904,6 +1001,9 @@ public final class RemotePrintDocument {
                     OutputStream out = null;
                     ParcelFileDescriptor source = null;
                     ParcelFileDescriptor sink = null;
+                    ///M: @{
+                    isAbortedByIOException = false;
+                    ///M: @}
                     try {
                         file = mFileProvider.acquireFile(null);
                         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
@@ -932,8 +1032,16 @@ public final class RemotePrintDocument {
                             }
                             out.write(buffer, 0, readByteCount);
                         }
-                    } catch (RemoteException | IOException e) {
+                    ///M: [Workaround] The original design has not taken
+                    //      disk full into consideration, there is risk when
+                    //      disk full and IOException reported, this should never
+                    //      be error, it`s just normal situation. @{
+                    } catch (RemoteException e) {
                         Log.e(LOG_TAG, "Error calling write()", e);
+                    } catch (IOException e) {
+                        Log.e(LOG_TAG, "Error calling write()", e);
+                        isAbortedByIOException = true;
+                    ///M: @}
                     } finally {
                         IoUtils.closeQuietly(in);
                         IoUtils.closeQuietly(out);
@@ -978,6 +1086,13 @@ public final class RemotePrintDocument {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteFinished");
             }
 
+            ///M: Check if command is aborted by full disk @{
+            if (isAbortedByIOException) {
+                handleOnWriteFailed(null, sequence);
+                return;
+            }
+            ///M: @}
+
             PageRange[] writtenPages = PageRangeUtils.normalize(pages);
             PageRange[] printedPages = PageRangeUtils.computePrintedPages(
                     mPages, writtenPages, mPageCount);
@@ -990,7 +1105,11 @@ public final class RemotePrintDocument {
             } else {
                 mDocument.writtenPages = null;
                 mDocument.printedPages = null;
-                failed(mContext.getString(R.string.print_error_default_message));
+                ///M: If it`s cancelled or cancelling, no need to mark failure here @{
+                if  (!isCanceling() && !isCanceled()) {
+                    failed(mContext.getString(R.string.print_error_default_message));
+                }
+                ///M: @}
             }
 
             // Release the remote cancellation interface.
@@ -1008,6 +1127,13 @@ public final class RemotePrintDocument {
             if (DEBUG) {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteFailed");
             }
+
+            ///M: User has chosen to cancel print,
+            //      nothing should be done @{
+            if (isCanceling() || isCanceled()) {
+              return;
+            }
+            ///M: @}
 
             failed(error);
 
@@ -1121,6 +1247,10 @@ public final class RemotePrintDocument {
     }
 
     private void onPrintingAppDied() {
+        ///M: @{
+        Log.e(LOG_TAG, "Print APP died");
+        isPrintAppDied = true;
+        ///M: @}
         mState = STATE_FAILED;
         new Handler(mLooper).post(new Runnable() {
             @Override

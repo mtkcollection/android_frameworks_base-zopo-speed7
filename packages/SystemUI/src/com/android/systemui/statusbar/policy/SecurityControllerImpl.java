@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -190,6 +195,14 @@ public class SecurityControllerImpl implements SecurityController {
             NetworkCapabilities networkCapabilities =
                     mConnectivityManager.getNetworkCapabilities(network);
             if (DEBUG) Log.d(TAG, "onAvailable " + network.netId + " : " + networkCapabilities);
+
+            //M: Bug fix - ALPS01766454 @{
+            if (networkCapabilities == null) {
+                Log.e(TAG, "The connection could be disconnected:" + network);
+                return;
+            }
+            // }@
+
             if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
                 setCurrentNetid(network.netId);
             }

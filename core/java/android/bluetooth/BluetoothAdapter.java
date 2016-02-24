@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009-2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,7 +93,7 @@ import java.util.UUID;
 public final class BluetoothAdapter {
     private static final String TAG = "BluetoothAdapter";
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
 
     /**
      * Sentinel error value for this class. Guaranteed to not equal any other
@@ -501,7 +506,7 @@ public final class BluetoothAdapter {
      * @return true if the local adapter is turned on
      */
     public boolean isEnabled() {
-
+        if (DBG) Log.d(TAG, "isEnabled");
         try {
             synchronized(mManagerCallback) {
                 if (mService != null) return mService.isEnabled();
@@ -571,6 +576,7 @@ public final class BluetoothAdapter {
             return true;
         }
         try {
+            if (DBG) Log.d(TAG, "enable");
             return mManagerService.enable();
         } catch (RemoteException e) {Log.e(TAG, "", e);}
         return false;
@@ -602,6 +608,7 @@ public final class BluetoothAdapter {
      */
     public boolean disable() {
         try {
+            if (DBG) Log.d(TAG, "disable");
             return mManagerService.disable(true);
         } catch (RemoteException e) {Log.e(TAG, "", e);}
         return false;
@@ -618,8 +625,8 @@ public final class BluetoothAdapter {
      * @hide
      */
     public boolean disable(boolean persist) {
-
         try {
+            if (DBG) Log.d(TAG, "disable: persist = " + persist);
             return mManagerService.disable(persist);
         } catch (RemoteException e) {Log.e(TAG, "", e);}
         return false;
@@ -633,6 +640,7 @@ public final class BluetoothAdapter {
      * @return Bluetooth hardware address as string
      */
     public String getAddress() {
+        if (DBG) Log.d(TAG, "getAddress");
         try {
             return mManagerService.getAddress();
         } catch (RemoteException e) {Log.e(TAG, "", e);}
@@ -647,6 +655,7 @@ public final class BluetoothAdapter {
      * @return the Bluetooth name, or null on error
      */
     public String getName() {
+        if (DBG) Log.d(TAG, "getName");
         try {
             return mManagerService.getName();
         } catch (RemoteException e) {Log.e(TAG, "", e);}
@@ -681,6 +690,7 @@ public final class BluetoothAdapter {
      * @hide
      */
     public ParcelUuid[] getUuids() {
+        if (DBG) Log.d(TAG, "getUuids");
         if (getState() != STATE_ON) return null;
         try {
             synchronized(mManagerCallback) {
@@ -706,6 +716,7 @@ public final class BluetoothAdapter {
      * @return     true if the name was set, false otherwise
      */
     public boolean setName(String name) {
+        if (DBG) Log.d(TAG, "setName: name = " + name);
         if (getState() != STATE_ON) return false;
         try {
             synchronized(mManagerCallback) {
@@ -732,6 +743,7 @@ public final class BluetoothAdapter {
      * @return scan mode
      */
     public int getScanMode() {
+        if (DBG) Log.d(TAG, "getScanMode");
         if (getState() != STATE_ON) return SCAN_MODE_NONE;
         try {
             synchronized(mManagerCallback) {
@@ -770,6 +782,7 @@ public final class BluetoothAdapter {
      * @hide
      */
     public boolean setScanMode(int mode, int duration) {
+        if (DBG) Log.d(TAG, "setScanMode: mode = " + mode + ", duration = " + duration);
         if (getState() != STATE_ON) return false;
         try {
             synchronized(mManagerCallback) {
@@ -781,6 +794,7 @@ public final class BluetoothAdapter {
 
     /** @hide */
     public boolean setScanMode(int mode) {
+        if (DBG) Log.d(TAG, "setScanMode: mode = " + mode + ", getDiscoverableTimeout() = " + getDiscoverableTimeout());
         if (getState() != STATE_ON) return false;
         /* getDiscoverableTimeout() to use the latest from NV than use 0 */
         return setScanMode(mode, getDiscoverableTimeout());
@@ -788,6 +802,7 @@ public final class BluetoothAdapter {
 
     /** @hide */
     public int getDiscoverableTimeout() {
+        if (DBG) Log.d(TAG, "getDiscoverableTimeout");
         if (getState() != STATE_ON) return -1;
         try {
             synchronized(mManagerCallback) {
@@ -799,6 +814,7 @@ public final class BluetoothAdapter {
 
     /** @hide */
     public void setDiscoverableTimeout(int timeout) {
+        if (DBG) Log.d(TAG, "setDiscoverableTimeout: timeout = " + timeout);
         if (getState() != STATE_ON) return;
         try {
             synchronized(mManagerCallback) {
@@ -838,6 +854,7 @@ public final class BluetoothAdapter {
      * @return true on success, false on error
      */
     public boolean startDiscovery() {
+        if (DBG) Log.d(TAG, "startDiscovery");
         if (getState() != STATE_ON) return false;
         try {
             synchronized(mManagerCallback) {
@@ -865,6 +882,7 @@ public final class BluetoothAdapter {
      * @return true on success, false on error
      */
     public boolean cancelDiscovery() {
+        if (DBG) Log.d(TAG, "cancelDiscovery");
         if (getState() != STATE_ON) return false;
         try {
             synchronized(mManagerCallback) {
@@ -894,6 +912,7 @@ public final class BluetoothAdapter {
      * @return true if discovering
      */
     public boolean isDiscovering() {
+        if (DBG) Log.d(TAG, "isDiscovering");
         if (getState() != STATE_ON) return false;
         try {
             synchronized(mManagerCallback) {
@@ -1447,6 +1466,7 @@ public final class BluetoothAdapter {
                 if (VDBG) Log.d(TAG, "onBluetoothServiceDown: " + mService);
                 synchronized (mManagerCallback) {
                     mService = null;
+                    /// M: ALPS01774610: Google issue caused by L new feature
                     if (mLeScanClients != null) mLeScanClients.clear();
                     if (sBluetoothLeAdvertiser != null) sBluetoothLeAdvertiser.cleanup();
                     if (sBluetoothLeScanner != null) sBluetoothLeScanner.cleanup();
@@ -1476,6 +1496,7 @@ public final class BluetoothAdapter {
             return true;
         }
         try {
+            if (DBG) Log.d(TAG, "enableNoAutoConnect");
             return mManagerService.enableNoAutoConnect();
         } catch (RemoteException e) {Log.e(TAG, "", e);}
         return false;

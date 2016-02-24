@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,11 @@ package android.os;
 
 import android.util.Log;
 import android.util.Printer;
+
+import dalvik.system.VMDebug; /// M: ALPS00297986
+/// M: MSG Logger Manager @{
+/// MSG Logger Manager @}
+
 
 /**
   * Class used to run a message loop for a thread.  Threads by default do
@@ -60,6 +70,10 @@ public final class Looper {
     final Thread mThread;
 
     private Printer mLogging;
+    /// M: MSG Logger Manager @{
+    private Printer mMsgMonitorLogging;
+    private static final boolean IS_USER_BUILD = "user".equals(Build.TYPE) || "userdebug".equals(Build.TYPE);
+    /// MSG Logger Manager @}
 
      /** Initialize the current thread as a looper.
       * This gives you a chance to create handlers that then reference
@@ -76,6 +90,21 @@ public final class Looper {
             throw new RuntimeException("Only one Looper may be created per thread");
         }
         sThreadLocal.set(new Looper(quitAllowed));
+
+        /// M: ALPS00297986
+        if (!IS_USER_BUILD) {
+            long instances = VMDebug.countInstancesOfClass(Looper.class, false);
+
+            // check if the looper instance over a limit, it should has some leakage.
+            if (100 < instances) {
+                Log.e(TAG, "WARNING: The Looper class instance count has over a limit(100). There should be some leakage of Looper or HandlerThread.");
+                Log.e(TAG, "Looper class instance count = " + instances);
+                Log.e(TAG, "Current Thread Name: " + Thread.currentThread().getName());
+                Thread.currentThread().getThreadGroup().list();
+                Thread.currentThread().dumpStack();
+            } //if
+        }
+        /// M: ALPS00297986
     }
 
     /**
@@ -132,12 +161,58 @@ public final class Looper {
                         msg.callback + ": " + msg.what);
             }
 
+            /// M: MSG Logger Manager @{
+            if (!IS_USER_BUILD) {
+                Printer msglogging = me.mMsgMonitorLogging;
+                if (msglogging != null) {
+                    msglogging.println(">>>>> Dispatching to " + msg.target + " " +
+                            msg.callback + ": " + msg.what);
+                }
+
+                if (MessageMonitorLogger.monitorMsg.containsKey(msg)) {
+                    MessageMonitorLogger.MonitorMSGInfo monitorMsg = MessageMonitorLogger.monitorMsg.get(msg);
+                    if (MessageMonitorLogger.mMsgLoggerHandler.hasMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg)) {
+                        Log.d("Looper", "RemoveMessages PENDING_TIMEOUT_MSG msg= " + msg);
+                        MessageMonitorLogger.mMsgLoggerHandler.removeMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg);
+                        try {
+                            if (monitorMsg.executionTimeout > 100) {
+                                Message msg1 = MessageMonitorLogger.mMsgLoggerHandler.obtainMessage(MessageMonitorLogger.START_MONITOR_EXECUTION_TIMEOUT_MSG, monitorMsg);
+                                MessageMonitorLogger.mMsgLoggerHandler.sendMessageDelayed(msg1, monitorMsg.executionTimeout);
+                            } else {
+                                MessageMonitorLogger.monitorMsg.remove(msg);
+                                if (monitorMsg.executionTimeout != MessageMonitorLogger.DISABLE_MONITOR_EXECUTION_TIMEOUT_MSG)
+                                    throw new IllegalArgumentException("Execution timeout <100 ms!");
+                            }
+                        } catch (IllegalArgumentException e) {
+                            Log.d(TAG, "Execution timeout exception " + e);
+                        }
+                    }
+                }
+            }
+            /// M: MSG Logger Manager @}
+
             msg.target.dispatchMessage(msg);
 
             if (logging != null) {
                 logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
             }
 
+            /// M: MSG Logger Manager @{
+            if (!IS_USER_BUILD) {
+                Printer msglogging = me.mMsgMonitorLogging;
+                if (msglogging != null) {
+                    msglogging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
+                }
+                if (MessageMonitorLogger.monitorMsg.containsKey(msg)) {
+                    MessageMonitorLogger.MonitorMSGInfo monitorMsg = MessageMonitorLogger.monitorMsg.get(msg);
+                    if (MessageMonitorLogger.mMsgLoggerHandler.hasMessages(MessageMonitorLogger.START_MONITOR_EXECUTION_TIMEOUT_MSG, monitorMsg)) {
+                        Log.d("Looper", "RemoveMessages EXECUTION_TIMEOUT msg=" + msg);
+                        MessageMonitorLogger.mMsgLoggerHandler.removeMessages(MessageMonitorLogger.START_MONITOR_EXECUTION_TIMEOUT_MSG, monitorMsg);
+                        MessageMonitorLogger.monitorMsg.remove(msg);
+                    }
+                }
+            }
+            /// MSG Logger Manager @}
             // Make sure that during the course of dispatching the
             // identity of the thread wasn't corrupted.
             final long newIdent = Binder.clearCallingIdentity();
@@ -305,4 +380,13 @@ public final class Looper {
         return "Looper (" + mThread.getName() + ", tid " + mThread.getId()
                 + ") {" + Integer.toHexString(System.identityHashCode(this)) + "}";
     }
+   /// M: MSG Logger Manager @{
+   /**
+     * @hide
+     */
+    public void setMonitorMessageLogging(Printer printer) {
+        mMsgMonitorLogging = printer;
+    }
+   /// MSG Logger Manager @}
+
 }

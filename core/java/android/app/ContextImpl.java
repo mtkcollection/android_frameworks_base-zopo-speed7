@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -120,6 +125,7 @@ import android.os.SystemVibrator;
 import android.os.UserManager;
 import android.os.storage.IMountService;
 import android.os.storage.StorageManager;
+import android.os.SystemProperties;
 import android.print.IPrintManager;
 import android.print.PrintManager;
 import android.service.fingerprint.IFingerprintService;
@@ -158,6 +164,44 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+
+/// M: Add AudioProfile service
+import com.mediatek.audioprofile.AudioProfileManager;
+///@}
+
+/// M: comment @{ add PerfService
+import com.mediatek.perfservice.IPerfServiceWrapper;
+import com.mediatek.perfservice.PerfServiceWrapper;
+/// @}
+
+/// M: Add SearchEngineManager
+import com.mediatek.search.SearchEngineManager;
+/// M: Add Mobile Manager Service @{
+import com.mediatek.common.mom.IMobileManagerService;
+import com.mediatek.common.mom.MobileManager;
+import com.mediatek.common.mom.MobileManagerUtils;
+/// @}
+
+/// M: Add SensorHubService @{
+import com.mediatek.sensorhub.ISensorHubManager;
+import com.mediatek.sensorhub.ISensorHubService;
+import com.mediatek.sensorhub.SensorHubManager;
+/// @}
+
+/// M: Add Rns Service @{
+import com.mediatek.rns.IRnsManager;
+import com.mediatek.rns.RnsManager;
+/// @}
+/* Vanzo:yinjun on: Fri, 20 Mar 2015 20:33:57 +0800
+ * add remoteir
+ */
+import com.android.featureoption.FeatureOption;
+import android.hardware.RemoteIrManager;
+// End of Vanzo: yinjun
+
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
+
 
 class ReceiverRestrictedContext extends ContextWrapper {
     ReceiverRestrictedContext(Context base) {
@@ -385,10 +429,36 @@ class ContextImpl extends Context {
                     return new AudioManager(ctx);
                 }});
 
+        /// M: Add AudioProfile service @{
+        if (SystemProperties.get("ro.mtk_audio_profiles").equals("1") == true
+                && SystemProperties.get("ro.mtk_bsp_package").equals("1") == false) {
+            registerService(AUDIO_PROFILE_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new AudioProfileManager(ctx);
+                } });
+        }
+        /// @}
+
         registerService(MEDIA_ROUTER_SERVICE, new ServiceFetcher() {
                 public Object createService(ContextImpl ctx) {
                     return new MediaRouter(ctx);
                 }});
+        /// M: Add Mobile Service @{
+        if (MobileManagerUtils.isSupported()) {
+            registerService(MOBILE_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    MobileManager mobileMgr = null;
+                    try {
+                        IBinder b = ServiceManager.getService(MOBILE_SERVICE);
+                        IMobileManagerService service = IMobileManagerService.Stub.asInterface(b);
+                        mobileMgr = new MobileManager(ctx, service);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    return mobileMgr;
+                } });
+        }
+        /// @}
 
         registerService(BLUETOOTH_SERVICE, new ServiceFetcher() {
                 public Object createService(ContextImpl ctx) {
@@ -535,6 +605,12 @@ class ContextImpl extends Context {
                             ctx.mMainThread.getHandler());
                 }});
 
+        /// M: register search engine service @{
+        registerService(SEARCH_ENGINE_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new SearchEngineManager(ctx);
+                } });
+        /// @}
         registerService(SENSOR_SERVICE, new ServiceFetcher() {
                 public Object createService(ContextImpl ctx) {
                     return new SystemSensorManager(ctx.getOuterContext(),
@@ -767,7 +843,60 @@ class ContextImpl extends Context {
             public Object createService(ContextImpl ctx) {
                 IBinder b = ServiceManager.getService(APPWIDGET_SERVICE);
                 return new AppWidgetManager(ctx, IAppWidgetService.Stub.asInterface(b));
-            }});
+        } });
+
+        /// M: comment @{ add PerfService
+        registerService(MTK_PERF_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+
+                    IPerfServiceWrapper perfServiceMgr = null;
+                    try {
+                        perfServiceMgr = new PerfServiceWrapper(ctx);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    return perfServiceMgr;
+                } });
+        /// @}
+
+        /// M: Add SensorHubService @{
+        if ("1".equals(SystemProperties.get("ro.mtk_sensorhub_support"))) {
+            registerService(ISensorHubManager.SENSORHUB_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    ISensorHubManager sensorhubMgr = null;
+                    try {
+                        IBinder b = ServiceManager.getService(ISensorHubManager.SENSORHUB_SERVICE);
+                        ISensorHubService service = ISensorHubService.Stub.asInterface(b);
+                        sensorhubMgr = new SensorHubManager(service);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    return sensorhubMgr;
+                }
+            });
+        }
+        /// @}
+
+    /// M: comment @{ add RnsService
+        if ("1".equals(SystemProperties.get("ro.mtk_epdg_support"))) {
+           registerService(RNS_SERVICE, new ServiceFetcher() {
+                   public Object createService(ContextImpl ctx) {
+                       IBinder b = ServiceManager.getService(RNS_SERVICE);
+                       return new RnsManager(IRnsManager.Stub.asInterface(b));
+                   } });
+        }
+        /// @}
+
+/* Vanzo:yinjun on: Fri, 20 Mar 2015 20:34:22 +0800
+ * add remoteir
+ */
+        if (FeatureOption.VANZO_FEATURE_REMOTEIR_SUPPORT) {
+            registerService(REMOTE_IR_SERVICE, new ServiceFetcher() {
+                    public Object createService(ContextImpl ctx) {
+                        return new RemoteIrManager(ctx);
+                    }});
+        }
+// End of Vanzo: yinjun
     }
 
     static ContextImpl getImpl(Context context) {
@@ -1240,6 +1369,14 @@ class ContextImpl extends Context {
                     + " context requires the FLAG_ACTIVITY_NEW_TASK flag."
                     + " Is this really what you want?");
         }
+        /// M: BMW @{
+        if (MultiWindowProxy.isFeatureSupport()){  
+            if (MultiWindowProxy.getInstance() != null 
+                        && MultiWindowProxy.getInstance().getFloatingState()) {               
+                intent.addFlags(Intent.FLAG_ACTIVITY_FLOATING);
+            }                      
+        }
+        /// @}
         mMainThread.getInstrumentation().execStartActivity(
             getOuterContext(), mMainThread.getApplicationThread(), null,
             (Activity)null, intent, -1, options);
@@ -2493,5 +2630,31 @@ class ContextImpl extends Context {
         protected int resolveUserIdFromAuthority(String auth) {
             return ContentProvider.getUserIdFromAuthority(auth, mUser.getIdentifier());
         }
+        /// M: for Cursor Leak detect @{
+        /**
+         * Add this qury to queryHisitory.
+         * @param uri the uri of this query
+         * @param stackTrace the stackTrace of this query
+         * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+         * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+         * @return add result
+         * @hide
+         */
+        @Override
+        public boolean addToQueryHistory(String uri, Throwable stackTrace, int hashCode, int type) {
+            return mMainThread.addToQueryHistory(uri, stackTrace, hashCode, type);
+        }
+
+        /**
+         * Revome from queryHistory by hashCode.
+         * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+         * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+         * @hide
+         */
+        @Override
+        public void removeFromQueryHistory(int hashCode, int type) {
+            mMainThread.removeFromQueryHistory(hashCode, type);
+        }
+        /// M: @}
     }
 }

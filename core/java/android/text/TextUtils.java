@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.SystemProperties;
 import android.provider.Settings;
+import android.text.Layout.Directions;
 import android.text.style.AbsoluteSizeSpan;
 import android.text.style.AlignmentSpan;
 import android.text.style.BackgroundColorSpan;
@@ -1154,7 +1160,11 @@ public class TextUtils {
             int remaining = len - (right - left);
             if (preserveLength) {
                 if (remaining > 0) { // else eliminate the ellipsis too
-                    buf[left++] = ellipsis.charAt(0);
+                    /// M: ellipsis is '...' which contains 3 chars or two dot ellipsis is ".." which contains 2 chars in framework resources of some languages is not a single char. so iterator the '.' to display ellipsis correctly. @{
+                    for (int ellIndex = 0; ellIndex < ellipsis.length() && left < right; ellIndex++) {
+                        buf[left++] = ellipsis.charAt(ellIndex);
+                    }
+                    /// @}
                 }
                 for (int i = left; i < right; i++) {
                     buf[i] = ZWNBS_CHAR;
@@ -1500,6 +1510,28 @@ public class TextUtils {
     }
 
     /**
+     * To know whether str has emoji
+     * @hide
+     */
+    public static boolean hasReplacement(final CharSequence str) {
+        final int len = str.length();
+        final SpanSet<ReplacementSpan> mReplacementSpanSpanSet = new SpanSet<ReplacementSpan>(ReplacementSpan.class);
+        mReplacementSpanSpanSet.init((Spanned) str, 0, len);
+        return mReplacementSpanSpanSet.numberOfSpans > 0;
+    }
+
+    /**
+     * Return length of first emoji in str
+     * @hide
+     */
+    public static int getNextTransition(final CharSequence str) {
+        final int len = str.length();
+        final SpanSet<ReplacementSpan> mReplacementSpanSpanSet = new SpanSet<ReplacementSpan>(ReplacementSpan.class);
+        mReplacementSpanSpanSet.init((Spanned) str, 0, len);
+        return mReplacementSpanSpanSet.getNextTransition(0, len);
+    }
+
+    /**
      * Capitalization mode for {@link #getCapsMode}: capitalize all
      * characters.  This value is explicitly defined to be the same as
      * {@link InputType#TYPE_TEXT_FLAG_CAP_CHARACTERS}.
@@ -1790,6 +1822,85 @@ public class TextUtils {
         }
     }
 
+    /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static int getBidiForTest(int dir, char[] chs, byte[] chInfo, int n, boolean haveInfo) {
+        return AndroidBidi.bidi(dir, chs, chInfo, n, false);
+    }
+
+   /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static void setBlocksDataForTest(DynamicLayout dl, int[] blockEndLines, int[] blockIndices, int numberOfBlocks) {
+        dl.setBlocksDataForTest(blockEndLines, blockIndices, numberOfBlocks);
+    }
+
+   /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static void updateBlocksForTest(DynamicLayout dl, int startLine, int endLine, int newLineCount) {
+        dl.updateBlocks(startLine, endLine, newLineCount);
+    }
+
+   /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static Directions newDirectionsForTest(int[] dir) {
+        return new Directions(dir) ;
+    }
+
+   /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static int[] getDirectionsForTest(Directions dir) {
+        return dir.mDirections ;
+    }
+
+   /**
+     * M: This wrapper method is used for text auto test purposes only
+     * @hide
+     */
+    public static Directions getLayoutDirectionsForTest() {
+        return Layout.DIRS_ALL_LEFT_TO_RIGHT ;
+    }
+
+   /**
+     * M: This wrapper class is used for text auto test purposes only
+     * @hide
+     */
+    public static class PackedIntVectorForTest extends PackedIntVector {
+        public PackedIntVectorForTest(int columns) {
+            super(columns) ;
+        }
+    }
+
+    /**
+     * M: This method is used to check if the character at specific position is surrogated
+     * @hide
+     */
+    public static boolean isSurrogateChar(CharSequence text, int pos) {
+        if (!isEmpty(text) && text.length() >= 2 && pos >= 1) {
+            final char prevChar = text.charAt(pos - 1);
+            final char currChar = text.charAt(pos);
+                return Character.isSurrogatePair(prevChar, currChar);
+            }
+        return false;
+    }
+
+   /**
+       * M: MTK normal debug log
+       * @hide
+       */
+    public static void printDebugLog(String logTag, String logContent) {
+        Log.d("[TextDebug] " + logTag, logContent);
+    }
+
     private static Object sLock = new Object();
 
     private static char[] sTemp = null;
@@ -1800,4 +1911,11 @@ public class TextUtils {
 
     private static String ARAB_SCRIPT_SUBTAG = "Arab";
     private static String HEBR_SCRIPT_SUBTAG = "Hebr";
+
+    /**
+     * M: Flag of whether print normal debug log
+     * @hide
+     */
+    public static boolean DEBUG_LOG = SystemProperties.getBoolean("debug.text", false);
+
 }

@@ -132,12 +132,15 @@ class ViewServer implements Runnable {
             }
             mThreadPool = null;
             mThread = null;
-            try {
-                mServer.close();
-                mServer = null;
-                return true;
-            } catch (IOException e) {
-                Slog.w(LOG_TAG, "Could not close the view server");
+
+            if (mServer != null) {
+                try {
+                    mServer.close();
+                    mServer = null;
+                    return true;
+                } catch (IOException e) {
+                    Slog.w(LOG_TAG, "Could not close the view server");
+                }
             }
         }
         return false;
@@ -160,7 +163,7 @@ class ViewServer implements Runnable {
      * Main server loop.
      */
     public void run() {
-        while (Thread.currentThread() == mThread) {
+        while (Thread.currentThread() == mThread && mServer != null) {
             // Any uncaught exception will crash the system process
             try {
                 Socket client = mServer.accept();

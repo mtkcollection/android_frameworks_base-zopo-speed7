@@ -47,6 +47,7 @@ import com.android.systemui.qs.QSTile;
 import com.android.systemui.statusbar.policy.BatteryController;
 import com.android.systemui.statusbar.policy.NextAlarmController;
 import com.android.systemui.statusbar.policy.UserInfoController;
+import com.mediatek.xlog.Xlog;
 
 import java.text.NumberFormat;
 
@@ -55,6 +56,10 @@ import java.text.NumberFormat;
  */
 public class StatusBarHeaderView extends RelativeLayout implements View.OnClickListener,
         BatteryController.BatteryStateChangeCallback, NextAlarmController.NextAlarmChangeCallback {
+
+    /// M: For debug
+    static final String TAG = "StatusBarHeaderView";
+    public static final boolean DEBUG = true;
 
     private boolean mExpanded;
     private boolean mListening;
@@ -318,6 +323,13 @@ public class StatusBarHeaderView extends RelativeLayout implements View.OnClickL
     }
 
     private void updateVisibilities() {
+        if (DEBUG) {
+            Xlog.d(TAG, "updateVisibilities: " +
+                mExpanded + ", " +
+                mAlarmShowing + ", " +
+                mShowingDetail + ", " +
+                mShowEmergencyCallsOnly);
+        }
         mDateCollapsed.setVisibility(mExpanded && mAlarmShowing ? View.VISIBLE : View.INVISIBLE);
         mDateExpanded.setVisibility(mExpanded && mAlarmShowing ? View.INVISIBLE : View.VISIBLE);
         mAlarmStatus.setVisibility(mExpanded && mAlarmShowing ? View.VISIBLE : View.INVISIBLE);
@@ -528,6 +540,12 @@ public class StatusBarHeaderView extends RelativeLayout implements View.OnClickL
     }
 
     public void setShowEmergencyCallsOnly(boolean show) {
+        if (DEBUG) {
+            Xlog.d(TAG, "setShowEmergencyCallsOnly: show= " + show +
+                ", mShowEmergencyCallsOnly= " + mShowEmergencyCallsOnly +
+                ", mExpanded= " + mExpanded);
+        }
+
         boolean changed = show != mShowEmergencyCallsOnly;
         if (changed) {
             mShowEmergencyCallsOnly = show;

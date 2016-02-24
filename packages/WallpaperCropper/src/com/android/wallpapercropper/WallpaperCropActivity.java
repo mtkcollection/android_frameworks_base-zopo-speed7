@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +42,7 @@ import android.graphics.RectF;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.SystemProperties;
 import android.util.Log;
 import android.view.Display;
 import android.view.View;
@@ -54,6 +60,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+
 
 public class WallpaperCropActivity extends Activity {
     private static final String LOGTAG = "Launcher3.CropActivity";
@@ -76,6 +83,9 @@ public class WallpaperCropActivity extends Activity {
     protected CropView mCropView;
     protected Uri mUri;
     private View mSetWallpaperButton;
+
+    private static final boolean mIsOmaDrmSupport =
+	    (SystemProperties.getInt("ro.mtk_oma_drm_support", 0) == 1) ? true : false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -534,8 +544,35 @@ public class WallpaperCropActivity extends Activity {
             } else {
                 try {
                     if (mInUri != null) {
-                        return new BufferedInputStream(
+                        // M: DRM file
+                        if (mIsOmaDrmSupport && BitmapRegionTileSource
+						    .isDrmFormat(mContext, mInUri) == true) {
+                            String filePath = BitmapRegionTileSource
+							    .getDrmFilePath(mContext, mInUri);
+                            if (filePath != null) {
+                                byte[] buffer = BitmapRegionTileSource
+								    .forceDecryptFile(filePath, false);
+                                Bitmap bitmap = null;
+                                if (buffer != null) {
+                                    bitmap = BitmapFactory.decodeByteArray(buffer, 
+									    0, buffer.length, null);
+                                } else {
+                                    Log.w(LOGTAG, "buffer is null");
+                                }
+                                if (bitmap != null) {
+                                    return BitmapRegionTileSource.getByteArrayInputStream(bitmap);
+                                } else {
+                                    Log.w(LOGTAG, "bitmap is null");
+                                    return new BufferedInputStream(
+                                        mContext.getContentResolver().openInputStream(mInUri));
+                                }
+                            } else {
+                                Log.w(LOGTAG, "file path is null");
+                            }
+                        } else {
+                            return new BufferedInputStream(
                                 mContext.getContentResolver().openInputStream(mInUri));
+                        }
                     } else if (mInFilePath != null) {
                         return mContext.openFileInput(mInFilePath);
                     } else if (mInImageBytes != null) {
@@ -685,30 +722,51 @@ public class WallpaperCropActivity extends Activity {
                         mCropBounds.bottom /= scaleDownSampleSize;
                         mCropBounds.right /= scaleDownSampleSize;
                         mCropBounds.roundOut(roundedTrueCrop);
+                        /**M: removed the wrong solution from Google and
+                                        *replaced with below MTK solution. ALPS01669050. @{**/
+                        /*
 
-                        // Adjust values to account for issues related to rounding
-                        if (roundedTrueCrop.width() > fullSize.getWidth()) {
-                            // Adjust the width
-                            roundedTrueCrop.right = roundedTrueCrop.left + fullSize.getWidth();
+                                      // Adjust values to account for issues related to rounding
+                                      if (roundedTrueCrop.width() > fullSize.getWidth()) {
+                                          // Adjust the width
+                                          roundedTrueCrop.right = roundedTrueCrop.left
+                                          + fullSize.getWidth();
+                                      }
+                                      if (roundedTrueCrop.right > fullSize.getWidth()) {
+                                          // Adjust the left value
+                                          int adjustment = roundedTrueCrop.left -
+                                                Math.max(0, roundedTrueCrop.right
+                                                - roundedTrueCrop.width());
+                                          roundedTrueCrop.left -= adjustment;
+                                          roundedTrueCrop.right -= adjustment;
+                                      }
+                                      if (roundedTrueCrop.height() > fullSize.getHeight()) {
+                                          // Adjust the height
+                                          roundedTrueCrop.bottom = roundedTrueCrop.top
+                                          + fullSize.getHeight();
+                                      }
+                                      if (roundedTrueCrop.bottom > fullSize.getHeight()) {
+                                          // Adjust the top value
+                                          int adjustment = roundedTrueCrop.top -
+                                                  Math.max(0, roundedTrueCrop.bottom
+                                                  - roundedTrueCrop.height());
+                                          roundedTrueCrop.top -= adjustment;
+                                          roundedTrueCrop.bottom -= adjustment;
+                                      }
+                                      */
+
+                        /**M: ALPS01773823  added to resolve the issue (base ALPS01669050).@{**/
+                        if (roundedTrueCrop.left + roundedTrueCrop.width()
+                            > fullSize.getWidth()) {
+                            roundedTrueCrop.right -= roundedTrueCrop.left
+                                + roundedTrueCrop.width() - fullSize.getWidth();
                         }
-                        if (roundedTrueCrop.right > fullSize.getWidth()) {
-                            // Adjust the left value
-                            int adjustment = roundedTrueCrop.left -
-                                    Math.max(0, roundedTrueCrop.right - roundedTrueCrop.width());
-                            roundedTrueCrop.left -= adjustment;
-                            roundedTrueCrop.right -= adjustment;
+                        if (roundedTrueCrop.top + roundedTrueCrop.height()
+                            > fullSize.getHeight()) {
+                            roundedTrueCrop.bottom -= roundedTrueCrop.top
+                                + roundedTrueCrop.height() - fullSize.getHeight();
                         }
-                        if (roundedTrueCrop.height() > fullSize.getHeight()) {
-                            // Adjust the height
-                            roundedTrueCrop.bottom = roundedTrueCrop.top + fullSize.getHeight();
-                        }
-                        if (roundedTrueCrop.bottom > fullSize.getHeight()) {
-                            // Adjust the top value
-                            int adjustment = roundedTrueCrop.top -
-                                    Math.max(0, roundedTrueCrop.bottom - roundedTrueCrop.height());
-                            roundedTrueCrop.top -= adjustment;
-                            roundedTrueCrop.bottom -= adjustment;
-                        }
+                        /**@}**/
 
                         crop = Bitmap.createBitmap(fullSize, roundedTrueCrop.left,
                                 roundedTrueCrop.top, roundedTrueCrop.width(),
@@ -807,6 +865,11 @@ public class WallpaperCropActivity extends Activity {
         protected void onPostExecute(Boolean result) {
             if (mOnEndRunnable != null) {
                 mOnEndRunnable.run();
+            }
+
+            if (!result) {
+                Toast.makeText(mContext, mContext.getString(R.string.wallpaper_load_fail),
+                            Toast.LENGTH_LONG).show();
             }
         }
     }

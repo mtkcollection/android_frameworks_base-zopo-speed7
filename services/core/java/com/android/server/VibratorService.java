@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -396,13 +401,26 @@ public class VibratorService extends IVibratorService.Stub
                 mode = mAppOpsService.startOperation(AppOpsManager.getToken(mAppOpsService),
                     AppOpsManager.OP_VIBRATE, vib.mUid, vib.mOpPkg);
             }
+/* Vanzo:yujianpeng on: Wed, 05 Aug 2015 09:58:43 +0800
+ * VANZO_FEATURE_POWER_OFF_VIB_EN
             if (mode != AppOpsManager.MODE_ALLOWED) {
                 if (mode == AppOpsManager.MODE_ERRORED) {
                     Slog.w(TAG, "Would be an error: vibrate from uid " + vib.mUid);
                 }
-                mH.post(mVibrationRunnable);
+		//MTK Modify, do nothing with App related control in MTK solution
+                //mH.post(mVibrationRunnable);
                 return;
             }
+ */
+            if(!com.android.featureoption.FeatureOption.VANZO_FEATURE_POWER_OFF_VIB_EN) {
+                if (mode != AppOpsManager.MODE_ALLOWED) {
+                    if (mode == AppOpsManager.MODE_ERRORED) {
+                        Slog.w(TAG, "Would be an error: vibrate from uid " + vib.mUid);
+                    }
+                    return;
+                }
+            }
+// End of Vanzo:yujianpeng
         } catch (RemoteException e) {
         }
         if (vib.mTimeout != 0) {

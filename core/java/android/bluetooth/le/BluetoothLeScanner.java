@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
@@ -144,6 +149,7 @@ public final class BluetoothLeScanner {
     public void stopScan(ScanCallback callback) {
         BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
         synchronized (mLeScanClients) {
+            Log.i(TAG, "startRegisteration: mLeScanClients=" + mLeScanClients + " ,callback=" + callback);
             BleScanCallbackWrapper wrapper = mLeScanClients.remove(callback);
             if (wrapper == null) {
                 if (DBG) Log.d(TAG, "could not find callback wrapper");
@@ -245,6 +251,7 @@ public final class BluetoothLeScanner {
                 }
                 if (mClientIf > 0) {
                     mLeScanClients.put(mScanCallback, this);
+                    Log.i(TAG, "startRegisteration: mLeScanClients=" + mLeScanClients);
                 } else {
                     postCallbackError(mScanCallback,
                             ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED);

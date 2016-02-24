@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +32,7 @@ import android.database.ContentObserver;
 import android.database.CrossProcessCursorWrapper;
 import android.database.Cursor;
 import android.database.IContentObserver;
+import android.database.sqlite.DatabaseObjectNotClosedException; /// M: For provider leak detect
 import android.graphics.Point;
 import android.net.Uri;
 import android.os.Bundle;
@@ -39,6 +45,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.SystemProperties; /// M: For provider leak detect
 import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.EventLog;
@@ -55,6 +62,11 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+
+/* Vanzo:songlixin on: Fri, 25 Apr 2014 15:30:57 +0800
+ */
+import android.database.sqlite.SQLiteException;
+// End of Vanzo: songlixin
 
 /**
  * This class provides applications access to the content model.
@@ -488,6 +500,13 @@ public abstract class ContentResolver {
                 }
                 qCursor = stableProvider.query(mPackageName, uri, projection,
                         selection, selectionArgs, sortOrder, remoteCancellationSignal);
+/* Vanzo:zhangkaihua on: Thu, 19 Dec 2013 17:43:00 +0800
+ * bugfix #60696 add SQLiteException catch
+ */
+            } catch (SQLiteException sex) {
+                Log.w(TAG, "SQLiteException:" + " (" + sex.getMessage() + ")");
+                return null;
+// End of Vanzo: zhangkaihua
             }
             if (qCursor == null) {
                 return null;
@@ -503,6 +522,15 @@ public abstract class ContentResolver {
                     stableProvider != null ? stableProvider : acquireProvider(uri));
             stableProvider = null;
             qCursor = null;
+            /// M: for Cursor leak detect @{
+            if (IS_ENG_BUILD || PROVIDER_LEAK_DETECT) {
+                Throwable stackTrace = new DatabaseObjectNotClosedException().fillInStackTrace();
+                addToQueryHistory(uri.toString(),
+                                  stackTrace,
+                                  wrapper.hashCode(),
+                                  ActivityThread.QUERY_HISTORY_CURSOR);
+            }
+            /// M: @}
             return wrapper;
         } catch (RemoteException e) {
             // Arbitrary and not worth documenting, as Activity
@@ -962,13 +990,30 @@ public abstract class ContentResolver {
                     if (stableProvider == null) {
                         stableProvider = acquireProvider(uri);
                     }
-                    releaseUnstableProvider(unstableProvider);
+                    /// M: Do not release here since it will release in the finally
+                    //releaseUnstableProvider(unstableProvider);
                     ParcelFileDescriptor pfd = new ParcelFileDescriptorInner(
                             fd.getParcelFileDescriptor(), stableProvider);
 
                     // Success!  Don't release the provider when exiting, let
                     // ParcelFileDescriptorInner do that when it is closed.
                     stableProvider = null;
+
+                    /// M: for PFD leak detect @{
+                    if (PROVIDER_LEAK_DETECT) {
+                        Throwable stackTrace = new
+                          RuntimeException(
+                          "Application did not close the AssetFileDescriptor that was opened here")
+                          .fillInStackTrace();
+
+                        if (!checkLeakDetectIgnoreList(stackTrace)) {
+                            addToQueryHistory(uri.toString(),
+                                              stackTrace,
+                                              pfd.hashCode(),
+                                              ActivityThread.QUERY_HISTORY_PFD);
+                        }
+                    }
+                    /// M: @}
 
                     return new AssetFileDescriptor(pfd, fd.getStartOffset(),
                             fd.getDeclaredLength());
@@ -1103,13 +1148,29 @@ public abstract class ContentResolver {
             if (stableProvider == null) {
                 stableProvider = acquireProvider(uri);
             }
-            releaseUnstableProvider(unstableProvider);
+            /// M: Do not release here since it will release in the finally
+            //releaseUnstableProvider(unstableProvider);
             ParcelFileDescriptor pfd = new ParcelFileDescriptorInner(
                     fd.getParcelFileDescriptor(), stableProvider);
 
             // Success!  Don't release the provider when exiting, let
             // ParcelFileDescriptorInner do that when it is closed.
             stableProvider = null;
+
+            /// M: for PFD leak detect @{
+            if (PROVIDER_LEAK_DETECT) {
+                Throwable stackTrace = new RuntimeException(
+                  "Application did not close the AssetFileDescriptor that was opened here")
+                  .fillInStackTrace();
+
+                if (!checkLeakDetectIgnoreList(stackTrace)) {
+                    addToQueryHistory(uri.toString(),
+                    stackTrace,
+                    pfd.hashCode(),
+                    ActivityThread.QUERY_HISTORY_PFD);
+                }
+            }
+            /// M: @}
 
             return new AssetFileDescriptor(pfd, fd.getStartOffset(),
                     fd.getDeclaredLength());
@@ -2450,6 +2511,12 @@ public abstract class ContentResolver {
         @Override
         public void close() {
             super.close();
+            /// M: for Cursor Leak, remove from QueryHistory @{
+            if (IS_ENG_BUILD || PROVIDER_LEAK_DETECT) {
+                ContentResolver.this.removeFromQueryHistory(this.hashCode(),
+                                                            ActivityThread.QUERY_HISTORY_CURSOR);
+            }
+            /// M: }@
             ContentResolver.this.releaseProvider(mContentProvider);
             mProviderReleased = true;
 
@@ -2493,6 +2560,17 @@ public abstract class ContentResolver {
                 mProviderReleased = true;
             }
         }
+
+        /// M: for PFD Leak Dectector, remove from QueryHistory @{
+        @Override
+        public void close() throws IOException {
+            super.close();
+            if (PROVIDER_LEAK_DETECT) {
+                ContentResolver.this.removeFromQueryHistory(this.hashCode(),
+                                                            ActivityThread.QUERY_HISTORY_PFD);
+            }
+        }
+        /// M: }@
     }
 
     /** @hide */
@@ -2524,4 +2602,56 @@ public abstract class ContentResolver {
     public int resolveUserId(Uri uri) {
         return ContentProvider.getUserIdFromUri(uri, mContext.getUserId());
     }
+
+    /// M: for Cursor Leak detect @{
+    private static final boolean PROVIDER_LEAK_DETECT =
+                                         Log.isLoggable("ProviderLeakDetecter", Log.VERBOSE);
+    private static final boolean IS_ENG_BUILD
+                                         = SystemProperties.get("ro.build.type").equals("eng");
+
+    // Ignore list
+    private static final String strIgnoreList[] = {"BluetoothOppSendFileInfo.java",
+                                                   "ContentProviderNative.java"};
+
+    /**
+     * Add this qury to queryHisitory.
+     * @param uri ther uri of this query
+     * @param stackTrace the stackTrace of this query
+     * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+     * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+     * @return the result of add
+     * @hide
+     */
+    public boolean addToQueryHistory(String uri, Throwable stackTrace, int hashCode, int type) {
+        return true;
+    }
+
+    /**
+    * Revome from queryHistory by cursorHashCode.
+    * @param hashCode the hashcode of the CursorWrapperInner/ParcelFileDescriptorInner Object
+    * @param type either QUERY_HISTORY_CURSOR or QUERY_HISTORY_PFD
+    * @hide
+    */
+    public void removeFromQueryHistory(int hashCode, int type) {}
+
+    /**
+    * API to ignore some AP for checking PFD leak.
+    * @stackTrace call stack
+    */
+    private boolean checkLeakDetectIgnoreList(Throwable stackTrace) {
+
+        for (int i = 0; i < strIgnoreList.length ; i++) {
+            for (int j = 0 ; j < stackTrace.getStackTrace().length; j++) {
+                String tmpStrFile = stackTrace.getStackTrace()[j].getFileName();
+                //String tmpStrMethod = stackTrace.getStackTrace()[j].getMethodName();
+                if (tmpStrFile.contains(strIgnoreList[i])) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// M: @}
 }

@@ -89,7 +89,10 @@ public final class InputWindowHandle {
 
     // Display this input is on.
     public final int displayId;
-
+	
+    /// M: BMW. Add for flaoting window.
+    public boolean isFloating;
+	
     private native void nativeDispose();
 
     public InputWindowHandle(InputApplicationHandle inputApplicationHandle,

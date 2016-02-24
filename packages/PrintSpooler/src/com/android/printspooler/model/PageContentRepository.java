@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -444,12 +449,29 @@ public final class PageContentRepository {
         public void onServiceConnected(ComponentName name, IBinder service) {
             synchronized (mLock) {
                 mRenderer = IPdfRenderer.Stub.asInterface(service);
+                ///M: Workaround here, since onServiceDisconnected will not
+                //       be called when service proc is killed by LMK(?), just
+                //       link to death and handle it myself. @{
+                try {
+	                mRenderer.asBinder().linkToDeath(new IBinder.DeathRecipient() {
+	                	@Override
+	                	public void binderDied() {
+	                		Log.w(LOG_TAG, "Remote Service Died!");
+	                		mBoundToService = false;
+	                	}
+	                }, 0);
+                } catch (RemoteException e) {
+                	Log.w(LOG_TAG, "Cannot link to death for remote service");
+                	e.printStackTrace();
+                }
+                ///M: @}
                 mLock.notifyAll();
             }
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
+        	mBoundToService = false;
             synchronized (mLock) {
                 mRenderer = null;
             }
@@ -461,7 +483,6 @@ public final class PageContentRepository {
             // is closed to show pages while the other side is writing the new
             // document.
             mPageContentCache.invalidate();
-
             mOpenTask = new OpenTask(source, callback);
             mOpenTask.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
         }
@@ -491,6 +512,8 @@ public final class PageContentRepository {
                             }
                         } catch (RemoteException re) {
                             /* ignore */
+                        } catch (IllegalStateException e) {
+                        	Log.e(LOG_TAG, "Binder has died.");
                         }
                     }
                     return null;
@@ -511,7 +534,6 @@ public final class PageContentRepository {
                 mBoundToService = false;
                 mContext.unbindService(AsyncRenderer.this);
             }
-
             mPageContentCache.invalidate();
             mPageContentCache.clear();
             mDestroyed = true;

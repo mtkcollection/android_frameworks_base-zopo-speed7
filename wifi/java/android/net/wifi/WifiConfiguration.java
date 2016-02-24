@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +37,10 @@ import java.util.BitSet;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+
+///M:
+import android.os.SystemProperties;
+
 
 /**
  * A class representing a configured Wi-Fi network, including the
@@ -81,10 +90,26 @@ public class WifiConfiguration implements Parcelable {
           */
         public static final int WPA2_PSK = 4;
 
+        ///M:@{
+        /**
+         * WAPI with pre-shared key.
+         * @hide
+         * @internal
+         */
+        public static final int WAPI_PSK = 5;
+        /**
+         * WAPI with certificate authentication.
+         * @hide
+         * @internal
+         */
+        public static final int WAPI_CERT = 6;
+        ///M:@}
+
         public static final String varName = "key_mgmt";
 
+        ///M: modify
         public static final String[] strings = { "NONE", "WPA_PSK", "WPA_EAP", "IEEE8021X",
-                "WPA2_PSK" };
+                "WPA2_PSK", "WAPI_PSK", "WAPI_CERT" };
     }
 
     /**
@@ -97,10 +122,16 @@ public class WifiConfiguration implements Parcelable {
         public static final int WPA = 0;
         /** WPA2/IEEE 802.11i */
         public static final int RSN = 1;
+        /**
+         * WAPI
+         * @hide
+         * @internal
+         */
+        public static final int WAPI = 2;
 
         public static final String varName = "proto";
-
-        public static final String[] strings = { "WPA", "RSN" };
+       ///M: modify
+        public static final String[] strings = { "WPA", "RSN", "WAPI" };
     }
 
     /**
@@ -134,9 +165,17 @@ public class WifiConfiguration implements Parcelable {
         /** AES in Counter mode with CBC-MAC [RFC 3610, IEEE 802.11i/D7.0] */
         public static final int CCMP = 2;
 
-        public static final String varName = "pairwise";
+        ///M: add for WAPI
+        /**
+         * SMS4, a block cipher of 128-bit block size and key size for WAPI.
+         * @hide
+         * @internal
+         */
+        public static final int SMS4 = 3;
 
-        public static final String[] strings = { "NONE", "TKIP", "CCMP" };
+        public static final String varName = "pairwise";
+        ///ML modify
+        public static final String[] strings = { "NONE", "TKIP", "CCMP", "SMS4" };
     }
 
     /**
@@ -159,10 +198,16 @@ public class WifiConfiguration implements Parcelable {
         public static final int TKIP = 2;
         /** AES in Counter mode with CBC-MAC [RFC 3610, IEEE 802.11i/D7.0] */
         public static final int CCMP = 3;
+        /**
+         * SMS4, a block cipher of 128-bit block size and key size for WAPI.
+         * @hide
+         * @internal
+         */
+        public static final int SMS4 = 4;
 
         public static final String varName = "group";
 
-        public static final String[] strings = { "WEP40", "WEP104", "TKIP", "CCMP" };
+        public static final String[] strings = { "WEP40", "WEP104", "TKIP", "CCMP", "SMS4" };
     }
 
     /** Possible status of a network configuration. */
@@ -555,6 +600,7 @@ public class WifiConfiguration implements Parcelable {
      * i.e. younger.
      ***/
     public Visibility setVisibility(long age) {
+
         if (scanResultCache == null) {
             visibility = null;
             return null;
@@ -563,6 +609,7 @@ public class WifiConfiguration implements Parcelable {
         Visibility status = new Visibility();
 
         long now_ms = System.currentTimeMillis();
+
         for(ScanResult result : scanResultCache.values()) {
             if (result.seen == 0)
                 continue;
@@ -594,6 +641,7 @@ public class WifiConfiguration implements Parcelable {
             }
         }
         visibility = status;
+
         return status;
     }
 
@@ -857,6 +905,89 @@ public class WifiConfiguration implements Parcelable {
      */
     public HashMap<String, Integer>  linkedConfigurations;
 
+
+///M: add start---
+    /**
+      * Variable name used to set/get value from supplicant
+      * @hide
+      */
+     public static final String IMSI_VAR_NAME = "imsi";
+
+     /**
+      * Variable name used to set/get value from supplicant
+      * @hide
+      */
+     public static final String SIMSLOT_VAR_NAME = "sim_slot";
+
+     /**
+      * Variable name used to set/get value from supplicant
+      * @hide
+      */
+     public static final String PCSC_VAR_NAME = "pcsc";
+
+     /**
+      * Variable name used to set/get value from supplicant
+      * @hide
+      */
+     public static final String PACFILE_VAR_NAME = "pac_file";
+
+     /**
+      * Variable name used to set/get value from supplicant
+      * @hide
+      */
+     public static final String PHASE1_VAR_NAME = "phase1";
+
+     /**
+      * IMSI for EAP-SIM/EAP-AKA
+      * @hide
+      * @internal
+      */
+     public String imsi;
+
+     /**
+      * SIM slot for EAP-SIM/EAP-AKA
+      * @hide
+      * @internal
+      */
+     public String simSlot;
+
+     /**
+      * PCSC for EAP-SIM/EAP-AKA
+      * @hide
+      * @internal
+      */
+     public String pcsc;
+
+     /**
+      * PACFILE for EAP-FAST
+      * @hide
+      * @internal
+      */
+     public String pacFile;
+
+     /**
+      * PHASE1 for EAP-FAST
+      * @hide
+      * @internal
+      */
+     public String phase1;
+
+     /**
+      * The preferred channel for AP
+      * @hide
+      * @internal
+      */
+     public int channel;
+
+     /**
+      * The channel bandwidth for AP. 0: 20MHz only 1: Auto 20/40 Mhz
+      * @hide
+      * @internal
+      */
+     public int channelWidth;
+
+     ///M: add end ---
+
     public WifiConfiguration() {
         networkId = INVALID_NETWORK_ID;
         SSID = null;
@@ -895,6 +1026,16 @@ public class WifiConfiguration implements Parcelable {
             return false;
 
         if (allowedKeyManagement.cardinality() > 1) {
+
+            ///M: for WAPI @{
+            if (allowedKeyManagement.get(KeyMgmt.WAPI_PSK) == true) {
+                return true;
+            }
+            if (allowedKeyManagement.get(KeyMgmt.WAPI_CERT) == true) {
+                return true;
+            }
+            ///@}
+
             if (allowedKeyManagement.cardinality() != 2) {
                 return false;
             }
@@ -1192,6 +1333,14 @@ public class WifiConfiguration implements Parcelable {
                 sbuf.append('\n');
             }
         }
+        ///M:@{
+        sbuf.append("\n");
+
+        if (mMtkEapSimAka) {
+            sbuf.append(" imsi: ").append(this.imsi);
+            sbuf.append(" simSlot: ").append(this.simSlot);
+            sbuf.append(" pcsc: ").append(this.pcsc).append('\n');
+        }
         if (this.connectChoices != null) {
             for(String key : this.connectChoices.keySet()) {
                 Integer choice = this.connectChoices.get(key);
@@ -1254,6 +1403,9 @@ public class WifiConfiguration implements Parcelable {
         sbuf.append(this.autoJoinUseAggressiveJoinAttemptThreshold);
         sbuf.append('\n');
 
+        sbuf.append("pacFile: ").append(this.pacFile).append(" phase1: ").append(this.phase1).append('\n');
+        sbuf.append("Channel: ").append(this.channel).append(" ChannelWidth: ").append(this.channelWidth).append('\n');
+        ///M:@}
         return sbuf.toString();
     }
 
@@ -1366,6 +1518,14 @@ public class WifiConfiguration implements Parcelable {
         } else if (allowedKeyManagement.get(KeyMgmt.IEEE8021X)) {
             return KeyMgmt.IEEE8021X;
         }
+        ///M: WAPI @{
+        else if (allowedKeyManagement.get(KeyMgmt.WAPI_PSK)) {
+            return KeyMgmt.WAPI_PSK;
+        } else if (allowedKeyManagement.get(KeyMgmt.WAPI_CERT)) {
+            return KeyMgmt.WAPI_PSK;
+        }
+
+        ///@}
         return KeyMgmt.NONE;
     }
 
@@ -1391,6 +1551,12 @@ public class WifiConfiguration implements Parcelable {
                 key = SSID + KeyMgmt.strings[KeyMgmt.WPA_EAP];
             } else if (wepKeys[0] != null) {
                 key = SSID + "WEP";
+            ///M: WAPI @{
+            } else if (allowedKeyManagement.get(KeyMgmt.WAPI_PSK)) {
+                key = SSID + KeyMgmt.strings[KeyMgmt.WAPI_PSK];
+            } else if (allowedKeyManagement.get(KeyMgmt.WAPI_CERT)) {
+                key = SSID + KeyMgmt.strings[KeyMgmt.WAPI_CERT];
+            ///}
             } else {
                 key = SSID + KeyMgmt.strings[KeyMgmt.NONE];
             }
@@ -1416,10 +1582,19 @@ public class WifiConfiguration implements Parcelable {
             key = key + "-WEP";
         }
 
-        if (result.capabilities.contains("PSK")) {
-            key = key + "-" + KeyMgmt.strings[KeyMgmt.WPA_PSK];
+        ///M: WAPI @{
+        if (result.capabilities.contains("WAPI")) {
+            if (result.capabilities.contains("CERT")) {
+                key = key + "-" + KeyMgmt.strings[KeyMgmt.WAPI_CERT];
+            } else if (result.capabilities.contains("PSK")) {
+                key = key + "-" + KeyMgmt.strings[KeyMgmt.WAPI_PSK];
+            }
+        } else {
+            if (result.capabilities.contains("PSK")) {
+                key = key + "-" + KeyMgmt.strings[KeyMgmt.WPA_PSK];
+            }
         }
-
+        ///@}
         if (result.capabilities.contains("EAP")) {
             key = key + "-" + KeyMgmt.strings[KeyMgmt.WPA_EAP];
         }
@@ -1487,6 +1662,9 @@ public class WifiConfiguration implements Parcelable {
     public int describeContents() {
         return 0;
     }
+
+///M: MTK add
+    private static final boolean mMtkEapSimAka = SystemProperties.get("ro.mtk_eap_sim_aka").equals("1");
 
     /** copy constructor {@hide} */
     public WifiConfiguration(WifiConfiguration source) {
@@ -1577,6 +1755,17 @@ public class WifiConfiguration implements Parcelable {
             autoJoinBailedDueToLowRssi = source.autoJoinBailedDueToLowRssi;
             dirty = source.dirty;
             numNoInternetAccessReports = source.numNoInternetAccessReports;
+            ///M:@{
+            if (mMtkEapSimAka) {
+                imsi = source.imsi;
+                simSlot = source.simSlot;
+                pcsc = source.pcsc;
+            }
+            pacFile = source.pacFile;
+            phase1 = source.phase1;
+            channel = source.channel;
+            channelWidth = source.channelWidth;
+            ///@}
         }
     }
 
@@ -1646,6 +1835,18 @@ public class WifiConfiguration implements Parcelable {
         dest.writeInt(autoJoinUseAggressiveJoinAttemptThreshold);
         dest.writeInt(autoJoinBailedDueToLowRssi ? 1 : 0);
         dest.writeInt(numNoInternetAccessReports);
+
+        ///M:@{
+        if (mMtkEapSimAka) {
+            dest.writeString(imsi);
+            dest.writeString(simSlot);
+            dest.writeString(pcsc);
+        }
+        dest.writeString(pacFile);
+        dest.writeString(phase1);
+        dest.writeInt(channel);
+        dest.writeInt(channelWidth);
+        ///@}
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -1711,6 +1912,19 @@ public class WifiConfiguration implements Parcelable {
                 config.autoJoinUseAggressiveJoinAttemptThreshold = in.readInt();
                 config.autoJoinBailedDueToLowRssi = in.readInt() != 0;
                 config.numNoInternetAccessReports = in.readInt();
+
+                ///M:@{
+
+                if (mMtkEapSimAka) {
+                    config.imsi = in.readString();
+                    config.simSlot = in.readString();
+                    config.pcsc = in.readString();
+                }
+                config.pacFile = in.readString();
+                config.phase1 = in.readString();
+                config.channel = in.readInt();
+                config.channelWidth = in.readInt();
+                ///@}
                 return config;
             }
 

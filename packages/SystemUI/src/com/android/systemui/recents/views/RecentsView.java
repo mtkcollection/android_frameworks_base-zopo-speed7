@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +44,7 @@ import com.android.systemui.recents.model.RecentsPackageMonitor;
 import com.android.systemui.recents.model.RecentsTaskLoader;
 import com.android.systemui.recents.model.Task;
 import com.android.systemui.recents.model.TaskStack;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 
@@ -48,6 +54,9 @@ import java.util.ArrayList;
  */
 public class RecentsView extends FrameLayout implements TaskStackView.TaskStackViewCallbacks,
         RecentsPackageMonitor.PackageCallbacks {
+    /// M: For Debug
+    static final String TAG = "views.RecentsView";
+    static final boolean DEBUG = true;
 
     /** The RecentsView callbacks */
     public interface RecentsViewCallbacks {
@@ -174,6 +183,25 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
         return false;
     }
 
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 15:13:06 +0800
+ * recent task clear
+ */
+    public void clearAllTasks() {
+        if (mStacks != null && !mStacks.isEmpty()) {
+            int numStacks = mStacks.size();
+            for (int i = 0; i < numStacks; i++) {
+                TaskStack stack = mStacks.get(i);
+                ArrayList<Task> tasks = stack.getTasks();
+                android.util.Log.i("yinjun", "tasks===="+tasks.size());
+                for (int j = 0; j < tasks.size(); j++) {
+                    Task task = tasks.get(j);
+                    onTaskViewDismissed(task);
+                }
+            }
+        }
+    }
+// End of Vanzo: yinjun
+
     /** Launches the task that Recents was launched from, if possible */
     public boolean launchPreviousTask() {
         // Get the first stack view
@@ -233,6 +261,13 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
             }
         }
         ctx.postAnimationTrigger.decrement();
+
+        /// M : [ALPS01812494] Exit to home directly @{
+        if (childCount <= 0) {
+            Xlog.d(TAG, "startExitToHomeAnimation : no child, exit directly :" + childCount);
+            mCb.onAllTaskViewsDismissed();
+        }
+        /// M : [ALPS01812494] Exit to home directly @}
 
         // Notify of the exit animation
         mCb.onExitToHomeAnimationTriggered();
@@ -364,6 +399,9 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
                 break;
             }
         }
+        if (childCount <= 0) {
+            Xlog.d(TAG, "focusNextTask : no child, nothing to show : " + childCount);
+        }
     }
 
     /** Dismisses the focused task. */
@@ -377,6 +415,9 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
                 stackView.dismissFocusedTask();
                 break;
             }
+        }
+        if (childCount <= 0) {
+            Xlog.d(TAG, "dismissFocusedTask : no child, nothing to dismiss : " + childCount);
         }
     }
 
@@ -486,8 +527,15 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
             public void run() {
                 if (task.isActive) {
                     // Bring an active task to the foreground
+                    if (DEBUG) {
+                        Xlog.d(TAG, "onTaskViewClicked : moveTaskToFront ID = " + task.key.id);
+                    }
                     ssp.moveTaskToFront(task.key.id, launchOpts);
                 } else {
+                    if (DEBUG) {
+                        Xlog.d(TAG, "onTaskViewClicked : startActivityFromRecents ID = "
+                            + task.key.id);
+                    }
                     if (ssp.startActivityFromRecents(getContext(), task.key.id,
                             task.activityLabel, launchOpts)) {
                         if (launchOpts == null && lockToTask) {
@@ -496,6 +544,10 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
                     } else {
                         // Dismiss the task and return the user to home if we fail to
                         // launch the task
+                        if (DEBUG) {
+                            Xlog.d(TAG, "onTaskViewClicked : " +
+                               "Dismiss the task and return to home if we fail to launch the task");
+                        }
                         onTaskViewDismissed(task);
                         if (mCb != null) {
                             mCb.onTaskLaunchFailed();
@@ -509,9 +561,24 @@ public class RecentsView extends FrameLayout implements TaskStackView.TaskStackV
         if (tv == null) {
             launchRunnable.run();
         } else {
+            /// M:[ALPS01792910] task.group is null, that means there is nothing to launch
+            if (task == null) {
+                Xlog.e(TAG, "onTaskViewClicked : task is null (task is removed)");
+                return;
+            } else if (task.group == null) {
+                if (task.key != null) {
+                    Xlog.e(TAG, "onTaskViewClicked : task.group is null (task is removed) : "
+                           + task.key.toString());
+                }
+                return;
+            }
+
             if (!task.group.isFrontMostTask(task)) {
                 // For affiliated tasks that are behind other tasks, we must animate the front cards
                 // out of view before starting the task transition
+                if (DEBUG) {
+                    Xlog.d(TAG, "onTaskViewClicked : startLaunchTaskAnimation");
+                }
                 stackView.startLaunchTaskAnimation(tv, launchRunnable, lockToTask);
             } else {
                 // Otherwise, we can start the task transition immediately

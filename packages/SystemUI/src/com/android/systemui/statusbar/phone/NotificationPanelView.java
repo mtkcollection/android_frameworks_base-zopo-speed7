@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +58,8 @@ import com.android.systemui.statusbar.policy.KeyguardUserSwitcher;
 import com.android.systemui.statusbar.stack.NotificationStackScrollLayout;
 import com.android.systemui.statusbar.stack.StackStateAnimator;
 
+import com.mediatek.keyguard.Clock.ClockView ;
+
 public class NotificationPanelView extends PanelView implements
         ExpandableView.OnHeightChangedListener, ObservableScrollView.Listener,
         View.OnClickListener, NotificationStackScrollLayout.OnOverscrollTopChangedListener,
@@ -78,7 +85,7 @@ public class NotificationPanelView extends PanelView implements
     private QSPanel mQsPanel;
     private KeyguardStatusView mKeyguardStatusView;
     private ObservableScrollView mScrollView;
-    private TextView mClockView;
+    private ClockView mClockView;
     private View mReserveNotificationSpace;
     private View mQsNavbarScrim;
     private View mNotificationContainerParent;
@@ -195,7 +202,7 @@ public class NotificationPanelView extends PanelView implements
         mKeyguardStatusView = (KeyguardStatusView) findViewById(R.id.keyguard_status_view);
         mQsContainer = (QSContainer) findViewById(R.id.quick_settings_container);
         mQsPanel = (QSPanel) findViewById(R.id.quick_settings_panel);
-        mClockView = (TextView) findViewById(R.id.clock_view);
+        mClockView = (ClockView) findViewById(R.id.clock_view);
         mScrollView = (ObservableScrollView) findViewById(R.id.scroll_view);
         mScrollView.setListener(this);
         mScrollView.setFocusable(false);
@@ -285,7 +292,9 @@ public class NotificationPanelView extends PanelView implements
 
         // Update Clock Pivot
         mKeyguardStatusView.setPivotX(getWidth() / 2);
-        mKeyguardStatusView.setPivotY((FONT_HEIGHT - CAP_HEIGHT) / 2048f * mClockView.getTextSize());
+        /// M: We use "getHeight()" instead of "getTextSize()" since the ClockView is implemented by our own and does not have "getTextSize()".
+        ///    Our own ClockView will display AM/PM by default.
+        mKeyguardStatusView.setPivotY((FONT_HEIGHT - CAP_HEIGHT) / 2048f * mClockView.getHeight());
 
         // Calculate quick setting heights.
         int oldMaxHeight = mQsMaxExpansionHeight;
@@ -667,10 +676,25 @@ public class NotificationPanelView extends PanelView implements
             handleQsDown(event);
         }
         if (!mQsExpandImmediate && mQsTracking) {
+/* Vanzo:libing on: Mon, 06 Jul 2015 16:58:16 +0800
+ * disable statusbar to expand at keyguard
             onQsTouch(event);
             if (!mConflictingQsExpansionGesture) {
                 return true;
             }
+ */
+            if (com.android.featureoption.FeatureOption.VANZO_FEATURE_DISABLE_STATUSBAR_EXPAND && !mKeyguardShowing) {
+                onQsTouch(event);
+                if (!mConflictingQsExpansionGesture) {
+                    return true;
+                }
+            } else {
+                onQsTouch(event);
+                if (!mConflictingQsExpansionGesture) {
+                    return true;
+                }
+            }
+// End of Vanzo:libing
         }
         if (event.getActionMasked() == MotionEvent.ACTION_CANCEL
                 || event.getActionMasked() == MotionEvent.ACTION_UP) {
@@ -860,6 +884,13 @@ public class NotificationPanelView extends PanelView implements
     }
 
     private void setQsExpanded(boolean expanded) {
+/* Vanzo:libing on: Mon, 06 Jul 2015 16:49:25 +0800
+ * disable statusbar to expand at keyguard
+ */
+        if (com.android.featureoption.FeatureOption.VANZO_FEATURE_DISABLE_STATUSBAR_EXPAND && mKeyguardShowing) {
+            return;
+        }
+// End of Vanzo:libing
         boolean changed = mQsExpanded != expanded;
         if (changed) {
             mQsExpanded = expanded;
@@ -1292,6 +1323,13 @@ public class NotificationPanelView extends PanelView implements
             return false;
         }
         View header = mKeyguardShowing ? mKeyguardStatusBar : mHeader;
+/* Vanzo:libing on: Mon, 06 Jul 2015 16:52:53 +0800
+ * disable statusbar to expand at keyguard
+ */
+        if (com.android.featureoption.FeatureOption.VANZO_FEATURE_DISABLE_STATUSBAR_EXPAND) {
+            header = mHeader;
+        }
+// End of Vanzo:libing
         boolean onHeader = x >= header.getLeft() && x <= header.getRight()
                 && y >= header.getTop() && y <= header.getBottom();
         if (mQsExpanded) {
@@ -1530,7 +1568,19 @@ public class NotificationPanelView extends PanelView implements
         float alphaQsExpansion = 1 - Math.min(1, getQsExpansionFraction() * 2);
         mKeyguardStatusBar.setAlpha(Math.min(alphaNotifications, alphaQsExpansion)
                 * mKeyguardStatusBarAnimateAlpha);
-        mKeyguardBottomArea.setAlpha(Math.min(1 - getQsExpansionFraction(), alphaNotifications));
+
+        ///M : fix ALPS01892538
+        ///    we set keyguardBottomAreaView as invisible when alpha == 0
+        ///    (i.e. status bar is dragged down.)
+        float alphaOfBotArea = Math.min(1 - getQsExpansionFraction(), alphaNotifications) ;
+        mKeyguardBottomArea.setAlpha(alphaOfBotArea);
+        if (alphaOfBotArea == 0) {
+            mKeyguardBottomArea.setVisibility(View.INVISIBLE) ;
+        } else if (mKeyguardBottomArea.getVisibility() == View.INVISIBLE) {
+            // when alpha is not zero, we should reveal KeyguardBottomArea.
+            mKeyguardBottomArea.setVisibility(View.VISIBLE) ;
+        }
+
         setQsTranslation(mQsExpansionHeight);
     }
 

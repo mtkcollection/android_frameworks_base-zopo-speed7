@@ -22,6 +22,14 @@ import android.os.SystemClock;
 import com.android.systemui.R;
 import com.android.systemui.qs.QSTile;
 import com.android.systemui.statusbar.policy.FlashlightController;
+/* Vanzo:yucheng on: Wed, 15 Apr 2015 18:06:19 +0800
+ *  Optiomiztion for camera, flashlight must been closed before opening camera
+ */
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.Context;
+// End of Vanzo: yucheng
 
 /** Quick settings tile: Control flashlight **/
 public class FlashlightTile extends QSTile<QSTile.BooleanState> implements
@@ -29,7 +37,9 @@ public class FlashlightTile extends QSTile<QSTile.BooleanState> implements
 
     /** Grace period for which we consider the flashlight
      * still available because it was recently on. */
-    private static final long RECENTLY_ON_DURATION_MILLIS = 500;
+    /// M:Fix [ALPS01838137] Modify timeout to 3000 
+    private static final long RECENTLY_ON_DURATION_MILLIS = 3000;
+    //private static final long RECENTLY_ON_DURATION_MILLIS = 500;
 
     private final AnimationIcon mEnable
             = new AnimationIcon(R.drawable.ic_signal_flashlight_enable_animation);
@@ -37,17 +47,48 @@ public class FlashlightTile extends QSTile<QSTile.BooleanState> implements
             = new AnimationIcon(R.drawable.ic_signal_flashlight_disable_animation);
     private final FlashlightController mFlashlightController;
     private long mWasLastOn;
+/* Vanzo:yucheng on: Wed, 15 Apr 2015 18:10:32 +0800
+ *  Optiomiztion for camera, flashlight must been closed before opening camera
+ */
+    private static final String ATCTION_CLOSE_FLASH_LIGHT = "com.android.systemui.qs.tiles.close.flashlight";
+    private static final String TAG = "FLASHLIGHT";
+    private static final boolean DBG = true;
+    private BroadcastReceiver mFlashLightReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+
+        if(DBG) android.util.Log.d(TAG, "intent:" + intent + ", flash stat:" + (mState.value?"Open":"Close"));
+
+        if (intent.getAction().equals(ATCTION_CLOSE_FLASH_LIGHT) && (mState.value==true)) {
+                 mFlashlightController.setFlashlight(false);
+                 refreshState(UserBoolean.USER_FALSE);
+            }
+        }
+    };
+// End of Vanzo: yucheng
 
     public FlashlightTile(Host host) {
         super(host);
         mFlashlightController = host.getFlashlightController();
         mFlashlightController.addListener(this);
+/* Vanzo:yucheng on: Wed, 15 Apr 2015 20:18:37 +0800
+ *  Optiomiztion for camera, flashlight must been closed before opening camera
+ */
+        if(DBG) android.util.Log.d(TAG, "registerReceiver --> mFlashLightReceiver");
+        mContext.registerReceiver(mFlashLightReceiver, new IntentFilter(ATCTION_CLOSE_FLASH_LIGHT));
+// End of Vanzo: yucheng
     }
 
     @Override
     protected void handleDestroy() {
         super.handleDestroy();
         mFlashlightController.removeListener(this);
+/* Vanzo:yucheng on: Wed, 15 Apr 2015 20:19:20 +0800
+ *  Optiomiztion for camera, flashlight must been closed before opening camera
+ */
+        if(DBG) android.util.Log.d(TAG, "unregisterReceiver <-- mFlashLightReceiver");
+        mContext.unregisterReceiver(mFlashLightReceiver);
+// End of Vanzo: yucheng
     }
 
     @Override

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -213,7 +218,13 @@ public class SpannableStringBuilder implements CharSequence, GetChars, Spannable
 
     // Documentation from interface
     public SpannableStringBuilder delete(int start, int end) {
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[delete] " + "start " + start + "," + end) ;
+        }
         SpannableStringBuilder ret = replace(start, end, "", 0, 0);
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[delete] " + "end ") ;
+        }
 
         if (mGapLength > 2 * length())
             resizeFor(length());
@@ -458,7 +469,9 @@ public class SpannableStringBuilder implements CharSequence, GetChars, Spannable
     public SpannableStringBuilder replace(final int start, final int end,
             CharSequence tb, int tbstart, int tbend) {
         checkRange("replace", start, end);
-
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[replace] " + "start") ;
+        }
         int filtercount = mFilters.length;
         for (int i = 0; i < filtercount; i++) {
             CharSequence repl = mFilters[i].filter(tb, tbstart, tbend, this, start, end);
@@ -517,7 +530,9 @@ public class SpannableStringBuilder implements CharSequence, GetChars, Spannable
 
         // Span watchers need to be called after text watchers, which may update the layout
         sendToSpanWatchers(start, end, newLen - origLen);
-
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[replace] " + "end") ;
+        }
         return this;
     }
 
@@ -961,6 +976,9 @@ public class SpannableStringBuilder implements CharSequence, GetChars, Spannable
         int n = watchers.length;
 
         for (int i = 0; i < n; i++) {
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG, "[sendTextChanged] " + watchers[i]) ;
+            }
             watchers[i].onTextChanged(this, start, before, after);
         }
     }

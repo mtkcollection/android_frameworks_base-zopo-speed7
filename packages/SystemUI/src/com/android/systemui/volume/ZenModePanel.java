@@ -54,6 +54,8 @@ import android.widget.TextView;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.policy.ZenModeController;
 
+import com.mediatek.systemui.ext.PluginFactory;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
@@ -412,7 +414,13 @@ public class ZenModePanel extends LinearLayout {
         mZenConditions.setVisibility(!zenOff && expanded ? VISIBLE : GONE);
 
         if (zenNone) {
-            mZenSubheadExpanded.setText(R.string.zen_no_interruptions_with_warning);
+            /// M: Support "Operator plugin - customize zen none text". @{
+            String zenNoneTitle = mContext.getString(R.string.zen_no_interruptions_with_warning);
+            zenNoneTitle = PluginFactory.getVolumePlugin(mContext)
+                    .customizeZenModeNoInterruptionsTitle(zenNoneTitle);
+            /// M: Support "Operator plugin - customize zen none text". @}
+
+            mZenSubheadExpanded.setText(zenNoneTitle);
             mZenSubheadCollapsed.setText(mExitConditionText);
         } else if (zenImportant) {
             mZenSubheadExpanded.setText(R.string.zen_important_interruptions);

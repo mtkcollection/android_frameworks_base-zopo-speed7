@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +61,7 @@ void Dither::bindDitherTexture() {
             glPixelStorei(GL_UNPACK_ALIGNMENT, sizeof(GLfloat));
             glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, DITHER_KERNEL_SIZE, DITHER_KERNEL_SIZE, 0,
                     GL_RED, GL_FLOAT, &pattern);
+            TT_ADD(mDitherTexture, DITHER_KERNEL_SIZE, DITHER_KERNEL_SIZE, GL_RED, GL_FLOAT, String8("dither"), "[Dither.cpp] bindDitherTexture +");
         } else {
             const uint8_t pattern[] = {
                  0,  8,  2, 10,
@@ -67,6 +73,7 @@ void Dither::bindDitherTexture() {
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, DITHER_KERNEL_SIZE, DITHER_KERNEL_SIZE, 0,
                     GL_ALPHA, GL_UNSIGNED_BYTE, &pattern);
+            TT_ADD(mDitherTexture, DITHER_KERNEL_SIZE, DITHER_KERNEL_SIZE, GL_ALPHA, GL_UNSIGNED_BYTE, String8("dither"), "[Dither.cpp] bindDitherTexture +");
         }
 
         mInitialized = true;
@@ -78,6 +85,7 @@ void Dither::bindDitherTexture() {
 void Dither::clear() {
     if (mInitialized) {
         mCaches->deleteTexture(mDitherTexture);
+        TT_REMOVE(mDitherTexture, "[Dither.cpp] clear -");
         mInitialized = false;
     }
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +60,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 
+/// M: Added for BOOTPROF @{
+import android.os.SystemProperties;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+
+import com.mediatek.common.PluginLoader;
+/// @}
 /**
  * Startup class for the zygote process.
  *
@@ -78,7 +90,11 @@ public class ZygoteInit {
     private static final int LOG_BOOT_PROGRESS_PRELOAD_END = 3030;
 
     /** when preloading, GC after allocating this many bytes */
-    private static final int PRELOAD_GC_THRESHOLD = 50000;
+    //private static final int PRELOAD_GC_THRESHOLD = 50000;
+    private static final String heapgrowthlimit =
+                    SystemProperties.get("dalvik.vm.heapgrowthlimit", "64m");
+    private static final int PRELOAD_GC_THRESHOLD = Integer.parseInt(
+                    heapgrowthlimit.substring(0, heapgrowthlimit.length()-1))*1024*1024/32;
 
     private static final String ABI_LIST_ARG = "--abi-list=";
 
@@ -102,9 +118,27 @@ public class ZygoteInit {
      * The path of a file that contains classes to preload.
      */
     private static final String PRELOADED_CLASSES = "/system/etc/preloaded-classes";
+    private static final String TAG1 = "Plug-PluginLoad";
 
     /** Controls whether we should preload resources during zygote init. */
     private static final boolean PRELOAD_RESOURCES = true;
+    /// M: Added for BOOTPROF @{
+    static boolean MTPROF_DISABLE;
+    public static void addBootEvent(String bootevent) {
+        try {
+            if(!MTPROF_DISABLE) {
+                FileOutputStream fbp = new FileOutputStream("/proc/bootprof");
+                fbp.write(bootevent.getBytes());
+                fbp.flush();
+                fbp.close();
+            }
+        } catch (FileNotFoundException e) {
+            Log.e("BOOTPROF", "Failure open /proc/bootprof, not found!", e);
+        } catch (java.io.IOException e) {
+            Log.e("BOOTPROF", "Failure open /proc/bootprof entry", e);
+        }
+    }
+    /// @}
 
     /**
      * Invokes a static "main(argv[]) method on class "className".
@@ -253,6 +287,9 @@ public class ZygoteInit {
 
     static void preload() {
         Log.d(TAG, "begin preload");
+        Log.i(TAG1, "preloadMappingTable() -- start ");
+        PluginLoader.preloadPluginInfo();
+        Log.i(TAG1, "preloadMappingTable() -- end ");        
         preloadClasses();
         preloadResources();
         preloadOpenGL();
@@ -311,11 +348,12 @@ public class ZygoteInit {
         runtime.runFinalizationSync();
         Debug.startAllocCounting();
 
+        /// M: Added for BOOTPROF
+        int count = 0;
         try {
             BufferedReader br
                 = new BufferedReader(new InputStreamReader(is), 256);
 
-            int count = 0;
             String line;
             while ((line = br.readLine()) != null) {
                 // Skip comments and blank lines.
@@ -372,6 +410,10 @@ public class ZygoteInit {
             // Bring back root. We'll need it later.
             setEffectiveUser(ROOT_UID);
             setEffectiveGroup(ROOT_GID);
+            /// M: Added for BOOTPROF @{
+            addBootEvent(new String("Zygote:Preload "+ count + " classes in " +
+            (SystemClock.uptimeMillis()-startTime)+ "ms"));
+            /// @}
         }
     }
 
@@ -401,6 +443,8 @@ public class ZygoteInit {
                 ar.recycle();
                 Log.i(TAG, "...preloaded " + N + " resources in "
                         + (SystemClock.uptimeMillis()-startTime) + "ms.");
+				addBootEvent(new String("Zygote:Preload "+ N + " obtain resources in " +
+								(SystemClock.uptimeMillis() - startTime) + "ms"));
 
                 startTime = SystemClock.uptimeMillis();
                 ar = mResources.obtainTypedArray(
@@ -409,6 +453,10 @@ public class ZygoteInit {
                 ar.recycle();
                 Log.i(TAG, "...preloaded " + N + " resources in "
                         + (SystemClock.uptimeMillis()-startTime) + "ms.");
+                /// M: Added for BOOTPROF @{
+                addBootEvent(new String("Zygote:Preload "+ N + " resources in " +
+                (SystemClock.uptimeMillis() - startTime) + "ms"));
+                /// @}
             }
             mResources.finishPreloading();
         } catch (RuntimeException e) {
@@ -647,6 +695,9 @@ public class ZygoteInit {
 
     public static void main(String argv[]) {
         try {
+            /// M: Added for BOOTPROF
+            //MTPROF_DISABLE = "1".equals(SystemProperties.get("ro.mtprof.disable"));
+            MTPROF_DISABLE = false;
             // Start profiling the zygote initialization.
             SamplingProfilerIntegration.start();
 
@@ -672,6 +723,8 @@ public class ZygoteInit {
             registerZygoteSocket(socketName);
             EventLog.writeEvent(LOG_BOOT_PROGRESS_PRELOAD_START,
                 SystemClock.uptimeMillis());
+            /// M: Added for BOOTPROF
+            addBootEvent(new String("Zygote:Preload Start"));
             preload();
             EventLog.writeEvent(LOG_BOOT_PROGRESS_PRELOAD_END,
                 SystemClock.uptimeMillis());
@@ -685,6 +738,9 @@ public class ZygoteInit {
             // Disable tracing so that forked processes do not inherit stale tracing tags from
             // Zygote.
             Trace.setTracingEnabled(false);
+
+            /// M: Added for BOOTPROF
+            addBootEvent(new String("Zygote:Preload End"));
 
             if (startSystemServer) {
                 startSystemServer(abiList, socketName);

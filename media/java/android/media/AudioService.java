@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +67,7 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
@@ -83,6 +89,10 @@ import com.android.internal.util.XmlUtils;
 import com.android.server.LocalServices;
 
 import org.xmlpull.v1.XmlPullParserException;
+import com.mediatek.common.audioprofile.AudioProfileListener;
+import com.mediatek.common.audioprofile.IAudioProfileListener;
+import com.mediatek.hdmi.IMtkHdmiManager;
+import com.mediatek.hdmi.HdmiDef;
 
 import java.io.FileDescriptor;
 import java.io.IOException;
@@ -97,6 +107,10 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+/* Vanzo:hanshengpeng on: Wed, 29 Apr 2015 17:41:46 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:hanshengpeng
 
 /**
  * The implementation of the volume manager service.
@@ -239,6 +253,8 @@ public class AudioService extends IAudioService.Stub {
 
     // Maximum volume adjust steps allowed in a single batch call.
     private static final int MAX_BATCH_VOLUME_ADJUST_STEPS = 4;
+    ///M: Add for call AudioManager's methods
+    private AudioManager mAudioManager = null;
 
     /* Sound effect file names  */
     private static final String SOUND_EFFECTS_PATH = "/media/audio/ui/";
@@ -250,31 +266,52 @@ public class AudioService extends IAudioService.Stub {
     private final int[][] SOUND_EFFECT_FILES_MAP = new int[AudioManager.NUM_SOUND_EFFECTS][2];
 
    /** @hide Maximum volume index values for audio streams */
-    private static int[] MAX_STREAM_VOLUME = new int[] {
-        5,  // STREAM_VOICE_CALL
-        7,  // STREAM_SYSTEM
-        7,  // STREAM_RING
+   /// M: Modify the max stream volume @{
+    private static final int[] MAX_STREAM_VOLUME = new int[] {
+        6,  // STREAM_VOICE_CALL
+        15,  // STREAM_SYSTEM
+        15,  // STREAM_RING
         15, // STREAM_MUSIC
-        7,  // STREAM_ALARM
-        7,  // STREAM_NOTIFICATION
+        15,  // STREAM_ALARM
+        15,  // STREAM_NOTIFICATION
         15, // STREAM_BLUETOOTH_SCO
-        7,  // STREAM_SYSTEM_ENFORCED
+        15,  // STREAM_SYSTEM_ENFORCED
         15, // STREAM_DTMF
-        15  // STREAM_TTS
+        15,  // STREAM_TTS
     };
+    /// @}
 
-    private static int[] DEFAULT_STREAM_VOLUME = new int[] {
+    /**
+     * @hide Default volume index values for audio streams
+     * M: modify the default stream volume @{
+     */
+    public static int[] DEFAULT_STREAM_VOLUME = new int[] {
+/* Vanzo:hanshengpeng on: Wed, 29 Apr 2015 17:32:02 +0800
+ * custom vol config
         4,  // STREAM_VOICE_CALL
-        7,  // STREAM_SYSTEM
-        5,  // STREAM_RING
-        11, // STREAM_MUSIC
-        6,  // STREAM_ALARM
-        5,  // STREAM_NOTIFICATION
+        15,  // STREAM_SYSTEM
+        8,  // STREAM_RING
+        8, // STREAM_MUSIC
+        8,  // STREAM_ALARM
+        8,  // STREAM_NOTIFICATION
         7,  // STREAM_BLUETOOTH_SCO
-        7,  // STREAM_SYSTEM_ENFORCED
+        15,  // STREAM_SYSTEM_ENFORCED
         11, // STREAM_DTMF
-        11  // STREAM_TTS
+        11,  // STREAM_TTS
+ */
+        FeatureOption.VANZO_FEATURE_DEFAULT_VOICE_CALL_GENERAL,  // STREAM_VOICE_CALL
+        15,  // STREAM_SYSTEM
+        FeatureOption.VANZO_FEATURE_DEFAULT_RINGER_VOLUME_GENERAL,  // STREAM_RING
+        FeatureOption.VANZO_FEATURE_DEFAULT_MUSIC_VOLUME_GENERAL,  // STREAM_MUSIC
+        FeatureOption.VANZO_FEATURE_DEFAULT_ALARM_VOLUME_GENERAL,  // STREAM_ALARM
+        FeatureOption.VANZO_FEATURE_DEFAULT_NOTIFICATION_VOLUME_GENERAL, // STREAM_NOTIFICATION
+        7,  // STREAM_BLUETOOTH_SCO
+        15,  // STREAM_SYSTEM_ENFORCED
+        11, // STREAM_DTMF
+        11,  // STREAM_TTS
+// End of Vanzo:hanshengpeng
     };
+    /** @ */
 
     /* mStreamVolumeAlias[] indicates for each stream if it uses the volume settings
      * of another stream: This avoids multiplying the volume settings for hidden
@@ -512,6 +549,9 @@ public class AudioService extends IAudioService.Stub {
 
     private boolean mDockAudioMediaEnabled = true;
 
+    /// M: listener record for audioprofile
+    private ArrayList<Record> mRecords = new ArrayList<Record>();
+
     private int mDockState = Intent.EXTRA_DOCK_STATE_UNDOCKED;
 
     // Used when safe volume warning message display is requested by setStreamVolume(). In this
@@ -528,12 +568,21 @@ public class AudioService extends IAudioService.Stub {
     private final Object mA2dpAvrcpLock = new Object();
     // If absolute volume is supported in AVRCP device
     private boolean mAvrcpAbsVolSupported = false;
-
+    
     private AudioOrientationEventListener mOrientationListener;
 
     private static Long mLastDeviceConnectMsgTime = new Long(0);
 
     private AudioManagerInternal.RingerModeDelegate mRingerModeDelegate;
+
+    /// M:add for identify mhl link smartbook or TV
+    private static final String Params_SmartBook = "mhl2smartbook=1";
+
+    /// M: Add for feature option @{
+    private static final boolean IS_SMARTBOOK_SUPPORT = SystemProperties.getBoolean("ro.mtk_smartbook_support", false);
+    private static final boolean IS_DOLBY_DAP_SUPPORT = SystemProperties.getBoolean("ro.mtk_dolby_dap_support", false);
+    /// @}
+
 
     ///////////////////////////////////////////////////////////////////////////
     // Construction
@@ -554,7 +603,8 @@ public class AudioService extends IAudioService.Stub {
         } else {
             mPlatformType = PLATFORM_DEFAULT;
         }
-
+        /// M: Add for the following setParameter and so on.
+        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         PowerManager pm = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
         mAudioEventWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "handleAudioEvent");
 
@@ -639,7 +689,8 @@ public class AudioService extends IAudioService.Stub {
         intentFilter.addAction(Intent.ACTION_SCREEN_OFF);
         intentFilter.addAction(Intent.ACTION_USER_SWITCHED);
         intentFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-
+        //add for listen ACTION_AIRPLANE_MODE_CHANGED
+        intentFilter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
         intentFilter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
         // TODO merge orientation and rotation
         mMonitorOrientation = SystemProperties.getBoolean("ro.audio.monitorOrientation", false);
@@ -1436,7 +1487,13 @@ public class AudioService extends IAudioService.Stub {
             intent.putExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE, streamType);
             intent.putExtra(AudioManager.EXTRA_VOLUME_STREAM_VALUE, index);
             intent.putExtra(AudioManager.EXTRA_PREV_VOLUME_STREAM_VALUE, oldIndex);
+        if (DEBUG_VOL) Log.d(TAG, "sendVolumeUpdate: StreamType = " + streamType + ", oldIndex = "
+                + oldIndex + ", newIndex = " + index);
             sendBroadcastToAll(intent);
+        /// M: When ringer volume changed, notify AudioProfile
+        if (mStreamVolumeAlias[streamType] == AudioSystem.STREAM_RING) {
+            notifyRingerVolumeChanged(oldIndex, index, null);
+        }
         }
     }
 
@@ -1891,6 +1948,7 @@ public class AudioService extends IAudioService.Stub {
                     }
                     setRingerModeExt(ringerMode);
                 }
+                notifyRingerModeChanged();
             }
         } finally {
             Binder.restoreCallingIdentity(identity);
@@ -1917,6 +1975,7 @@ public class AudioService extends IAudioService.Stub {
         // is not RINGER_MODE_NORMAL and stream is affected by ringer mode.
         // Unmute stream if previously muted by ringer mode and ringer mode
         // is RINGER_MODE_NORMAL or stream is not affected by ringer mode.
+        if (DEBUG_VOL) Log.d(TAG, "setRingerModeInt: Ringermode = " + ringerMode);
         int numStreamTypes = AudioSystem.getNumStreamTypes();
         final boolean ringerModeMute = ringerMode == AudioManager.RINGER_MODE_VIBRATE
                 || ringerMode == AudioManager.RINGER_MODE_SILENT;
@@ -2012,6 +2071,8 @@ public class AudioService extends IAudioService.Stub {
         // Broadcast change
         broadcastVibrateSetting(vibrateType);
 
+        /// M: Notify vibrate setting change to AudioProfile to avoid CTS fail.
+        notifyVibrateSettingChanged(vibrateType);
     }
 
     /**
@@ -2081,6 +2142,7 @@ public class AudioService extends IAudioService.Stub {
     public void setMode(int mode, IBinder cb) {
         if (DEBUG_MODE) { Log.v(TAG, "setMode(mode=" + mode + ")"); }
         if (!checkAudioSettingsPermission("setMode()")) {
+            if (DEBUG_VOL) Log.e(TAG, "setMode: No permission!");
             return;
         }
 
@@ -2094,6 +2156,7 @@ public class AudioService extends IAudioService.Stub {
         }
 
         if (mode < AudioSystem.MODE_CURRENT || mode >= AudioSystem.NUM_MODES) {
+            if (DEBUG_VOL) Log.e(TAG, "setMode: Invalid mode!");
             return;
         }
 
@@ -2479,6 +2542,7 @@ public class AudioService extends IAudioService.Stub {
 
         sendMsg(mAudioHandler, MSG_SET_FORCE_USE, SENDMSG_QUEUE,
                 AudioSystem.FOR_COMMUNICATION, mForcedUseForComm, null, 0);
+        if (DEBUG_VOL) Log.d(TAG, "setSpeakerphoneOn " + mForcedUseForComm);
     }
 
     /** @see AudioManager#isSpeakerphoneOn() */
@@ -2502,10 +2566,12 @@ public class AudioService extends IAudioService.Stub {
                 AudioSystem.FOR_COMMUNICATION, mForcedUseForComm, null, 0);
         sendMsg(mAudioHandler, MSG_SET_FORCE_USE, SENDMSG_QUEUE,
                 AudioSystem.FOR_RECORD, mForcedUseForComm, null, 0);
+        if (DEBUG_VOL) Log.d(TAG, "setBluetoothScoOn " + mForcedUseForComm);
     }
 
     /** @see AudioManager#isBluetoothScoOn() */
     public boolean isBluetoothScoOn() {
+        if (DEBUG_VOL) Log.d(TAG, "isBluetoothScoOn " + mForcedUseForComm);
         return (mForcedUseForComm == AudioSystem.FORCE_BT_SCO);
     }
 
@@ -2529,6 +2595,7 @@ public class AudioService extends IAudioService.Stub {
 
     /** @see AudioManager#startBluetoothSco() */
     public void startBluetoothSco(IBinder cb, int targetSdkVersion) {
+        if (DEBUG_VOL) Log.d(TAG, "stopBluetoothSco");
         int scoAudioMode =
                 (targetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2) ?
                         SCO_MODE_VIRTUAL_CALL : SCO_MODE_UNDEFINED;
@@ -2558,6 +2625,7 @@ public class AudioService extends IAudioService.Stub {
 
     /** @see AudioManager#stopBluetoothSco() */
     public void stopBluetoothSco(IBinder cb){
+        if (DEBUG_VOL) Log.d(TAG, "stopBluetoothSco");
         if (!checkAudioSettingsPermission("stopBluetoothSco()") ||
                 !mSystemReady) {
             return;
@@ -3376,6 +3444,7 @@ public class AudioService extends IAudioService.Stub {
         if (existingMsgPolicy == SENDMSG_REPLACE) {
             handler.removeMessages(msg);
         } else if (existingMsgPolicy == SENDMSG_NOOP && handler.hasMessages(msg)) {
+            Log.d(TAG, "sendMsg: Msg " + msg + " existed!");
             return;
         }
         synchronized (mLastDeviceConnectMsgTime) {
@@ -3564,6 +3633,7 @@ public class AudioService extends IAudioService.Stub {
             } else {
                 index = (getIndex(device) + 5)/10;
             }
+        Log.d(TAG, "applyDeviceVolume" + "mStreamType:" + mStreamType + ",device:" + device);
             AudioSystem.setStreamVolumeIndex(mStreamType, index, device);
         }
 
@@ -3759,7 +3829,11 @@ public class AudioService extends IAudioService.Stub {
                             if (mICallback != null) {
                                 mICallback.linkToDeath(this, 0);
                             }
-                            VolumeStreamState.this.mDeathHandlers.add(this);
+                            /// M: Add synchronized to avoid monkey AudioService JE @ {
+                            synchronized (mDeathHandlers) {
+                                VolumeStreamState.this.mDeathHandlers.add(this);
+                            }
+                            /// @}
                             // If the stream is not yet muted by any client, set level to 0
                             if (!VolumeStreamState.this.isMuted_syncVSS()) {
                                 updateVolume = true;
@@ -3779,8 +3853,12 @@ public class AudioService extends IAudioService.Stub {
                     } else {
                         mMuteCount--;
                         if (mMuteCount == 0) {
-                            // Unregister from client death notification
-                            VolumeStreamState.this.mDeathHandlers.remove(this);
+                            /// M: Add synchronized to avoid monkey AudioService JE @ {
+                            synchronized (mDeathHandlers) {
+                                // Unregister from client death notification
+                                VolumeStreamState.this.mDeathHandlers.remove(this);
+                            }
+                            /// @}
                             // mICallback can be 0 if muted by AudioService
                             if (mICallback != null) {
                                 mICallback.unlinkToDeath(this, 0);
@@ -4198,6 +4276,31 @@ public class AudioService extends IAudioService.Stub {
                     state);
         }
 
+        // DOLBY_DAP
+        private String findDeviceUniqueId(int device) {
+            String uniqueId = null;
+            switch (device) {
+                case AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP:
+                case AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES:
+                case AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER:
+                    uniqueId = mCurAudioRoutes.mBluetoothName.toString();
+                    break;
+                // TODO: Please test these 2 cases once usb audio is supported.
+                case AudioSystem.DEVICE_OUT_USB_ACCESSORY:
+                case AudioSystem.DEVICE_OUT_USB_DEVICE:
+                    uniqueId = mConnectedDevices.get(device);
+                    break;
+                // TODO: The name for a SCO bluetooth device is to be determined.
+                //       But will audio streams with MUSIC type be routed to SCO devices?
+                default:
+                    uniqueId = "";
+                    break;
+            }
+
+            return uniqueId;
+        }
+        // DOLBY_END
+
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
@@ -4313,6 +4416,7 @@ public class AudioService extends IAudioService.Stub {
                                 mDockAudioMediaEnabled ?
                                         AudioSystem.FORCE_ANALOG_DOCK : AudioSystem.FORCE_NONE);
                     }
+
                     if (mHdmiManager != null) {
                         synchronized (mHdmiManager) {
                             if (mHdmiTvClient != null) {
@@ -4326,6 +4430,19 @@ public class AudioService extends IAudioService.Stub {
                             policy.connectMixes();
                         }
                     }
+
+                    ///M: Add for MTK_DOLBY_DAP_SUPPORT @{
+                    if (IS_DOLBY_DAP_SUPPORT)
+                    {
+                    // DOLBY_DAP
+                    // Send an intent to DsService when media_server restarts.
+                    Intent broadcast = new Intent("media_server_started");
+                    broadcast.setPackage("com.dolby");
+                    broadcast.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+                    mContext.sendBroadcast(broadcast);
+                    // DOLBY_END
+                    }
+                    ///@}
 
                     // indicate the end of reconfiguration phase to audio HAL
                     AudioSystem.setParameters("restarting=false");
@@ -4400,6 +4517,20 @@ public class AudioService extends IAudioService.Stub {
                         }
                     }
                     mRoutesObservers.finishBroadcast();
+                    // DOLBY_DAP
+                    // DOLBY_DAP_DEVICE_CHANGE
+                    if (IS_DOLBY_DAP_SUPPORT) {
+                    Intent newIntent = new Intent("DOLBY_DEVICE_CHANGE");
+                    newIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+                    int newDevice = getDeviceForStream(AudioSystem.STREAM_MUSIC);
+                    newIntent.putExtra("Device", newDevice);
+                    // DOLBY_DAP_DEVICE_UNIQUE_ID_DETECTION
+                    String deviceUniqueId = findDeviceUniqueId(newDevice);
+                    newIntent.putExtra("DeviceUniqueId", deviceUniqueId);
+                    // Broadcast the intent
+                    sendStickyBroadcastToAll(newIntent);
+                    }
+                    // DOLBY_END
                     break;
                 }
 
@@ -4499,6 +4630,7 @@ public class AudioService extends IAudioService.Stub {
         synchronized (mA2dpAvrcpLock) {
             mAvrcpAbsVolSupported = false;
         }
+        AudioSystem.setParameters("LosslessBT_AbsoluteVolume=0");
         AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP,
                 AudioSystem.DEVICE_STATE_UNAVAILABLE,
                 address);
@@ -4646,6 +4778,11 @@ public class AudioService extends IAudioService.Stub {
         // address is not used for now, but may be used when multiple a2dp devices are supported
         synchronized (mA2dpAvrcpLock) {
             mAvrcpAbsVolSupported = support;
+            if (mAvrcpAbsVolSupported) {
+                AudioSystem.setParameters("LosslessBT_AbsoluteVolume=1");
+            } else {
+                AudioSystem.setParameters("LosslessBT_AbsoluteVolume=0");
+            }
             sendMsg(mAudioHandler, MSG_SET_DEVICE_VOLUME, SENDMSG_QUEUE,
                     AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP, 0,
                     mStreamStates[AudioSystem.STREAM_MUSIC], 0);
@@ -4659,19 +4796,23 @@ public class AudioService extends IAudioService.Stub {
         synchronized (mConnectedDevices) {
             boolean isConnected = (mConnectedDevices.containsKey(device) &&
                     (params.isEmpty() || mConnectedDevices.get(device).equals(params)));
+            Log.d(TAG, "handleDeviceConnection:isConnected" + isConnected);
 
             if (isConnected && !connected) {
                 AudioSystem.setDeviceConnectionState(device,
                                               AudioSystem.DEVICE_STATE_UNAVAILABLE,
                                               mConnectedDevices.get(device));
+             Log.d(TAG, "handleDeviceConnection remove:" + "connected:" + connected + ",device:" + device);
                  mConnectedDevices.remove(device);
                  return true;
             } else if (!isConnected && connected) {
-                 AudioSystem.setDeviceConnectionState(device,
-                                                      AudioSystem.DEVICE_STATE_AVAILABLE,
-                                                      params);
-                 mConnectedDevices.put(new Integer(device), params);
-                 return true;
+                /// M: if mhl is connecting to smartbook,we pass Params_SmartBook to native
+                AudioSystem.setDeviceConnectionState(device, AudioSystem.DEVICE_STATE_AVAILABLE,
+                        whetherSmartBookConnected(device) ? Params_SmartBook : params);
+                Log.d(TAG, "handleDeviceConnection connect:" + "connected:" + connected
+                        + ",device:" + device);
+                mConnectedDevices.put(new Integer(device), params);
+                return true;
             }
         }
         return false;
@@ -4720,9 +4861,11 @@ public class AudioService extends IAudioService.Stub {
         }
         return delay;
     }
-
-    private void sendDeviceConnectionIntent(int device, int state, String name)
-    {
+    /**
+     * M: do not broadcast if headset is connected for ALPS00850163 @{
+     */
+    private void sendDeviceConnectionIntent(int device, int state, String name,
+            boolean shouldBroadcast) {
         Intent intent = new Intent();
 
         intent.putExtra("state", state);
@@ -4768,7 +4911,13 @@ public class AudioService extends IAudioService.Stub {
                 }
             }
         }
-
+        if (!shouldBroadcast) {
+            Log.d(TAG, "sendDeviceConnectionIntent() no need to broadcast");
+            return;
+        }
+        /**
+         * @}
+         */
         final long ident = Binder.clearCallingIdentity();
         try {
             ActivityManagerNative.broadcastStickyIntent(intent, null, UserHandle.USER_ALL);
@@ -4780,10 +4929,29 @@ public class AudioService extends IAudioService.Stub {
     private void onSetWiredDeviceConnectionState(int device, int state, String name)
     {
         synchronized (mConnectedDevices) {
+        Log.d(TAG, "onSetWiredDeviceConnectionState:" + "device:" + device + ",state:" + state);
+            /**
+             * M: do not broadcast if headset is connected for ALPS00850163 @{
+             */
+            boolean shouldNotify = true;
             if ((state == 0) && ((device == AudioSystem.DEVICE_OUT_WIRED_HEADSET) ||
                     (device == AudioSystem.DEVICE_OUT_WIRED_HEADPHONE) ||
                     (device == AudioSystem.DEVICE_OUT_LINE))) {
-                setBluetoothA2dpOnInt(true);
+                /**
+                 * M: do not setForceUse if headset is connected for
+                 * ALPS00657344 @{
+                 */
+                boolean isHeadphoneOff = (device == AudioSystem.DEVICE_OUT_WIRED_HEADPHONE);
+                boolean isHeadsetOn = mConnectedDevices
+                        .containsKey(AudioSystem.DEVICE_OUT_WIRED_HEADSET);
+                if (isHeadphoneOff && isHeadsetOn) {
+                    shouldNotify = false;
+                    Log.d(TAG, "onSetWiredDeviceConnectionState() no need to setForceUse");
+                }
+                if (shouldNotify) {
+                    setBluetoothA2dpOnInt(true);
+                }
+                /** @} */
             }
             boolean isUsb = ((device & ~AudioSystem.DEVICE_OUT_ALL_USB) == 0) ||
                             (((device & AudioSystem.DEVICE_BIT_IN) != 0) &&
@@ -4817,6 +4985,12 @@ public class AudioService extends IAudioService.Stub {
                         }
                     }
                 }
+                /// M: When connect smartbook,set the HDMI to not fixed volume device @{
+                if (whetherSmartBookConnected(device)) {
+                    Log.d(TAG, "connect smartbook");
+                    mFixedVolumeDevices &= ~AudioSystem.DEVICE_OUT_HDMI;
+                }
+                /// @}
             } else {
                 if (isPlatformTelevision() && ((device & AudioSystem.DEVICE_OUT_HDMI) != 0)) {
                     if (mHdmiManager != null) {
@@ -4825,10 +4999,19 @@ public class AudioService extends IAudioService.Stub {
                         }
                     }
                 }
+                /// M: When disconnect smartbook,set the HDMI to fixed volume device @{
+                if ((device == AudioSystem.DEVICE_OUT_HDMI) && !whetherSmartBookConnected(device)) {
+                    Log.d(TAG, "disconnect smartbook");
+                    mFixedVolumeDevices |= AudioSystem.DEVICE_OUT_HDMI;
+                }
+                /// @}
             }
             if (!isUsb && (device != AudioSystem.DEVICE_IN_WIRED_HEADSET)) {
-                sendDeviceConnectionIntent(device, state, name);
+                sendDeviceConnectionIntent(device, state, name, shouldNotify);
             }
+            /**
+             * @}
+             */
         }
     }
 
@@ -5090,6 +5273,14 @@ public class AudioService extends IAudioService.Stub {
                         0,
                         0,
                         mStreamStates[AudioSystem.STREAM_MUSIC], 0);
+            } else if (action.equals(Intent.ACTION_AIRPLANE_MODE_CHANGED)) {
+                boolean enabled = intent.getBooleanExtra("state", false);
+                Log.d(TAG, "ACTION_AIRPLANE_MODE_CHANGED enabled =" + enabled);
+                if (enabled) {
+                    AudioSystem.setParameters("SetFlightMode=1");
+                } else {
+                    AudioSystem.setParameters("SetFlightMode=0");
+                }
             }
         }
     } // end class AudioServiceBroadcastReceiver
@@ -5165,6 +5356,12 @@ public class AudioService extends IAudioService.Stub {
     public int getCurrentAudioFocus() {
         return mMediaFocusControl.getCurrentAudioFocus();
     }
+
+    // DOLBY_DAP
+    public boolean isAppInFocus(String name) {
+        return mMediaFocusControl.isAppInFocus(name);
+    }
+    // DOLBY_END
 
     //==========================================================================================
     // Device orientation
@@ -6001,5 +6198,315 @@ public class AudioService extends IAudioService.Stub {
 
     private HashMap<IBinder, AudioPolicyProxy> mAudioPolicies =
             new HashMap<IBinder, AudioPolicyProxy>();
+
     private int mAudioPolicyCounter = 0; // always accessed synchronized on mAudioPolicies
+
+     /**
+     * M: Constant about  FM Tx Path.
+     */
+    private static final String GETTXPATHENABLESTATE = "GetFmTxEnable";
+    private static final String TXPATHENABLESTATE = "GetFmTxEnable=true";
+    private static final String TXPATHDISABLESTATE = "GetFmTxEnable=false";
+    private static final String SETTXPATHENABLE = "SetFmTxEnable=1";
+    private static final String SETTXPATHDISENABLE = "SetFmTxEnable=0";
+
+    /**
+     * M: Set AudioPath to FM Tx.
+     */
+    public boolean setAudioPathToFMTx(IBinder cb) {
+        AudioPathToFMTxDeathHandler hdl = new AudioPathToFMTxDeathHandler(cb);
+        String state = null;
+        state = mAudioManager.getParameters(GETTXPATHENABLESTATE);
+
+        if (state.equalsIgnoreCase(TXPATHENABLESTATE)) {
+            Log.d(TAG, "audio path already set to FM Tx, audio state =\" " + state + "\"");
+            // return true;
+        } else {
+            mAudioManager.setParameters(SETTXPATHENABLE);
+            state = mAudioManager.getParameters(GETTXPATHENABLESTATE);
+            if (state.equalsIgnoreCase(TXPATHENABLESTATE)) {
+                Log.d(TAG, "set audio path to FM Tx succeed, audio state =\" " + state + "\"");
+                // return true;
+            } else {
+                Log.e(TAG, "set audio path to FM Tx failed, audio state = \"" + state + "\"");
+                return false;
+            }
+        }
+
+        try {
+            cb.linkToDeath(hdl, 0);
+        } catch (RemoteException e) {
+            // client has already died!
+            Log.w(TAG, "setAudioPathToFMTx could not link to " + cb + " binder death.");
+            return false;
+        }
+
+        return true;
+    }
+
+   /**
+    * M: Set AudioPath out of  FM Tx.
+    */
+    public boolean setAudioPathOutofFMTx() {
+        String state = null;
+        boolean bRet = false;
+
+        state = mAudioManager.getParameters(GETTXPATHENABLESTATE);
+        if (state.equalsIgnoreCase(TXPATHENABLESTATE)) {
+            mAudioManager.setParameters(SETTXPATHDISENABLE);
+            state = mAudioManager.getParameters(GETTXPATHENABLESTATE);
+            if (state.equalsIgnoreCase(TXPATHDISABLESTATE)) {
+                Log.d(TAG, "set audio path out of FM Tx succeed, audio state =\" " + state + "\"");
+                bRet = true;
+            } else {
+                Log.e(TAG, "set audio path out of FM Tx failed, audio state = \"" + state + "\"");
+            }
+        }
+
+        return bRet;
+    }
+
+    /**
+     * M: AudioPathToFMTxDeathHandler.
+     */
+    private class AudioPathToFMTxDeathHandler implements IBinder.DeathRecipient {
+        private IBinder mCb; // To be notified of client's death
+
+        AudioPathToFMTxDeathHandler(IBinder cb) {
+            mCb = cb;
+        }
+
+        public void binderDied() {
+            Log.w(TAG, "AudioPathToFMTxDeathHandler::binderDied");
+            setAudioPathOutofFMTx();
+        }
+
+        public IBinder getBinder() {
+            return mCb;
+        }
+    }
+
+    /**
+     * M: Add for AudioProfile to adjust volume then ringermode not change.
+     */
+    public void setAudioProfileStreamVolume(int streamType, int index, int flags) {
+
+        ensureValidStreamType(streamType);
+        VolumeStreamState streamState = mStreamStates[mStreamVolumeAlias[streamType]];
+
+        final int device = getDeviceForStream(streamType);
+        // get last audible index if stream is muted, current index otherwise
+        final int oldIndex = streamState.getIndex(device);
+
+        index = rescaleIndex(index * 10, streamType, mStreamVolumeAlias[streamType]);
+
+        setStreamVolumeInt(mStreamVolumeAlias[streamType], index, device, false);
+        // get last audible index if stream is muted, current index otherwise
+        index = mStreamStates[streamType].getIndex(device);
+
+        sendVolumeUpdate(streamType, oldIndex, index, flags);
+    }
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Register a RingerMode or volume listener callback to AudioService
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    /**
+     * M: Register the IAudioProfileListener callback to AudioService to listen RingerMode
+     * and volume changed.
+     *
+     * @param callback AudioProfileListener callback.
+     * @param event The event for listener.
+     * @hide
+     * */
+    public void listenRingerModeAndVolume(IAudioProfileListener callback, int event) {
+        if (event != 0) {
+            synchronized (mRecords) {
+                // register callback in AudioProfileService, if the callback is exist, just replace the event.
+                Record record = null;
+                find_and_add: {
+                    IBinder binder = callback.asBinder();
+                    final int N = mRecords.size();
+                    for (int i = 0; i < N; i++) {
+                        record = mRecords.get(i);
+                        if (binder == record.mBinder) {
+                            break find_and_add;
+                        }
+                    }
+                    record = new Record();
+                    record.mBinder = binder;
+                    record.mCallback = callback;
+                    mRecords.add(record);
+                }
+                record.mEvent = event;
+
+                if (event == AudioProfileListener.LISTEN_RINGERMODE_CHANGED) {
+                    try {
+                        record.mCallback.onRingerModeChanged(mRingerMode);
+                    } catch (RemoteException e) {
+                        remove(record.mBinder);
+                        Log.e(TAG, "Dead object in listenRingerModeAndVolume, remove listener's callback!" + e);
+                    }
+                } else if (event == AudioProfileListener.LISTEN_RINGER_VOLUME_CHANGED) {
+                    try {
+                        record.mCallback.onRingerVolumeChanged(getStreamVolume(AudioManager.STREAM_RING), getStreamVolume(AudioManager.STREAM_RING), null);
+                    } catch (RemoteException e) {
+                        remove(record.mBinder);
+                        Log.e(TAG, "Dead object in listenRingerModeAndVolume, remove listener's callback!" + e);
+                    }
+                } else if (event == AudioProfileListener.LISTEN_VIBRATE_SETTING_CHANGED) {
+                    try {
+                        record.mCallback.onVibrateSettingChanged(AudioManager.VIBRATE_TYPE_NOTIFICATION, getVibrateSetting(AudioManager.VIBRATE_TYPE_NOTIFICATION));
+                    } catch (RemoteException e) {
+                        remove(record.mBinder);
+                        Log.e(TAG, "Dead object in listenRingerModeAndVolume, remove listener's callback!" + e);
+                    }
+                }
+                Log.d(TAG, "listenRingerModeAndVolume with event = " + event
+                        + " sucessed, mRecords.size() = "  + mRecords.size()
+                        + ", record.mBinder = " + record.mBinder);
+            }
+        } else {
+            remove(callback.asBinder());
+            Log.d(TAG, "listenRingerModeAndVolume with LISTEN_NONE, so remove this listener's callback!");
+        }
+    }
+    /**
+     * M: Remove listener from record
+     *
+     * @param binder Listener binder
+     */
+    private void remove(IBinder binder) {
+        synchronized (mRecords) {
+            Iterator<Record> iterator = mRecords.iterator();
+            while (iterator.hasNext()) {
+                Record record = (Record) iterator.next();
+                if (record.mBinder.equals(binder)) {
+                    iterator.remove();
+                    Log.d(TAG, "removed ringer mode or ringer volume change listener for: event = "
+                            + record.mEvent +  "record.mBinder = " + record.mBinder
+                            + ", client size = " + mRecords.size());
+                }
+            }
+        }
+    }
+
+    private static class Record {
+
+        IBinder mBinder;
+
+        IAudioProfileListener mCallback;
+
+        int mEvent;
+    }
+
+    /**
+     * M: Notify the change of the RingerMode.
+     */
+    private void notifyRingerModeChanged() {
+        if (!mRecords.isEmpty()) {
+            Log.d(TAG, "notifyRingerModeChanged: New ringermode = " + mRingerMode + ", clients = " + mRecords.size());
+            synchronized (mRecords) {
+                Iterator<Record> iterator = mRecords.iterator();
+                while (iterator.hasNext()) {
+                    Record record = (Record) iterator.next();
+                    if (record.mEvent == AudioProfileListener.LISTEN_RINGERMODE_CHANGED) {
+                        try {
+                            record.mCallback.onRingerModeChanged(mRingerMode);
+                        } catch (RemoteException e) {
+                            iterator.remove();
+                            Log.e(TAG, "Dead object in notifyRingerModeChanged,"
+                                    + " remove listener's callback: record.mBinder = "
+                                    + record.mBinder + ", clients = " + mRecords.size()
+                                    + ", exception = " + e);
+                        }
+                    }
+                }
+            }
+        } else {
+            Log.w(TAG, "notifyRingerModeChanged falled, because there are no listener!");
+        }
+
+    }
+
+    /**
+     * M: Notify the change of the ringer volume.
+     */
+    private void notifyRingerVolumeChanged(int oldVolume, int newVolume, String extra) {
+        if (!mRecords.isEmpty()) {
+            Log.d(TAG, "notifyRingerVolumeChanged: oldVolume = " + oldVolume
+                    + ", newVolume = " + newVolume + ", clients = " + mRecords.size());
+            synchronized (mRecords) {
+                Iterator<Record> iterator = mRecords.iterator();
+                while (iterator.hasNext()) {
+                    Record record = (Record) iterator.next();
+                    if (record.mEvent == AudioProfileListener.LISTEN_RINGER_VOLUME_CHANGED) {
+                        try {
+                            record.mCallback.onRingerVolumeChanged(oldVolume, newVolume, extra);
+                        } catch (RemoteException e) {
+                            iterator.remove();
+                            Log.e(TAG, "Dead object in notifyRingerVolumeChanged,"
+                                    + " remove listener's callback: record.mBinder = "
+                                    + record.mBinder + ", clients = " + mRecords.size()
+                                    + ", exception = " + e);
+                        }
+                    }
+                }
+            }
+        } else {
+            Log.w(TAG, "notifyRingerVolumeChanged falled, because there are no listener!");
+        }
+
+    }
+
+    /**
+     * M: Notify the change of the vibrate setting.
+     */
+    private void notifyVibrateSettingChanged(int vibrateType) {
+        if (!mRecords.isEmpty()) {
+            synchronized (mRecords) {
+                Iterator<Record> iterator = mRecords.iterator();
+                while (iterator.hasNext()) {
+                    Record record = (Record) iterator.next();
+                    if (record.mEvent == AudioProfileListener.LISTEN_VIBRATE_SETTING_CHANGED) {
+                        try {
+                            record.mCallback.onVibrateSettingChanged(vibrateType, getVibrateSetting(vibrateType));
+                        } catch (RemoteException e) {
+                            iterator.remove();
+                            Log.e(TAG, "Dead object in notifyVibrateSettingChanged,"
+                                    + " remove listener's callback: record.mBinder = "
+                                    + record.mBinder + ", clients = " + mRecords.size()
+                                    + ", exception = " + e);
+                        }
+                    }
+                }
+            }
+        } else {
+            Log.w(TAG, "notifyVibrateSettingChanged falled, because there are no listener!");
+        }
+    }
+    /// M: Add for indentify mhl is connecting to smartbook and TV @{
+    private boolean whetherSmartBookConnected(int device) {
+        boolean isSmartBookConnected = false;
+        if (IS_SMARTBOOK_SUPPORT && device == AudioSystem.DEVICE_OUT_HDMI) {
+            IMtkHdmiManager hdmiManager = IMtkHdmiManager.Stub.asInterface(ServiceManager
+                    .getService(Context.HDMI_SERVICE));
+            if (null == hdmiManager) {
+                Log.d(TAG, "hdmiManager is null");
+                return false;
+            }
+            try {
+                Log.d(TAG, "displaytype:" + hdmiManager.getDisplayType());
+                if (hdmiManager.getDisplayType() == HdmiDef.DISPLAY_TYPE_SMB) {
+                    isSmartBookConnected = true;
+                } else {
+                    isSmartBookConnected = false;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "getDisplayType RemoteException");
+                return false;
+            }
+        }
+        return isSmartBookConnected;
+    }
+    /// @}
 }

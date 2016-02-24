@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -371,6 +376,10 @@ public final class ScreenMagnifier implements WindowManagerInternal.Magnificatio
     @Override
     public void onDestroy() {
         mScreenStateObserver.destroy();
+        /// M: Before setting magnification callbacks null to WMS, the magnifying
+        /// animation should be stopped.@{
+        mMagnificationController.reset(false);
+        /// @}
         mWindowManager.setMagnificationCallbacks(null);
     }
 

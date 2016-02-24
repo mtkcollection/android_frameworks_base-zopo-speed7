@@ -1,6 +1,7 @@
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
+
 LOCAL_SRC_FILES:= \
 	bootanimation_main.cpp \
 	AudioPlayer.cpp \
@@ -16,13 +17,23 @@ LOCAL_SHARED_LIBRARIES := \
 	libandroidfw \
 	libutils \
 	libbinder \
-    libui \
+        libui \
 	libskia \
-    libEGL \
-    libGLESv1_CM \
-    libgui \
-    libtinyalsa
+        libEGL \
+        libGLESv2 \
+        libETC1 \
+        libGLESv1_CM \
+        libgui \
+        libmedia \
+        libtinyalsa
 
+#add for regional phone
+ifeq ($(MTK_TER_SERVICE),yes)
+LOCAL_SHARED_LIBRARIES += libterservice
+LOCAL_C_INCLUDES += $(MTK_PATH_SOURCE)/hardware/terservice/include/
+endif
+LOCAL_C_INCLUDES += $(TOP)/$(MTK_ROOT)/frameworks-ext/native/include
+LOCAL_C_INCLUDES += external/skia/include
 LOCAL_MODULE:= bootanimation
 
 ifdef TARGET_32_BIT_SURFACEFLINGER

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +24,10 @@ package android.graphics;
 import android.content.res.AssetManager;
 import java.io.InputStream;
 import java.io.FileInputStream;
+import java.io.BufferedInputStream;
+import android.util.Log;
+
+import android.graphics.Bitmap;
 
 public class Movie {
     private final long mNativeMovie;
@@ -38,10 +47,43 @@ public class Movie {
     public native boolean setTime(int relativeMilliseconds);    
 
     public native void draw(Canvas canvas, float x, float y, Paint paint);
-    
+   
+//for add gif begin
+    //the following 4 methods are intented for no one but GifDecoder to use.
+    //please see GifDecoder for information
+    /**
+     * This method get frame duration of specified GIF frame
+     * @hide
+     */
+    public native int gifFrameDuration(int frameIndex);
+
+    /**
+     * This method get total frame count of GIF file
+     * @hide
+     */
+    public native int gifTotalFrameCount();
+
+    /**
+     * This method get Bitmap of specified GIF frame
+     * @hide
+     */
+    public native Bitmap gifFrameBitmap(int frameIndex);
+
+    /**
+     * This method release all the Info stored for GIF.
+     * After this method is call, Movie Object should no longer be used.
+     * eg. mMovie.closeGif();
+     *     mMovie = null;
+     * @hide
+     */
+    public native void closeGif();
+//for add gif end
+
     public void draw(Canvas canvas, float x, float y) {
         draw(canvas, x, y, null);
     }
+
+//modify original public method to make decode work properly.
 
     public static Movie decodeStream(InputStream is) {
         if (is == null) {
@@ -51,9 +93,27 @@ public class Movie {
             final long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
             return nativeDecodeAsset(asset);
         }
+		
+        // return nativeDecodeStream(is);
+        // we need mark/reset to work properly
 
-        return nativeDecodeStream(is);
+        if (!is.markSupported()) {
+            //the size of Buffer is aligned with BufferedInputStream
+            // used in BitmapFactory of Android default version.
+            is = new BufferedInputStream(is, 8*1024);
+        }
+
+        // so we can call reset() if a given codec gives up after reading up to
+        // this many bytes. FIXME: need to find out from the codecs what this
+        // value should be.
+        is.mark(1024);
+ 
+        return decodeMarkedStream(is);
     }
+
+	
+	private static native Movie decodeMarkedStream(InputStream is);
+	//modify original public method to make decode work properly end.
 
     private static native Movie nativeDecodeAsset(long asset);
     private static native Movie nativeDecodeStream(InputStream is);

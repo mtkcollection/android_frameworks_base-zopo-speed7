@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,9 @@
 
 package android.mtp;
 
+/// M: ALPS00120037, add log for support MTP debugging
+import com.mediatek.xlog.Xlog;
+
 /**
  * Java wrapper for MTP/PTP support as USB responder.
  * {@hide}
@@ -23,25 +31,49 @@ package android.mtp;
 public class MtpServer implements Runnable {
 
     private long mNativeContext; // accessed by native methods
+    /// M: ALPS00120037, Check Thread run status @{
+    private static final String TAG = "MtpServer";
+    private boolean mServerEndup = false;
+    /// M: @}
 
     static {
         System.loadLibrary("media_jni");
     }
 
     public MtpServer(MtpDatabase database, boolean usePtp) {
+        /// M: ALPS00120037, Check Thread run status @{
+        Xlog.v(TAG, "MtpServer constructor: native_setup!!");
+        mServerEndup = false;
+        /// M: @}
+
         native_setup(database, usePtp);
         database.setServer(this);
     }
 
     public void start() {
+        /// M: ALPS00120037, Check Thread run status @{
+        Xlog.v(TAG, "MtpServer start!!");
+        mServerEndup = false;
+        /// M: @}
+
         Thread thread = new Thread(this, "MtpServer");
         thread.start();
     }
 
     @Override
     public void run() {
+        /// M: ALPS00120037, Check Thread run status @{
+        Xlog.v(TAG, "MtpServer run!!");
+        mServerEndup = false;
+        /// M: @}
+
         native_run();
         native_cleanup();
+
+        /// M: ALPS00120037, Check Thread run status @{
+        mServerEndup = true;
+        Xlog.v(TAG, "MtpServer run-end!!");
+        /// M: @}
     }
 
     public void sendObjectAdded(int handle) {
@@ -64,6 +96,56 @@ public class MtpServer implements Runnable {
         native_remove_storage(storage.getStorageId());
     }
 
+    /**
+     * Added for Storage Update and send StorageInfoChanged event
+     * @hide
+     * @internal
+     */
+    public void updateStorage(MtpStorage storage) {
+        native_update_storage(storage);
+    }
+    /**
+     * Added for send StorageInfoChanged event
+     * @hide
+     * @internal
+     */
+    public void sendStorageInfoChanged(MtpStorage storage) {
+        native_send_storage_infoChanged(storage.getStorageId());
+    }
+
+    /**
+     * Added Modification for ALPS00255822, bug from WHQL test @{
+     * @hide
+     * @internal
+     */
+    public void endSession() {
+        Xlog.w(TAG, "MtpServer endSession!!");
+        native_end_session();
+        //return mServerEndup;
+    }
+
+    /**
+     * ALPS00120037, Check Thread run status
+     * @hide
+     * @internal
+     */
+    public boolean getStatus() {
+        Xlog.w(TAG, "MtpServer getStatus!!");
+        return mServerEndup;
+    }
+
+    /**
+     * Added for ALPS00289309, update Object, send ObjectInfoChanged event
+     * @hide
+     * @internal
+     */
+    public void sendObjectInfoChanged(int handle) {
+        native_send_object_infoChanged(handle);
+    }
+
+    /// M: Added Modification for ALPS00255822, bug from WHQL test
+    private native final void native_end_session();
+    /// M: ALPS00289309, update Object
     private native final void native_setup(MtpDatabase database, boolean usePtp);
     private native final void native_run();
     private native final void native_cleanup();
@@ -72,4 +154,11 @@ public class MtpServer implements Runnable {
     private native final void native_send_device_property_changed(int property);
     private native final void native_add_storage(MtpStorage storage);
     private native final void native_remove_storage(int storageId);
+    /**
+     * @internal
+     */
+    private native final void native_update_storage(MtpStorage storage);
+    private native final void native_send_storage_infoChanged(int storageId);
+    private native final void native_send_object_infoChanged(int handle);
+    /// @}
 }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +93,8 @@ static struct {
     jmethodID getKeyboardLayoutOverlay;
     jmethodID getDeviceAlias;
     jmethodID getTouchCalibrationForInputDevice;
+    /// M: Enhance keydispatching predump
+    jmethodID notifyPredump;
 } gServiceClassInfo;
 
 static struct {
@@ -160,6 +167,9 @@ enum {
     WM_ACTION_PASS_TO_USER = 1,
 };
 
+/// M:[SmartBook] Pass SmartBook plug status
+static bool gSmartBookPlugIn = false;
+
 
 // --- NativeInputManager ---
 
@@ -186,8 +196,12 @@ public:
     void setInputWindows(JNIEnv* env, jobjectArray windowHandleObjArray);
     void setFocusedApplication(JNIEnv* env, jobject applicationHandleObj);
     void setInputDispatchMode(bool enabled, bool frozen);
+    /// M:[SmartBook] Pass SmartBook plug status
+    void setSmartBookPlugIn(bool plugin);
     void setSystemUiVisibility(int32_t visibility);
     void setPointerSpeed(int32_t speed);
+    /// M:[SmartBook] Primary key control
+    void setPointerPrimaryKey(bool changePrimaryKey);
     void setShowTouches(bool enabled);
     void setInteractive(bool interactive);
     void reloadCalibration();
@@ -230,6 +244,9 @@ public:
 
     virtual void loadPointerResources(PointerResources* outResources);
 
+    /// M: Enhance keydispatching predump
+    virtual void notifyPredump(const sp<InputApplicationHandle>& inputApplicationHandle, const sp<InputWindowHandle>& inputWindowHandle, int32_t pid, int32_t message);
+
 private:
     sp<InputManager> mInputManager;
 
@@ -255,6 +272,9 @@ private:
         // Show touches feature enable/disable.
         bool showTouches;
 
+        /// M:[SmartBook] Primary key control
+        bool changePrimaryKey;
+
         // Sprite controller singleton, created on first use.
         sp<SpriteController> spriteController;
 
@@ -267,6 +287,11 @@ private:
     void updateInactivityTimeoutLocked(const sp<PointerController>& controller);
     void handleInterceptActions(jint wmActions, nsecs_t when, uint32_t& policyFlags);
     void ensureSpriteControllerLocked();
+
+    /// M:[SmartBook]
+    bool isSmartBookScreenOn();
+    /// M:[SmartBook] Update the mouse icon when resource ready
+    void updatePointerIcon();
 
     static bool checkAndClearExceptionFromCallback(JNIEnv* env, const char* methodName);
 
@@ -423,6 +448,9 @@ void NativeInputManager::getReaderConfiguration(InputReaderConfiguration* outCon
 
         outConfig->showTouches = mLocked.showTouches;
 
+        /// M:[SmartBook] Primary key control
+        outConfig->changePrimaryKey = mLocked.changePrimaryKey;
+
         outConfig->setDisplayInfo(false /*external*/, mLocked.internalViewport);
         outConfig->setDisplayInfo(true /*external*/, mLocked.externalViewport);
     } // release lock
@@ -572,6 +600,20 @@ void NativeInputManager::notifyConfigurationChanged(nsecs_t when) {
     checkAndClearExceptionFromCallback(env, "notifyConfigurationChanged");
 }
 
+/// M: Enhance keydispatching predump @{
+void NativeInputManager::notifyPredump(const sp<InputApplicationHandle>& inputApplicationHandle, const sp<InputWindowHandle>& inputWindowHandle, int32_t pid, int32_t message) {
+    JNIEnv* env = jniEnv();
+    jobject inputApplicationHandleObj =
+            getInputApplicationHandleObjLocalRef(env, inputApplicationHandle);
+    jobject inputWindowHandleObj =
+            getInputWindowHandleObjLocalRef(env, inputWindowHandle);
+
+    env->CallVoidMethod(mServiceObj, gServiceClassInfo.notifyPredump, inputApplicationHandleObj, inputWindowHandleObj, pid, message);
+    env->DeleteLocalRef(inputWindowHandleObj);
+    env->DeleteLocalRef(inputApplicationHandleObj);
+}
+/// @}
+
 nsecs_t NativeInputManager::notifyANR(const sp<InputApplicationHandle>& inputApplicationHandle,
         const sp<InputWindowHandle>& inputWindowHandle, const String8& reason) {
 #if DEBUG_INPUT_DISPATCHER_POLICY
@@ -694,6 +736,41 @@ void NativeInputManager::setInputDispatchMode(bool enabled, bool frozen) {
     mInputManager->getDispatcher()->setInputDispatchMode(enabled, frozen);
 }
 
+void NativeInputManager::setSmartBookPlugIn(bool plugin) {
+    gSmartBookPlugIn = plugin;
+    ALOGD("setSmartBookPlugIn updatePointerIcon: %s", plugin ? "true" : "false");
+    updatePointerIcon();
+}
+
+void NativeInputManager::updatePointerIcon() {
+    Vector<InputDeviceInfo> inputDevices;
+    mInputManager->getReader()->getInputDevices(inputDevices);
+    for(size_t i = 0; i < inputDevices.size(); i ++) {
+        if((inputDevices[i].getSources()&AINPUT_SOURCE_MOUSE) == AINPUT_SOURCE_MOUSE) {
+            ALOGD("Update the pointer icon, source:0x%x", inputDevices[i].getSources());
+            sp<PointerController> controller = mLocked.pointerController.promote();
+            if(controller != NULL){
+                JNIEnv* env = jniEnv();
+                jobject pointerIconObj = env->CallObjectMethod(mServiceObj,
+                        gServiceClassInfo.getPointerIcon);
+
+                if (!checkAndClearExceptionFromCallback(env, "getPointerIcon")) {
+                    PointerIcon pointerIcon;
+                    status_t status = android_view_PointerIcon_load(env, pointerIconObj,
+                            mContextObj, &pointerIcon);
+                    if (!status && !pointerIcon.isNullIcon()) {
+                        controller->setPointerIcon(SpriteIcon(pointerIcon.bitmap,
+                                pointerIcon.hotSpotX, pointerIcon.hotSpotY));
+                    } else {
+                        controller->setPointerIcon(SpriteIcon());
+                    }
+                    env->DeleteLocalRef(pointerIconObj);
+                }
+            }
+        }
+    }
+}
+
 void NativeInputManager::setSystemUiVisibility(int32_t visibility) {
     AutoMutex _l(mLock);
 
@@ -730,6 +807,23 @@ void NativeInputManager::setPointerSpeed(int32_t speed) {
             InputReaderConfiguration::CHANGE_POINTER_SPEED);
 }
 
+/// M:[SmartBook] Primary key control
+void NativeInputManager::setPointerPrimaryKey(bool changePrimaryKey) {
+    { // acquire lock
+        AutoMutex _l(mLock);
+
+        if (mLocked.changePrimaryKey == changePrimaryKey) {
+            return;
+        }
+
+        ALOGI("Pointer primary key is changed: %s", changePrimaryKey ? "yes" : "no");
+        mLocked.changePrimaryKey = changePrimaryKey;
+    } // release lock
+
+    mInputManager->getReader()->requestRefreshConfiguration(
+            InputReaderConfiguration::CHANGE_PRIMARY_KEY);
+}
+
 void NativeInputManager::setShowTouches(bool enabled) {
     { // acquire lock
         AutoMutex _l(mLock);
@@ -748,6 +842,10 @@ void NativeInputManager::setShowTouches(bool enabled) {
 
 void NativeInputManager::setInteractive(bool interactive) {
     mInteractive = interactive;
+}
+
+bool NativeInputManager::isSmartBookScreenOn() {
+    return android_server_PowerManagerService_isSmartBookScreenOn();
 }
 
 void NativeInputManager::reloadCalibration() {
@@ -834,6 +932,14 @@ void NativeInputManager::interceptKeyBeforeQueueing(const KeyEvent* keyEvent,
         policyFlags |= POLICY_FLAG_INTERACTIVE;
     }
     if ((policyFlags & POLICY_FLAG_TRUSTED)) {
+        /// M:[SmartBook] Wake up SmartBook's screen @{
+        if (gSmartBookPlugIn && !isSmartBookScreenOn()) {
+            ALOGD("Wake up SmartBook screen by key event");
+            android_server_PowerManagerService_setSmartBookScreen(2,0);
+            return;
+        }
+        /// @}
+
         nsecs_t when = keyEvent->getEventTime();
         JNIEnv* env = jniEnv();
         jobject keyEventObj = android_view_KeyEvent_fromNative(env, keyEvent);
@@ -870,7 +976,12 @@ void NativeInputManager::interceptMotionBeforeQueueing(nsecs_t when, uint32_t& p
         policyFlags |= POLICY_FLAG_INTERACTIVE;
     }
     if ((policyFlags & POLICY_FLAG_TRUSTED) && !(policyFlags & POLICY_FLAG_INJECTED)) {
-        if (policyFlags & POLICY_FLAG_INTERACTIVE) {
+        /// M:[SmartBook] Wake up SmartBook's screen @{
+        if (gSmartBookPlugIn && !isSmartBookScreenOn()) {
+            ALOGD("Wake up SmartBook screen by motion event");
+            android_server_PowerManagerService_setSmartBookScreen(2,0);
+        /// @}
+        } else if (policyFlags & POLICY_FLAG_INTERACTIVE) {
             policyFlags |= POLICY_FLAG_PASS_TO_USER;
         } else {
             JNIEnv* env = jniEnv();
@@ -1224,6 +1335,13 @@ static void nativeSetInputDispatchMode(JNIEnv* env,
     im->setInputDispatchMode(enabled, frozen);
 }
 
+static void nativeSetSmartBookPlugIn(JNIEnv* env,
+        jclass clazz, jlong ptr, jboolean plugin) {
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+
+    im->setSmartBookPlugIn(plugin);
+}
+
 static void nativeSetSystemUiVisibility(JNIEnv* env,
         jclass clazz, jlong ptr, jint visibility) {
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
@@ -1257,6 +1375,14 @@ static void nativeSetPointerSpeed(JNIEnv* env,
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
 
     im->setPointerSpeed(speed);
+}
+
+/// M:[SmartBook] Primary key control
+static void nativeSetPointerPrimaryKey(JNIEnv* env,
+        jclass clazz, jlong ptr, jboolean changePrimaryKey) {
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+
+    im->setPointerPrimaryKey(changePrimaryKey);
 }
 
 static void nativeSetShowTouches(JNIEnv* env,
@@ -1375,12 +1501,16 @@ static JNINativeMethod gInputManagerMethods[] = {
             (void*) nativeSetFocusedApplication },
     { "nativeSetInputDispatchMode", "(JZZ)V",
             (void*) nativeSetInputDispatchMode },
+    { "nativeSetSmartBookPlugIn", "(JZ)V",
+            (void*) nativeSetSmartBookPlugIn },
     { "nativeSetSystemUiVisibility", "(JI)V",
             (void*) nativeSetSystemUiVisibility },
     { "nativeTransferTouchFocus", "(JLandroid/view/InputChannel;Landroid/view/InputChannel;)Z",
             (void*) nativeTransferTouchFocus },
     { "nativeSetPointerSpeed", "(JI)V",
             (void*) nativeSetPointerSpeed },
+    { "nativeSetPointerPrimaryKey", "(JZ)V",
+            (void*) nativeSetPointerPrimaryKey },
     { "nativeSetShowTouches", "(JZ)V",
             (void*) nativeSetShowTouches },
     { "nativeSetInteractive", "(JZ)V",
@@ -1434,6 +1564,11 @@ int register_android_server_InputManager(JNIEnv* env) {
 
     GET_METHOD_ID(gServiceClassInfo.notifyInputChannelBroken, clazz,
             "notifyInputChannelBroken", "(Lcom/android/server/input/InputWindowHandle;)V");
+
+    /// M: Enhance keydispatching predump @{
+    GET_METHOD_ID(gServiceClassInfo.notifyPredump, clazz,
+            "notifyPredump", "(Lcom/android/server/input/InputApplicationHandle;Lcom/android/server/input/InputWindowHandle;II)V");
+    /// @}
 
     GET_METHOD_ID(gServiceClassInfo.notifyANR, clazz,
             "notifyANR",

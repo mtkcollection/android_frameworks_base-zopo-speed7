@@ -29,6 +29,7 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
 import com.android.systemui.recents.RecentsConfiguration;
+import com.mediatek.xlog.Xlog;
 
 /**
  * This class facilitates swipe to dismiss. It defines an interface to be implemented by the
@@ -37,6 +38,10 @@ import com.android.systemui.recents.RecentsConfiguration;
  */
 public class SwipeHelper {
     static final String TAG = "SwipeHelper";
+
+    /// M: For Debug
+    static final boolean DEBUG = true;
+
     private static final boolean SLOW_ANIMATIONS = false; // DEBUG;
     private static final boolean CONSTRAIN_SWIPE = true;
     private static final boolean FADE_OUT_DURING_SWIPE = true;
@@ -178,7 +183,9 @@ public class SwipeHelper {
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         final int action = ev.getAction();
 
-        switch (action) {
+        /// M: [ALPS01903572] handle multi-touch exception @{
+        switch (action & MotionEvent.ACTION_MASK) {
+        /// M: [ALPS01903572] handle multi-touch exception @}
             case MotionEvent.ACTION_DOWN:
                 mDragging = false;
                 mCurrView = mCallback.getChildAtPosition(ev);
@@ -204,10 +211,22 @@ public class SwipeHelper {
                     }
                 }
                 break;
+            /// M: [ALPS01903572] handle multi-touch exception @{
+            case MotionEvent.ACTION_POINTER_UP: {
+                if (DEBUG) {
+                    int pointerIndex = ev.getActionIndex();
+                    int pointerId = ev.getPointerId(pointerIndex);
+
+                    Xlog.d(TAG, "Ignore multi-touch " + pointerIndex + "(" + pointerId + ")");
+                }
+            }
+            /// M: [ALPS01903572] handle multi-touch exception @}
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 mDragging = false;
                 mCurrView = null;
+                break;
+            default:
                 break;
         }
         return mDragging;

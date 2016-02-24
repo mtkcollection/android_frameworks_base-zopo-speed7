@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +34,7 @@ import android.text.style.LineBackgroundSpan;
 import android.text.style.ParagraphStyle;
 import android.text.style.ReplacementSpan;
 import android.text.style.TabStopSpan;
+import android.util.FloatMath;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.GrowingArrayUtils;
@@ -45,6 +51,8 @@ import java.util.Arrays;
 public abstract class Layout {
     private static final ParagraphStyle[] NO_PARA_SPANS =
         ArrayUtils.emptyArray(ParagraphStyle.class);
+
+    static final String TAG = "Layout";
 
     /* package */ static final EmojiFactory EMOJI_FACTORY = EmojiFactory.newAvailableInstance();
     /* package */ static final int MIN_EMOJI, MAX_EMOJI;
@@ -203,7 +211,13 @@ public abstract class Layout {
 
         drawBackground(canvas, highlight, highlightPaint, cursorOffsetVertical,
                 firstLine, lastLine);
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[draw] " + "start");
+        }
         drawText(canvas, firstLine, lastLine);
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[draw] " + "end");
+        }
     }
 
     /**
@@ -333,7 +347,8 @@ public abstract class Layout {
                     x = right;
                 }
             } else {
-                int max = (int)getLineExtent(i, tabStops, false);
+                /// M: return value of getLineExtent should not have a decimal point
+                int max = (int) FloatMath.ceil(getLineExtent(i, tabStops, false));
                 if (align == Alignment.ALIGN_OPPOSITE) {
                     if (dir == DIR_LEFT_TO_RIGHT) {
                         x = right - max;
@@ -353,6 +368,9 @@ public abstract class Layout {
             } else {
                 tl.set(paint, buf, start, end, dir, directions, hasTabOrEmoji, tabStops);
                 tl.draw(canvas, x, ltop, lbaseline, lbottom);
+            }
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG, "[drawText] " + x + "," + buf.toString());
             }
         }
 
@@ -1908,6 +1926,15 @@ public abstract class Layout {
             TextUtils.copySpansFrom(mSpanned, start, end, Object.class, ss, 0);
             return ss;
         }
+    }
+
+
+    /**
+     * M: Returns whether the single line Text is RtoL or not.
+     * @hide
+     */
+    public boolean isSingleLineRtoL() {
+        return false;
     }
 
     private CharSequence mText;

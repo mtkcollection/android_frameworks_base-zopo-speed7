@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,6 +86,7 @@ public class BugreportReceiver extends BroadcastReceiver {
             notifIntent = buildWarningIntent(context, sendIntent);
         } else {
             notifIntent = sendIntent;
+            return; // Only for avoid the google's issue of bug report. Need to check the root casue.
         }
         notifIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 

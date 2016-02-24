@@ -12,6 +12,7 @@
 #include <androidfw/Asset.h>
 #include <androidfw/ResourceTypes.h>
 #include <netinet/in.h>
+#include "utils/Log.h"
 
 #if 0
     #define TRACE_BITMAP(code)  code
@@ -81,6 +82,54 @@ static void movie_draw(JNIEnv* env, jobject movie, jobject canvas,
     c->drawBitmap(b, fx, fy, p);
 }
 
+// for add gif begin
+//the following 4 methods are intented for no one but Movie to use.
+//please see Movie.java for information
+
+static int movie_gifFrameDuration(JNIEnv* env, jobject movie, int frameIndex) {
+    NPE_CHECK_RETURN_ZERO(env, movie);
+    SkMovie* m = J2Movie(env, movie);
+//LOGE("Movie:movie_gifFrameDuration: frame number %d, duration is %d", frameIndex,m->getGifFrameDuration(frameIndex));
+    return m->getGifFrameDuration(frameIndex);
+}
+
+static jobject movie_gifFrameBitmap(JNIEnv* env, jobject movie, int frameIndex) {
+    NPE_CHECK_RETURN_ZERO(env, movie);
+    SkMovie* m = J2Movie(env, movie);
+    int averTimePoint = 0;
+    int frameDuration = 0;
+    int frameCount = m->getGifTotalFrameCount();
+    if (frameIndex < 0 && frameIndex >= frameCount )
+        return NULL;
+    m->setCurrFrame(frameIndex);
+//then we get frameIndex Bitmap (the current frame of movie is frameIndex now)
+    SkBitmap *createdBitmap = m->createGifFrameBitmap();
+    if (createdBitmap != NULL)
+    {
+        return GraphicsJNI::createBitmap(env, createdBitmap, GraphicsJNI::kBitmapCreateFlag_Premultiplied, NULL);
+    }
+    else 
+    {
+        return NULL;
+    }
+}
+
+static int movie_gifTotalFrameCount(JNIEnv* env, jobject movie) {
+    NPE_CHECK_RETURN_ZERO(env, movie);
+    SkMovie* m = J2Movie(env, movie);
+//LOGE("Movie:movie_gifTotalFrameCount: frame count %d", m->getGifTotalFrameCount());
+    return m->getGifTotalFrameCount();
+}
+
+static void movie_closeGif(JNIEnv* env, jobject movie) {
+    NPE_CHECK_RETURN_VOID(env, movie);
+    SkMovie* m = J2Movie(env, movie);
+//LOGE("Movie:movie_closeGif()");
+    delete m;
+}
+
+// for add gif end
+
 static jobject movie_decodeAsset(JNIEnv* env, jobject clazz, jlong native_asset) {
     android::Asset* asset = reinterpret_cast<android::Asset*>(native_asset);
     if (asset == NULL) return NULL;
@@ -148,6 +197,20 @@ static JNINativeMethod gMethods[] = {
     {   "setTime",  "(I)Z", (void*)movie_setTime  },
     {   "draw",     "(Landroid/graphics/Canvas;FFLandroid/graphics/Paint;)V",
                             (void*)movie_draw  },
+	//for add gif begin
+	//the following 4 methods are intented for no one but Movie to use.
+	//please see Movie.java for information
+	{	"gifFrameDuration", 	"(I)I",
+							(void*)movie_gifFrameDuration  },
+	{	"gifFrameBitmap",	"(I)Landroid/graphics/Bitmap;",
+							(void*)movie_gifFrameBitmap  },
+	{	"gifTotalFrameCount",	"()I",
+							(void*)movie_gifTotalFrameCount  },
+	{	"closeGif",   "()V",
+							(void*)movie_closeGif  },
+	{ "decodeMarkedStream", "(Ljava/io/InputStream;)Landroid/graphics/Movie;",
+							(void*)movie_decodeStream },
+	// for add gif end
     { "nativeDecodeAsset", "(J)Landroid/graphics/Movie;",
                             (void*)movie_decodeAsset },
     { "nativeDecodeStream", "(Ljava/io/InputStream;)Landroid/graphics/Movie;",

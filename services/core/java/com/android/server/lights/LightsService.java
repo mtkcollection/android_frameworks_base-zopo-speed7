@@ -29,13 +29,28 @@ import android.util.Slog;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 
+/* Vanzo:yujianpeng on: Mon, 22 Jun 2015 10:39:26 +0800
+ *  add status light menu
+ */
+import android.os.SystemProperties;
+// End of Vanzo:yujianpeng
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 14:49:31 +0800
+ * add breathlight support
+ */
+import com.android.server.lights.BreathLightsDev;
+// End of Vanzo:luanshijun
+
 public class LightsService extends SystemService {
     static final String TAG = "LightsService";
     static final boolean DEBUG = false;
 
     final LightImpl mLights[] = new LightImpl[LightsManager.LIGHT_ID_COUNT];
 
-    private final class LightImpl extends Light {
+/* Vanzo:luanshijun on: Sat, 25 Apr 2015 15:54:51 +0800
+ * add breathlight support
+ */
+    public final class LightImpl extends Light {
+// End of Vanzo:luanshijun
 
         private LightImpl(int id) {
             mId = id;
@@ -99,6 +114,8 @@ public class LightsService extends SystemService {
         }
 
         private void setLightLocked(int color, int mode, int onMS, int offMS, int brightnessMode) {
+/* Vanzo:yujianpeng on: Mon, 22 Jun 2015 10:40:13 +0800
+ * add status light meune
             if (color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS) {
                 if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
                         + Integer.toHexString(color));
@@ -113,6 +130,44 @@ public class LightsService extends SystemService {
                     Trace.traceEnd(Trace.TRACE_TAG_POWER);
                 }
             }
+ */
+            if(com.android.featureoption.FeatureOption.VANZO_FEATURE_ADD_STATUS_LIGHT_MENU){
+                if (SystemProperties.getBoolean("persist.sys.status_light", true) == false) {
+                    if (mId == LightsManager.LIGHT_ID_BATTERY || mId == LightsManager.LIGHT_ID_NOTIFICATIONS || mId == LightsManager.LIGHT_ID_ATTENTION) {
+                        setLight_native(mNativePointer, mId, 0, LIGHT_FLASH_NONE, 0, 0, 0);
+                        return;
+                    }
+                }
+                if (color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS
+                  || SystemProperties.getBoolean("persist.sys.status_light", true)) {
+                    if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
+                            + Integer.toHexString(color));
+                    mColor = color;
+                    mMode = mode;
+                    mOnMS = onMS;
+                    mOffMS = offMS;
+                    Trace.traceBegin(Trace.TRACE_TAG_POWER, "setLight(" + mId + ", " + color + ")");
+                    try {
+                        setLight_native(mNativePointer, mId, color, mode, onMS, offMS, brightnessMode);
+                    } finally {
+                        Trace.traceEnd(Trace.TRACE_TAG_POWER);
+                    }
+                }
+            } else if(color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS) {
+                    if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
+                            + Integer.toHexString(color));
+                    mColor = color;
+                    mMode = mode;
+                    mOnMS = onMS;
+                    mOffMS = offMS;
+                    Trace.traceBegin(Trace.TRACE_TAG_POWER, "setLight(" + mId + ", " + color + ")");
+                    try {
+                        setLight_native(mNativePointer, mId, color, mode, onMS, offMS, brightnessMode);
+                    } finally {
+                        Trace.traceEnd(Trace.TRACE_TAG_POWER);
+                    }
+            }
+// End of Vanzo:yujianpeng
         }
 
         private int mId;
@@ -166,11 +221,24 @@ public class LightsService extends SystemService {
     public LightsService(Context context) {
         super(context);
 
+/* Vanzo:luanshijun on: Sat, 25 Apr 2015 15:53:21 +0800
+ * add breathlight support
+ */
+        mContext = context;
+// End of Vanzo:luanshijun
         mNativePointer = init_native();
 
         for (int i = 0; i < LightsManager.LIGHT_ID_COUNT; i++) {
             mLights[i] = new LightImpl(i);
         }
+
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 14:51:38 +0800
+ * add breathlight support
+ */
+        if (com.android.featureoption.FeatureOption.VANZO_FEATURE_BREATH_LIGHT_SUPPORT) {
+            new BreathLightsDev( mContext, TAG, mLights[LightsManager.LIGHT_ID_BREATH]);
+        }
+// End of Vanzo:luanshijun
     }
 
     @Override
@@ -207,6 +275,11 @@ public class LightsService extends SystemService {
     private static native long init_native();
     private static native void finalize_native(long ptr);
 
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 20:34:12 +0800
+ * add breathlight support
+ */
+    private final Context mContext;
+// End of Vanzo:luanshijun
     static native void setLight_native(long ptr, int light, int color, int mode,
             int onMS, int offMS, int brightnessMode);
 

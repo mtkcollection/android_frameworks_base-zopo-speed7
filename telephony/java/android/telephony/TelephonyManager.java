@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +52,9 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.mediatek.common.telephony.IOnlyOwnerSimSupport;
+import com.mediatek.common.MPlugin;
+
 /**
  * Provides access to information about the telephony services on
  * the device. Applications can use the methods in this class to
@@ -84,6 +92,18 @@ public class TelephonyManager {
         static final int NEVER_USE = 2;
     }
 
+    /**
+     * M: WFC: Wfc preference values
+     *
+     * @hide
+     */
+    public interface WifiCallingPreferences {
+        static final int CELLULAR_ONLY = 0;
+        static final int WIFI_PREFERRED = 1;
+        static final int CELLULAR_PREFERRED = 2;
+        static final int WIFI_ONLY = 3;
+    }
+
     private final Context mContext;
     private SubscriptionManager mSubscriptionManager;
 
@@ -113,6 +133,13 @@ public class TelephonyManager {
         }
         mSubscriptionManager = SubscriptionManager.from(mContext);
 
+        try {
+            mOnlyOwnerSimSupport = MPlugin.createInstance(IOnlyOwnerSimSupport.class.getName(), mContext);
+        } catch (Exception e) {
+            Rlog.e(TAG, "Fail to create plug-in");
+            e.printStackTrace();
+        }
+
         if (sRegistry == null) {
             sRegistry = ITelephonyRegistry.Stub.asInterface(ServiceManager.getService(
                     "telephony.registry"));
@@ -122,6 +149,13 @@ public class TelephonyManager {
     /** @hide */
     private TelephonyManager() {
         mContext = null;
+
+        try {
+            mOnlyOwnerSimSupport = MPlugin.createInstance(IOnlyOwnerSimSupport.class.getName());
+        } catch (Exception e) {
+            Rlog.e(TAG, "Fail to create plug-in");
+            e.printStackTrace();
+        }
     }
 
     private static TelephonyManager sInstance = new TelephonyManager();
@@ -585,7 +619,6 @@ public class TelephonyManager {
     public String getDeviceSoftwareVersion() {
         return getDeviceSoftwareVersion(getDefaultSim());
     }
-
     /**
      * Returns the software version number for the device, for example,
      * the IMEI/SV for GSM phones. Return null if the software version is
@@ -606,8 +639,12 @@ public class TelephonyManager {
         try {
             return getSubscriberInfo().getDeviceSvnUsingSubId(subId[0]);
         } catch (RemoteException ex) {
+            Rlog.e(TAG, "getDeviceSoftwareVersion error, return null. (slotId: " + slotId + ")");
+            ex.printStackTrace();
             return null;
         } catch (NullPointerException ex) {
+            Rlog.e(TAG, "getDeviceSoftwareVersion error, return null. (slotId: " + slotId + ")");
+            ex.printStackTrace();
             return null;
         }
     }
@@ -1065,8 +1102,25 @@ public class TelephonyManager {
      */
     /** {@hide} */
     public String getNetworkOperatorName(int subId) {
+        //[ALPS01804936]-start:fix JE when change system language to "Burmese"
+        //return getTelephonyProperty(TelephonyProperties.PROPERTY_OPERATOR_ALPHA,
+        //        subId, "");
+
         int phoneId = SubscriptionManager.getPhoneId(subId);
-        return getTelephonyProperty(phoneId, TelephonyProperties.PROPERTY_OPERATOR_ALPHA, "");
+        Rlog.d(TAG, "getNetworkOperatorName phoneId= " + phoneId);
+        if ((phoneId >= 0) && (phoneId < getPhoneCount())) {
+            if (phoneId == PhoneConstants.SIM_ID_4) {
+                return SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_ALPHA_4);
+            } else if (phoneId == PhoneConstants.SIM_ID_3) {
+                return SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_ALPHA_3);
+            } else if (phoneId == PhoneConstants.SIM_ID_2) {
+                return SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_ALPHA_2);
+            } else {
+                return SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_ALPHA);
+            }
+        }
+        return "";
+        //[ALPS01804936]-end
     }
 
     /**
@@ -1214,6 +1268,64 @@ public class TelephonyManager {
     /** Current network is GSM {@hide} */
     public static final int NETWORK_TYPE_GSM = 16;
 
+    /** M: start */
+    /**
+     * MTK network type base
+     * @hide
+     */
+    public static final int NETWORK_TYPE_MTK_BASE = 128;
+    /**
+     * Current network is HSDPAP
+     * @hide
+     */
+    public static final int NETWORK_TYPE_HSDPAP = NETWORK_TYPE_MTK_BASE + 1;
+    /**
+     * Current network is HSDPAP_UPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_HSDPAP_UPA = NETWORK_TYPE_MTK_BASE + 2;
+    /**
+     * Current network is HSUPAP
+     * @hide
+     */
+    public static final int NETWORK_TYPE_HSUPAP = NETWORK_TYPE_MTK_BASE + 3;
+    /**
+     * Current network is HSUPAP_DPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_HSUPAP_DPA = NETWORK_TYPE_MTK_BASE + 4;
+    /**
+     * Current network is DC_DPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_DPA = NETWORK_TYPE_MTK_BASE + 5;
+    /**
+     * Current network is DC_UPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_UPA = NETWORK_TYPE_MTK_BASE + 6;
+    /**
+     * Current network is DC_HSDPAP
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_HSDPAP = NETWORK_TYPE_MTK_BASE + 7;
+    /**
+     * Current network is DC_HSDPAP_UPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_HSDPAP_UPA = NETWORK_TYPE_MTK_BASE + 8;
+    /**
+     * Current network is DC_HSDPAP_DPA
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_HSDPAP_DPA = NETWORK_TYPE_MTK_BASE + 9;
+    /**
+     * Current network is DC_HSPAP
+     * @hide
+     */
+    public static final int NETWORK_TYPE_DC_HSPAP = NETWORK_TYPE_MTK_BASE + 10;
+    /** M: end */
+
     /**
      * @return the NETWORK_TYPE_xxxx for current data connection.
      */
@@ -1289,7 +1401,25 @@ public class TelephonyManager {
      * @hide
      */
     public int getDataNetworkType() {
-        return getDataNetworkType(getDefaultSubscription());
+        /// M: This API should return the data network type of current data connection.
+        /// Make it call ITelephony.getDataNetworkType directly, so PhoneInterfaceManager will get
+        /// chance to handle svlte's data type of dual connection. @{
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                return telephony.getDataNetworkType();
+            } else {
+                // This can happen when the ITelephony interface is not up yet.
+                return NETWORK_TYPE_UNKNOWN;
+            }
+        } catch (RemoteException ex) {
+            // This shouldn't happen in the normal case
+            return NETWORK_TYPE_UNKNOWN;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return NETWORK_TYPE_UNKNOWN;
+        }
+        /// @}
     }
 
     /**
@@ -1548,6 +1678,13 @@ public class TelephonyManager {
      */
     /** {@hide} */
     public int getSimState(int slotIdx) {
+        /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT @{
+        if (mOnlyOwnerSimSupport != null && !mOnlyOwnerSimSupport.isCurrentUserOwner()) {
+            Rlog.d(TAG, "getSimState return: 3gdatasms  MTK_ONLY_OWNER_SIM_SUPPORT ");
+            return SIM_STATE_UNKNOWN;
+        }
+        /// @}
+
         int[] subId = SubscriptionManager.getSubId(slotIdx);
         if (subId == null || subId.length == 0) {
             Rlog.d(TAG, "getSimState:- empty subId return SIM_STATE_ABSENT");
@@ -1621,6 +1758,12 @@ public class TelephonyManager {
      * @hide
      */
     public String getSimOperatorNumericForSubscription(int subId) {
+        /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT @{
+        if (mOnlyOwnerSimSupport != null && !mOnlyOwnerSimSupport.isCurrentUserOwner()) {
+            Rlog.d(TAG, "getSimOperator return: 3gdatasms MTK_ONLY_OWNER_SIM_SUPPORT ");
+            return "";
+        }
+        /// @}
         int phoneId = SubscriptionManager.getPhoneId(subId);
         return getSimOperatorNumericForPhone(phoneId);
     }
@@ -1646,6 +1789,12 @@ public class TelephonyManager {
      * @see #getSimState
      */
     public String getSimOperatorName() {
+        /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT @{
+        if (mOnlyOwnerSimSupport != null && !mOnlyOwnerSimSupport.isCurrentUserOwner()) {
+            Rlog.d(TAG, "getSimOperator return: 3gdatasms MTK_ONLY_OWNER_SIM_SUPPORT ");
+            return "";
+        }
+        /// @}
         return getSimOperatorNameForPhone(getDefaultPhone());
     }
 
@@ -1700,6 +1849,12 @@ public class TelephonyManager {
      * @hide
      */
     public String getSimCountryIsoForSubscription(int subId) {
+        /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT @{
+        if (mOnlyOwnerSimSupport != null && !mOnlyOwnerSimSupport.isCurrentUserOwner()) {
+            Rlog.d(TAG, "getSimCountryIso return: 3gdatasms MTK_ONLY_OWNER_SIM_SUPPORT ");
+            return "";
+        }
+        /// @}
         int phoneId = SubscriptionManager.getPhoneId(subId);
         return getSimCountryIsoForPhone(phoneId);
     }
@@ -1735,6 +1890,12 @@ public class TelephonyManager {
      */
     /** {@hide} */
     public String getSimSerialNumber(int subId) {
+        /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT @{
+        if (mOnlyOwnerSimSupport != null && !mOnlyOwnerSimSupport.isCurrentUserOwner()) {
+            Rlog.d(TAG, "getSimSerialNumber return: 3gdatasms MTK_ONLY_OWNER_SIM_SUPPORT ");
+            return "";
+        }
+        /// @}
         try {
             return getSubscriberInfo().getIccSerialNumberForSubscriber(subId);
         } catch (RemoteException ex) {
@@ -2325,7 +2486,38 @@ public class TelephonyManager {
         } catch (NullPointerException ex) {
           // the phone process is restarting.
           return DATA_ACTIVITY_NONE;
-      }
+        }
+    }
+
+    /**
+     * Returns a constant indicating the type of activity on a data connection
+     * (cellular).
+     *
+     * @see #DATA_ACTIVITY_NONE
+     * @see #DATA_ACTIVITY_IN
+     * @see #DATA_ACTIVITY_OUT
+     * @see #DATA_ACTIVITY_INOUT
+     * @see #DATA_ACTIVITY_DORMANT
+     *
+     * @param subId for which network type is returned
+     */
+    /** {@hide} */
+    public int getDataActivity(int subId) {
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                return telephony.getDataActivityForSubscriber(subId);
+            } else {
+                // This can happen when the ITelephony interface is not up yet.
+                return DATA_ACTIVITY_NONE;
+            }
+        } catch (RemoteException ex) {
+            // the phone process is restarting.
+            return DATA_ACTIVITY_NONE;
+        } catch (NullPointerException ex) {
+          // the phone process is restarting.
+          return DATA_ACTIVITY_NONE;
+        }
     }
 
     /** Data connection state: Unknown.  Used before we know the state.
@@ -2355,6 +2547,35 @@ public class TelephonyManager {
     public int getDataState() {
         try {
             return getITelephony().getDataState();
+        } catch (RemoteException ex) {
+            // the phone process is restarting.
+            return DATA_DISCONNECTED;
+        } catch (NullPointerException ex) {
+            return DATA_DISCONNECTED;
+        }
+    }
+
+    /**
+     * Returns a constant indicating the current data connection state
+     * (cellular).
+     *
+     * @see #DATA_DISCONNECTED
+     * @see #DATA_CONNECTING
+     * @see #DATA_CONNECTED
+     * @see #DATA_SUSPENDED
+     *
+     * @param subId for which network type is returned
+     */
+    /** {@hide} */
+    public int getDataState(int subId) {
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                return telephony.getDataStateForSubscriber(subId);
+            } else {
+                // This can happen when the ITelephony interface is not up yet.
+                return DATA_DISCONNECTED;
+            }
         } catch (RemoteException ex) {
             // the phone process is restarting.
             return DATA_DISCONNECTED;
@@ -3017,6 +3238,7 @@ public class TelephonyManager {
     public static String getTelephonyProperty(int phoneId, String property, String defaultVal) {
         String propVal = null;
         String prop = SystemProperties.get(property);
+        Rlog.d(TAG, "getTelephonyProperty prop value= " + prop);
         if ((prop != null) && (prop.length() > 0)) {
             String values[] = prop.split(",");
             if ((phoneId >= 0) && (phoneId < values.length) && (values[phoneId] != null)) {
@@ -3033,7 +3255,7 @@ public class TelephonyManager {
         // FIXME Need to get it from Telephony Dev Controller when that gets implemented!
         // and then this method shouldn't be used at all!
         if(isMultiSimEnabled()) {
-            return 2;
+            return getPhoneCount();
         } else {
             return 1;
         }
@@ -3133,6 +3355,9 @@ public class TelephonyManager {
         try {
             return getITelephony().getPcscfAddress(apnType);
         } catch (RemoteException e) {
+            return new String[0];
+        } catch (NullPointerException e) {
+            Log.e(TAG, "Error calling ITelephony#getPcscfAddress", e);
             return new String[0];
         }
     }
@@ -3652,10 +3877,14 @@ public class TelephonyManager {
     /** @hide */
     @SystemApi
     public void setDataEnabled(int subId, boolean enable) {
+        String pck = mContext != null ? mContext.getPackageName() : "<unknown>";
+        Log.d(TAG, "setDataEnabled " + enable + " by " + pck);
         try {
             Log.d(TAG, "setDataEnabled: enabled=" + enable);
             getITelephony().setDataEnabled(subId, enable);
         } catch (RemoteException e) {
+            Log.e(TAG, "Error calling ITelephony#setDataEnabled", e);
+        } catch (NullPointerException e) {
             Log.e(TAG, "Error calling ITelephony#setDataEnabled", e);
         }
     }
@@ -3675,6 +3904,8 @@ public class TelephonyManager {
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelephony#getDataEnabled", e);
         } catch (NullPointerException e) {
+            Log.e(TAG, "Error calling ITelephony#getDataEnabled", e);
+            retVal = false;
         }
         Log.d(TAG, "getDataEnabled: retVal=" + retVal);
         return retVal;
@@ -3766,7 +3997,7 @@ public class TelephonyManager {
             }
         }
     }
-
+ 
    /**
     * Returns the IMS Registration Status
     *@hide
@@ -4120,4 +4351,91 @@ public class TelephonyManager {
                     ServiceState.rilRadioTechnologyToString(type));
         }
     }
+
+    // Added by M begin
+    /// M: For MTK multiuser in 3gdatasms:MTK_ONLY_OWNER_SIM_SUPPORT
+    private IOnlyOwnerSimSupport mOnlyOwnerSimSupport = null;
+
+    /**
+     * Opens a logical channel to the ICC card.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CCHO command.
+     *
+     * @param AID Application id. See ETSI 102.221 and 101.220.
+     * @return an IccOpenLogicalChannelResponse object.
+     * @hide
+     */
+    public IccOpenLogicalChannelResponse iccOpenLogicalChannel(int slot, String AID) {
+        try {
+          return getITelephony().iccOpenLogicalChannelUsingSlot(slot, AID);
+        } catch (RemoteException ex) {
+        } catch (NullPointerException ex) {
+        }
+        return null;
+    }
+
+    /**
+     * Closes a previously opened logical channel to the ICC card.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CCHC command.
+     *
+     * @param channel is the channel id to be closed as retruned by a successful
+     *            iccOpenLogicalChannel.
+     * @return true if the channel was closed successfully.
+     * @hide
+     */
+    public boolean iccCloseLogicalChannel(int slot, int channel) {
+        try {
+          return getITelephony().iccCloseLogicalChannelUsingSlot(slot, channel);
+        } catch (RemoteException ex) {
+        } catch (NullPointerException ex) {
+        }
+        return false;
+    }
+
+    /**
+     * Transmit an APDU to the ICC card over a logical channel.
+     *
+     * Input parameters equivalent to TS 27.007 AT+CGLA command.
+     *
+     * @param channel is the channel id to be closed as returned by a successful
+     *            iccOpenLogicalChannel.
+     * @param cla Class of the APDU command.
+     * @param instruction Instruction of the APDU command.
+     * @param p1 P1 value of the APDU command.
+     * @param p2 P2 value of the APDU command.
+     * @param p3 P3 value of the APDU command. If p3 is negative a 4 byte APDU
+     *            is sent to the SIM.
+     * @param data Data to be sent with the APDU.
+     * @return The APDU response from the ICC card with the status appended at
+     *            the end. If an error occurs, an empty string is returned.
+     * @hide
+     */
+    public String iccTransmitApduLogicalChannel(int slot, int channel, int cla,
+            int instruction, int p1, int p2, int p3, String data) {
+        try {
+          return getITelephony().iccTransmitApduLogicalChannelUsingSlot(slot, channel, cla,
+                  instruction, p1, p2, p3, data);
+        } catch (RemoteException ex) {
+        } catch (NullPointerException ex) {
+        }
+        return "";
+    }
+
+    /**
+     * Called by NPMS
+     * @param subId user preferred subId.
+     * @param enabled enable/disable.
+     */
+    /** {@hide} */
+    public void setPolicyDataEnableForSubscriber(int subId, boolean enabled) {
+        try {
+            getITelephony().setPolicyDataEnableForSubscriber(subId, enabled);
+        } catch (RemoteException ex) {
+            ex.printStackTrace();
+        } catch (NullPointerException ex) {
+            ex.printStackTrace();
+        }
+    }
+    // Added by M end 
 }

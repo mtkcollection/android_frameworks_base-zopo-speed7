@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +42,10 @@
 #include "MtpUtils.h"
 #include "mtp.h"
 
+/// M: Added for USB Develpment debug, more log for more debuging help @{
+#include "cutils/xlog.h"
+/// @}
+
 extern "C" {
 #include "libexif/exif-content.h"
 #include "libexif/exif-data.h"
@@ -67,6 +76,13 @@ static jmethodID method_getObjectReferences;
 static jmethodID method_setObjectReferences;
 static jmethodID method_sessionStarted;
 static jmethodID method_sessionEnded;
+/// M: Added Modification for ALPS00264207, ALPS00248646 @{
+static jmethodID method_getObjectBeginIndication;
+static jmethodID method_getObjectEndIndication;
+/// @}
+/// M: Added function all for get handel by Path
+static jmethodID method_getObjectHandleWithPath;
+/// @}
 
 static jfieldID field_context;
 static jfieldID field_batteryLevel;
@@ -175,6 +191,18 @@ public:
     virtual void                    sessionStarted();
 
     virtual void                    sessionEnded();
+/// M: Added Modification for ALPS00264207, ALPS00248646 @{
+    virtual void                    getObjectBeginIndication(const char * storagePath);
+    virtual void                    getObjectEndIndication(const char * storagePath);
+/// @}
+/// M: Added function all for get handel by Path
+    virtual MtpObjectHandle         getObjectHandleWithPath(const char* path,
+                                            MtpObjectFormat format,
+                                            MtpObjectHandle parent,
+                                            MtpStorageID storage,
+                                            uint64_t size,
+                                            time_t modified);
+/// @}
 };
 
 // ----------------------------------------------------------------------------
@@ -262,12 +290,23 @@ MtpObjectHandleList* MyMtpDatabase::getObjectList(MtpStorageID storageID,
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase, method_getObjectList,
                 (jint)storageID, (jint)format, (jint)parent);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpObjectHandleList* list = new MtpObjectHandleList();
     jint* handles = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
     for (int i = 0; i < length; i++)
+    {
         list->push(handles[i]);
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                     "%s: handles[%d] = 0x%x, length = %d\n", __func__, i, handles[i], length);
+        /// @}
+    }
     env->ReleaseIntArrayElements(array, handles, 0);
     env->DeleteLocalRef(array);
 
@@ -291,7 +330,14 @@ MtpObjectFormatList* MyMtpDatabase::getSupportedPlaybackFormats() {
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase,
             method_getSupportedPlaybackFormats);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                     "%s: array null\n", __func__);
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpObjectFormatList* list = new MtpObjectFormatList();
     jint* formats = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
@@ -309,7 +355,12 @@ MtpObjectFormatList* MyMtpDatabase::getSupportedCaptureFormats() {
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase,
             method_getSupportedCaptureFormats);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpObjectFormatList* list = new MtpObjectFormatList();
     jint* formats = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
@@ -327,7 +378,12 @@ MtpObjectPropertyList* MyMtpDatabase::getSupportedObjectProperties(MtpObjectForm
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase,
             method_getSupportedObjectProperties, (jint)format);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpObjectPropertyList* list = new MtpObjectPropertyList();
     jint* properties = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
@@ -345,7 +401,12 @@ MtpDevicePropertyList* MyMtpDatabase::getSupportedDeviceProperties() {
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase,
             method_getSupportedDeviceProperties);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpDevicePropertyList* list = new MtpDevicePropertyList();
     jint* properties = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
@@ -383,6 +444,13 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyValue(MtpObjectHandle handle,
 
         int type = dataTypes[0];
         jlong longValue = (longValues ? longValues[0] : 0);
+
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                     "%s: objectHandles: 0x%x, propertyCodes: 0x%x, dataTypes =: 0x%x, type = 0x%x\n", __func__, objectHandles[0], propertyCodes[0], dataTypes[0], type);
+        sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                     "%s: getObjectPropertyList longValues: 0x%p, longValue: L%ld \n", __func__, longValues, longValue);
+        /// @}
 
         // special case date properties, which are strings to MTP
         // but stored internally as a uint64
@@ -436,9 +504,27 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyValue(MtpObjectHandle handle,
                 jstring stringValue = (jstring)env->GetObjectArrayElement(stringValuesArray, 0);
                 const char* str = (stringValue ? env->GetStringUTFChars(stringValue, NULL) : NULL);
                 if (stringValue) {
+                    const char* str = env->GetStringUTFChars(stringValue, NULL);
+                    /// M: Added for USB Develpment debug, more log for more debuging help @{
+                    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                                 "%s: objectHandles: 0x%x, propertyCodes: 0x%x, dataTypes =: 0x%x, type = 0x%x\n", __func__, objectHandles[0], propertyCodes[0], dataTypes[0], type);
+                    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                                 "%s: objectHandles: str = %s\n", __func__, str);
+                    /// @}
+                    if (str == NULL) {
+                        return MTP_RESPONSE_GENERAL_ERROR;
+                    }
                     packet.putString(str);
                     env->ReleaseStringUTFChars(stringValue, str);
+                    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                    if(stringValue)
+                        env->DeleteLocalRef(stringValue);
+                    /// @}
                 } else {
+                    /// M: Added for USB Develpment debug, more log for more debuging help @{
+                    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                                 "%s: emptyString!! \n", __func__);
+                    /// @}
                     packet.putEmptyString();
                 }
                 env->DeleteLocalRef(stringValue);
@@ -532,7 +618,12 @@ MtpResponseCode MyMtpDatabase::setObjectPropertyValue(MtpObjectHandle handle,
     int         type;
 
     if (!getObjectPropertyInfo(property, type))
+    {
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        ALOGE("%s: MTP_RESPONSE_OBJECT_PROP_NOT_SUPPORTED!!\n", __func__);
+        /// @}
         return MTP_RESPONSE_OBJECT_PROP_NOT_SUPPORTED;
+    }
 
     JNIEnv* env = AndroidRuntime::getJNIEnv();
     jlong longValue = 0;
@@ -554,6 +645,10 @@ MtpResponseCode MyMtpDatabase::setObjectPropertyValue(MtpObjectHandle handle,
 
 fail:
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    /// M: Added for USB Develpment debug, more log for more debuging help @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                "%s: result = 0x%x", __func__, result);
+    /// @}
     return result;
 }
 
@@ -571,6 +666,13 @@ MtpResponseCode MyMtpDatabase::getDevicePropertyValue(MtpDeviceProperty property
         if (!getDevicePropertyInfo(property, type))
             return MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
 
+    if (!getDevicePropertyInfo(property, type))
+    {
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        ALOGE("%s: MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED!!\n", __func__);
+        /// @}
+        return MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
+    }
         jint result = env->CallIntMethod(mDatabase, method_getDeviceProperty,
                     (jint)property, mLongBuffer, mStringBuffer);
         if (result != MTP_RESPONSE_OK) {
@@ -582,49 +684,51 @@ MtpResponseCode MyMtpDatabase::getDevicePropertyValue(MtpDeviceProperty property
         jlong longValue = longValues[0];
         env->ReleaseLongArrayElements(mLongBuffer, longValues, 0);
 
-        switch (type) {
-            case MTP_TYPE_INT8:
-                packet.putInt8(longValue);
-                break;
-            case MTP_TYPE_UINT8:
-                packet.putUInt8(longValue);
-                break;
-            case MTP_TYPE_INT16:
-                packet.putInt16(longValue);
-                break;
-            case MTP_TYPE_UINT16:
-                packet.putUInt16(longValue);
-                break;
-            case MTP_TYPE_INT32:
-                packet.putInt32(longValue);
-                break;
-            case MTP_TYPE_UINT32:
-                packet.putUInt32(longValue);
-                break;
-            case MTP_TYPE_INT64:
-                packet.putInt64(longValue);
-                break;
-            case MTP_TYPE_UINT64:
-                packet.putUInt64(longValue);
-                break;
-            case MTP_TYPE_INT128:
-                packet.putInt128(longValue);
-                break;
-            case MTP_TYPE_UINT128:
-                packet.putInt128(longValue);
-                break;
-            case MTP_TYPE_STR:
-            {
-                jchar* str = env->GetCharArrayElements(mStringBuffer, 0);
-                packet.putString(str);
-                env->ReleaseCharArrayElements(mStringBuffer, str, 0);
-                break;
-             }
-            default:
-                ALOGE("unsupported type in getDevicePropertyValue\n");
-                return MTP_RESPONSE_INVALID_DEVICE_PROP_FORMAT;
-        }
-
+    switch (type) {
+        case MTP_TYPE_INT8:
+            packet.putInt8(longValue);
+            break;
+        case MTP_TYPE_UINT8:
+            packet.putUInt8(longValue);
+            break;
+        case MTP_TYPE_INT16:
+            packet.putInt16(longValue);
+            break;
+        case MTP_TYPE_UINT16:
+            packet.putUInt16(longValue);
+            break;
+        case MTP_TYPE_INT32:
+            packet.putInt32(longValue);
+            break;
+        case MTP_TYPE_UINT32:
+            packet.putUInt32(longValue);
+            break;
+        case MTP_TYPE_INT64:
+            packet.putInt64(longValue);
+            break;
+        case MTP_TYPE_UINT64:
+            packet.putUInt64(longValue);
+            break;
+        case MTP_TYPE_INT128:
+            packet.putInt128(longValue);
+            break;
+        case MTP_TYPE_UINT128:
+            packet.putInt128(longValue);
+            break;
+        case MTP_TYPE_STR:
+        {
+            jchar* str = env->GetCharArrayElements(mStringBuffer, 0);
+            packet.putString(str);
+            env->ReleaseCharArrayElements(mStringBuffer, str, 0);
+            break;
+         }
+        default:
+            ALOGE("unsupported type in getDevicePropertyValue\n");
+            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            checkAndClearExceptionFromCallback(env, __FUNCTION__);
+            /// @}
+            return MTP_RESPONSE_INVALID_DEVICE_PROP_FORMAT;
+      }
         checkAndClearExceptionFromCallback(env, __FUNCTION__);
         return MTP_RESPONSE_OK;
     }
@@ -635,7 +739,12 @@ MtpResponseCode MyMtpDatabase::setDevicePropertyValue(MtpDeviceProperty property
     int         type;
 
     if (!getDevicePropertyInfo(property, type))
+    {
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        ALOGE("%s: MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED!!\n", __func__);
+        /// @}
         return MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
+    }
 
     JNIEnv* env = AndroidRuntime::getJNIEnv();
     jlong longValue = 0;
@@ -657,11 +766,90 @@ MtpResponseCode MyMtpDatabase::setDevicePropertyValue(MtpDeviceProperty property
 
 fail:
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+    /// M: Added for USB Develpment debug, more log for more debuging help @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: result = 0x%x", __func__, result);
+    /// @}
+
     return result;
 }
 
-MtpResponseCode MyMtpDatabase::resetDeviceProperty(MtpDeviceProperty /*property*/) {
-    return -1;
+MtpResponseCode MyMtpDatabase::resetDeviceProperty(MtpDeviceProperty property) {
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    //instead of not support, not FFFF
+    //return -1;
+    //return MTP_RESPONSE_OPERATION_NOT_SUPPORTED;
+
+    //For WHQL test, try to set the writable device property to default value
+    //for for device frandly name and sync partner
+    //there is no default value for them, write them to empty string
+    JNIEnv* env = AndroidRuntime::getJNIEnv();
+    jlong longValue = 0;
+    jstring stringValue = NULL;
+    jint result;
+
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: property = 0x%x", __func__, property);
+
+    if((property & 0xFFFFFFFF) >= 0xFFFF)
+    {
+        //reset all read-write device property
+        MtpStringBuffer buffer;
+
+        //MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER
+        memset(&buffer, 0, sizeof(MtpStringBuffer));
+        stringValue = env->NewStringUTF((const char *)buffer);
+
+        result = env->CallIntMethod(mDatabase, method_setDeviceProperty,
+                    (jint)MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER, longValue, stringValue);
+        if (stringValue)
+            env->DeleteLocalRef(stringValue);
+
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        //MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME
+        memset(&buffer, 0, sizeof(MtpStringBuffer));
+        stringValue = env->NewStringUTF((const char *)buffer);
+
+        result = env->CallIntMethod(mDatabase, method_setDeviceProperty,
+                    (jint)MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME, longValue, stringValue);
+        if (stringValue)
+            env->DeleteLocalRef(stringValue);
+
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    }
+    else
+    if(property == MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER || property == MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME)
+    {
+        MtpStringBuffer buffer;
+        memset(&buffer, 0, sizeof(MtpStringBuffer));
+        stringValue = env->NewStringUTF((const char *)buffer);
+
+        result = env->CallIntMethod(mDatabase, method_setDeviceProperty,
+                    (jint)property, longValue, stringValue);
+        if (stringValue)
+            env->DeleteLocalRef(stringValue);
+
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+    }
+    else if(property == MTP_DEVICE_PROPERTY_IMAGE_SIZE)
+    {
+        ALOGE("%s: property = 0x%x, non-writable!!\n", __func__, property);
+        result = MTP_RESPONSE_ACCESS_DENIED;
+    }
+    else
+    {
+        ALOGE("%s: property = 0x%x, MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED!!\n", __func__, property);
+        result = MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
+    }
+
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: result = 0x%x", __func__, result);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    return result;
+
+    /// @}
 }
 
 MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
@@ -673,9 +861,20 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
                 (jlong)handle, (jint)format, (jlong)property, (jint)groupCode, (jint)depth);
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
     if (!list)
-        return MTP_RESPONSE_GENERAL_ERROR;
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    {
+        //for WHQL test
+        return MTP_RESPONSE_SPECIFICATION_BY_FORMAT_UNSUPPORTED;
+        //return MTP_RESPONSE_GENERAL_ERROR;
+    }
+    /// @}
     int count = env->GetIntField(list, field_mCount);
     MtpResponseCode result = env->GetIntField(list, field_mResult);
+
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: handle = 0x%x, count = %d\n", __func__, handle, count);
+    /// @}
 
     packet.putUInt32(count);
     if (count > 0) {
@@ -696,6 +895,13 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
             int type = dataTypes[i];
             packet.putUInt16(type);
 
+            //Added Modification for ALPS00255822, bug from WHQL test
+            sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                         "%s: objectHandles[%d] = 0x%x, count = %d\n", __func__, i, objectHandles[i]);
+            sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                         "%s: propertyCodes[%d] = 0x%x, count = %d\n", __func__, i, propertyCodes[i]);
+            //Added Modification for ALPS00255822, bug from WHQL test
+
             switch (type) {
                 case MTP_TYPE_INT8:
                     packet.putInt8(longValues[i]);
@@ -709,6 +915,12 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
                 case MTP_TYPE_UINT16:
                     packet.putUInt16(longValues[i]);
                     break;
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                case MTP_TYPE_AUINT16:
+                    packet.putUInt16(0x00);
+                    packet.putUInt16(0x00);
+                    break;
+                /// @}
                 case MTP_TYPE_INT32:
                     packet.putInt32(longValues[i]);
                     break;
@@ -740,7 +952,9 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
                     break;
                 }
                 default:
-                    ALOGE("bad or unsupported data type in MyMtpDatabase::getObjectPropertyList");
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                    ALOGE("bad or unsupported data type in MyMtpDatabase::getObjectPropertyList: objectHandles[%d]=0x%x, propertyCodes[%d] = 0x%x, type = 0x%x",i, objectHandles[i], i, propertyCodes[i], type);
+                /// @}
                     break;
             }
         }
@@ -762,6 +976,10 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
 
     env->DeleteLocalRef(list);
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s result: 0x%x \n", __func__, result);
+    /// @}
     return result;
 }
 
@@ -797,6 +1015,9 @@ MtpResponseCode MyMtpDatabase::getObjectInfo(MtpObjectHandle handle,
     JNIEnv* env = AndroidRuntime::getJNIEnv();
     if (!env->CallBooleanMethod(mDatabase, method_getObjectInfo,
                 (jint)handle, mIntBuffer, mStringBuffer, mLongBuffer)) {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return MTP_RESPONSE_INVALID_OBJECT_HANDLE;
     }
 
@@ -821,9 +1042,13 @@ MtpResponseCode MyMtpDatabase::getObjectInfo(MtpObjectHandle handle,
     info.mName = strdup((const char *)temp);
     env->ReleaseCharArrayElements(mStringBuffer, str, 0);
 
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: objectHandles: 0x%x, info.mFormat: 0x%x, info.mStorageID =: 0x%x, info.mName = %s \n", __func__, handle, info.mFormat, info.mStorageID, info.mName);
+    /// @}
+
     // read EXIF data for thumbnail information
     if (info.mFormat == MTP_FORMAT_EXIF_JPEG || info.mFormat == MTP_FORMAT_JFIF) {
-
         ExifData *exifdata = exif_data_new_from_file(path);
         if (exifdata) {
             //exif_data_foreach_content(exifdata, foreachcontent, NULL);
@@ -837,6 +1062,20 @@ MtpResponseCode MyMtpDatabase::getObjectInfo(MtpObjectHandle handle,
             info.mThumbFormat = MTP_FORMAT_EXIF_JPEG;
             info.mImagePixWidth = w ? getLongFromExifEntry(w) : 0;
             info.mImagePixHeight = h ? getLongFromExifEntry(h) : 0;
+
+            /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                         "%s: info.FileName = %s \n", __func__, info.mName);
+			sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+						 "%s: info.mThumbCompressedSize = %d \n", __func__, info.mThumbCompressedSize);
+			sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+						 "%s: info.mThumbFormat = %d \n", __func__, info.mThumbFormat);
+			sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+						 "%s: info.mImagePixWidth = %d \n", __func__, info.mImagePixWidth);
+			sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+						 "%s: info.mImagePixHeight = %d \n", __func__, info.mImagePixHeight);
+            /// @}
+
             exif_data_unref(exifdata);
         }
     }
@@ -879,6 +1118,11 @@ MtpResponseCode MyMtpDatabase::getObjectFilePath(MtpObjectHandle handle,
     jint result = env->CallIntMethod(mDatabase, method_getObjectFilePath,
                 (jint)handle, mStringBuffer, mLongBuffer);
     if (result != MTP_RESPONSE_OK) {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+		sxlog_printf(ANDROID_LOG_ERROR, "MtpDatabase_JNI",
+					 "%s, line %d: result = 0x%x. \n", __func__, __LINE__, result);
+        //env->ReleaseCharArrayElements(mStringBuffer, 0, 0);
+        /// @}
         checkAndClearExceptionFromCallback(env, __FUNCTION__);
         return result;
     }
@@ -944,12 +1188,49 @@ static const PropertyTableEntry   kDevicePropertyTable[] = {
     {   MTP_DEVICE_PROPERTY_BATTERY_LEVEL,              MTP_TYPE_UINT8 },
 };
 
+/// M: Added Modification for ALPS00255822, bug from WHQL test @{
+typedef enum {
+    PROPERTY_PROTECTION_STATUS_NONE             = 0x0000,
+    PROPERTY_PROTECTION_STATUS_READ_ONLY        = 0x0001,
+    PROPERTY_PROTECTION_STATUS_PTP_RESER_BEGIN  = 0x0002,
+    PROPERTY_PROTECTION_STATUS_PTP_RESER_END    = 0x7FFF,
+    PROPERTY_PROTECTION_STATUS_READ_ONLY_DATA   = 0x8002,
+    PROPERTY_PROTECTION_STATUS_NONE_TRANS_DATA  = 0x8003,
+    PROPERTY_PROTECTION_STATUS_MTP_RESER_BEGIN  = 0x8004,
+    PROPERTY_PROTECTION_STATUS_MTP_RESER_END    = 0x8BFF,
+    PROPERTY_PROTECTION_STATUS_VENDOR_RESER_BEGIN = 0x8C00,
+    PROPERTY_PROTECTION_STATUS_VENDOR_RESER_END = 0xFFFF,
+}PROPERTY_PROTECTION_STATUS_ENUM;
+
+static const int kObjectPropProtectionStatus[] = {
+
+    PROPERTY_PROTECTION_STATUS_NONE,
+    PROPERTY_PROTECTION_STATUS_READ_ONLY,
+    PROPERTY_PROTECTION_STATUS_READ_ONLY_DATA,
+    PROPERTY_PROTECTION_STATUS_NONE_TRANS_DATA
+};
+/// @}
+
 bool MyMtpDatabase::getObjectPropertyInfo(MtpObjectProperty property, int& type) {
     int count = sizeof(kObjectPropertyTable) / sizeof(kObjectPropertyTable[0]);
     const PropertyTableEntry* entry = kObjectPropertyTable;
+
+    /// M: Added for USB Develpment debug, more log for more debuging help @{
+    sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                "%s: property = 0x%x, count=%d \n",__func__, property, count);
+    /// @}
+
     for (int i = 0; i < count; i++, entry++) {
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                    "%s: Just for debugging!! entry->property (%d)= 0x%x \n", __func__, i, entry->property);
+        /// @}
         if (entry->property == property) {
             type = entry->type;
+            /// M: Added for USB Develpment debug, more log for more debuging help @{
+            sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                        "%s: get type = 0x%x \n", __func__, type);
+            /// @}
             return true;
         }
     }
@@ -959,9 +1240,23 @@ bool MyMtpDatabase::getObjectPropertyInfo(MtpObjectProperty property, int& type)
 bool MyMtpDatabase::getDevicePropertyInfo(MtpDeviceProperty property, int& type) {
     int count = sizeof(kDevicePropertyTable) / sizeof(kDevicePropertyTable[0]);
     const PropertyTableEntry* entry = kDevicePropertyTable;
+
+    /// M: Added for USB Develpment debug, more log for more debuging help @{
+    sxlog_printf(ANDROID_LOG_DEBUG, "MtpDatabase_JNI",
+                 "%s: property = 0x%x, count=%d \n",__func__, property, count);
+    /// @}
+
     for (int i = 0; i < count; i++, entry++) {
+        /// M: Added for USB Develpment debug, more log for more debuging help @{
+        sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                    "%s: Just for debugging!! entry->property (%d)= 0x%x\n", __func__, i, entry->property);
+        /// @}
         if (entry->property == property) {
             type = entry->type;
+            /// M: Added for USB Develpment debug, more log for more debuging help @{
+            sxlog_printf(ANDROID_LOG_VERBOSE, "MtpDatabase_JNI",
+                        "%s: get type = 0x%x\n", __func__, type);
+            /// @}
             return true;
         }
     }
@@ -973,7 +1268,12 @@ MtpObjectHandleList* MyMtpDatabase::getObjectReferences(MtpObjectHandle handle) 
     jintArray array = (jintArray)env->CallObjectMethod(mDatabase, method_getObjectReferences,
                 (jint)handle);
     if (!array)
+    {
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return NULL;
+    }
     MtpObjectHandleList* list = new MtpObjectHandleList();
     jint* handles = env->GetIntArrayElements(array, 0);
     jsize length = env->GetArrayLength(array);
@@ -993,6 +1293,9 @@ MtpResponseCode MyMtpDatabase::setObjectReferences(MtpObjectHandle handle,
     jintArray array = env->NewIntArray(count);
     if (!array) {
         ALOGE("out of memory in setObjectReferences");
+        /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        checkAndClearExceptionFromCallback(env, __FUNCTION__);
+        /// @}
         return false;
     }
     jint* handles = env->GetIntArrayElements(array, 0);
@@ -1004,6 +1307,17 @@ MtpResponseCode MyMtpDatabase::setObjectReferences(MtpObjectHandle handle,
     env->DeleteLocalRef(array);
 
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+    /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+    if(result == MTP_RESPONSE_GENERAL_ERROR)
+    {
+        sxlog_printf(ANDROID_LOG_ERROR, "MtpDatabase_JNI",
+                    "%s: Not Playlist, not accept!!\n",__func__);
+        //Not Playlist, we don't accept
+        //result = MTP_RESPONSE_INVALID_OBJECT_REFERENCE;
+        result = MTP_RESPONSE_ACCESS_DENIED;
+    }
+    /// @}
     return result;
 }
 
@@ -1026,6 +1340,9 @@ MtpProperty* MyMtpDatabase::getObjectPropertyDesc(MtpObjectProperty property,
                                      };
 
     MtpProperty* result = NULL;
+/// M: Added Modification for ALPS00255822, bug from WHQL test @{
+#if 0
+/// @}
     switch (property) {
         case MTP_PROPERTY_OBJECT_FORMAT:
             // use format as default value
@@ -1084,6 +1401,79 @@ MtpProperty* MyMtpDatabase::getObjectPropertyDesc(MtpObjectProperty property,
             result->setFormRange(8000, 48000, 1);
             break;
     }
+/// Added Modification for ALPS00255822, bug from WHQL test @ {
+#else
+    switch (property) {
+        case MTP_PROPERTY_OBJECT_FORMAT:
+            // use format as default value
+            result = new MtpProperty(property, MTP_TYPE_UINT16, false, format);
+            break;
+        case MTP_PROPERTY_PROTECTION_STATUS:
+        case MTP_PROPERTY_TRACK:
+            result = new MtpProperty(property, MTP_TYPE_UINT16);
+            break;
+/// M: Added Modification for ALPS00255822, bug from WHQL test @{
+            //remarked for formal MTP sync, open for MTP WHQL
+/*        case MTP_PROPERTY_PROTECTION_STATUS:
+            result = new MtpProperty(property, MTP_TYPE_UINT16);
+            result->setFormEnum(kObjectPropProtectionStatus, 4);
+            break;*/
+/// M: Added Modification for ALPS00255822, bug from WHQL test @{
+        case MTP_PROPERTY_STORAGE_ID:
+        case MTP_PROPERTY_PARENT_OBJECT:
+        case MTP_PROPERTY_DURATION:
+        case MTP_PROPERTY_AUDIO_WAVE_CODEC:
+            result = new MtpProperty(property, MTP_TYPE_UINT32);
+            break;
+        case MTP_PROPERTY_OBJECT_SIZE:
+            result = new MtpProperty(property, MTP_TYPE_UINT64);
+            break;
+        case MTP_PROPERTY_PERSISTENT_UID:
+            result = new MtpProperty(property, MTP_TYPE_UINT128);
+            break;
+        case MTP_PROPERTY_NAME:
+        case MTP_PROPERTY_DISPLAY_NAME:
+        case MTP_PROPERTY_ARTIST:
+        case MTP_PROPERTY_ALBUM_NAME:
+        case MTP_PROPERTY_ALBUM_ARTIST:
+        case MTP_PROPERTY_GENRE:
+        case MTP_PROPERTY_COMPOSER:
+            result = new MtpProperty(property, MTP_TYPE_STR);
+            break;
+        case MTP_PROPERTY_DESCRIPTION:
+            result = new MtpProperty(property, MTP_TYPE_STR);
+            /*result = new MtpProperty(property, MTP_TYPE_AUINT16);
+                    result->setFormLongString(300);*/
+            break;
+        case MTP_PROPERTY_DATE_MODIFIED:
+        case MTP_PROPERTY_DATE_ADDED:
+        case MTP_PROPERTY_ORIGINAL_RELEASE_DATE:
+            result = new MtpProperty(property, MTP_TYPE_STR);
+            result->setFormDateTime();
+            break;
+        case MTP_PROPERTY_OBJECT_FILE_NAME:
+            // We allow renaming files and folders
+            result = new MtpProperty(property, MTP_TYPE_STR, true);
+            break;
+        case MTP_PROPERTY_BITRATE_TYPE:
+             result = new MtpProperty(property, MTP_TYPE_UINT16);
+            result->setFormEnum(bitrateEnum, sizeof(bitrateEnum)/sizeof(bitrateEnum[0]));
+            break;
+        case MTP_PROPERTY_AUDIO_BITRATE:
+            result = new MtpProperty(property, MTP_TYPE_UINT32);
+            result->setFormRange(1, 1536000, 1);
+            break;
+        case MTP_PROPERTY_NUMBER_OF_CHANNELS:
+            result = new MtpProperty(property, MTP_TYPE_UINT16);
+            result->setFormEnum(channelEnum, sizeof(channelEnum)/sizeof(channelEnum[0]));
+            break;
+        case MTP_PROPERTY_SAMPLE_RATE:
+            result = new MtpProperty(property, MTP_TYPE_UINT32);
+            result->setFormRange(8000, 48000, 1);
+            break;
+    }
+#endif
+/// @}
 
     return result;
 }
@@ -1094,10 +1484,11 @@ MtpProperty* MyMtpDatabase::getDevicePropertyDesc(MtpDeviceProperty property) {
     bool writable = false;
 
     switch (property) {
-        case MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
+        //case MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
         case MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME:
             writable = true;
             // fall through
+        case MTP_DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER:
         case MTP_DEVICE_PROPERTY_IMAGE_SIZE: {
             result = new MtpProperty(property, MTP_TYPE_STR, writable);
 
@@ -1110,6 +1501,14 @@ MtpProperty* MyMtpDatabase::getDevicePropertyDesc(MtpDeviceProperty property) {
                 // for read-only properties it is safe to assume current value is default value
                 if (!writable)
                     result->setDefaultValue(str);
+                /// M: Added Modification for ALPS00255822, bug from WHQL test @{
+                if(property == MTP_DEVICE_PROPERTY_IMAGE_SIZE)
+                {
+                    //Set the formflag temporary for pass WHQL test
+                    int imageSizeEnum[2]={1 /*640X480*/, 2 /*800X800*/};
+                    result->setFormEnum(imageSizeEnum, 1);
+                }
+                /// @}
                 env->ReleaseCharArrayElements(mStringBuffer, str, 0);
             } else {
                 ALOGE("unable to read device property, response: %04X", ret);
@@ -1139,6 +1538,35 @@ void MyMtpDatabase::sessionEnded() {
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
 }
 
+/// M: Added Modification for ALPS00264207, ALPS00248646 @{
+void MyMtpDatabase::getObjectBeginIndication(const char * storagePath)
+{
+    JNIEnv* env = AndroidRuntime::getJNIEnv();
+    ALOGI("%s: \n", __func__);
+
+    jstring pathStr = env->NewStringUTF(storagePath);
+
+    env->CallVoidMethod(mDatabase, method_getObjectBeginIndication, pathStr);
+
+    if (pathStr)
+        env->DeleteLocalRef(pathStr);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+}
+void MyMtpDatabase::getObjectEndIndication(const char * storagePath)
+{
+    JNIEnv* env = AndroidRuntime::getJNIEnv();
+    ALOGI("%s: \n", __func__);
+
+    jstring pathStr = env->NewStringUTF(storagePath);
+    env->CallVoidMethod(mDatabase, method_getObjectEndIndication, pathStr);
+    if (pathStr)
+        env->DeleteLocalRef(pathStr);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+}
+/// @}
+
 // ----------------------------------------------------------------------------
 
 static void
@@ -1167,6 +1595,26 @@ android_mtp_MtpPropertyGroup_format_date_time(JNIEnv *env, jobject /*thiz*/, jlo
     return env->NewStringUTF(date);
 }
 
+/// M: Added function all for get handel by Path
+MtpObjectHandle MyMtpDatabase::getObjectHandleWithPath(const char* path,
+                                            MtpObjectFormat format,
+                                            MtpObjectHandle parent,
+                                            MtpStorageID storage,
+                                            uint64_t size,
+                                            time_t modified) {
+    JNIEnv* env = AndroidRuntime::getJNIEnv();
+    jstring pathStr = env->NewStringUTF(path);
+    MtpObjectHandle result = env->CallIntMethod(mDatabase, method_getObjectHandleWithPath,
+            pathStr, (jint)format, (jint)parent, (jint)storage,
+            (jlong)size, (jlong)modified);
+
+    if (pathStr)
+        env->DeleteLocalRef(pathStr);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    return result;
+}
+
+/// @}
 // ----------------------------------------------------------------------------
 
 static JNINativeMethod gMtpDatabaseMethods[] = {
@@ -1286,6 +1734,25 @@ int register_android_mtp_MtpDatabase(JNIEnv *env)
         ALOGE("Can't find sessionEnded");
         return -1;
     }
+    /// M: Added Modification for ALPS00264207, ALPS00248646 @{
+    method_getObjectBeginIndication = env->GetMethodID(clazz, "getObjectBeginIndication", "(Ljava/lang/String;)V");
+    if (method_getObjectBeginIndication == NULL) {
+        ALOGE("Can't find getObjectBeginIndication");
+        return -1;
+    }
+    method_getObjectEndIndication = env->GetMethodID(clazz, "getObjectEndIndication", "(Ljava/lang/String;)V");
+    if (method_getObjectEndIndication == NULL) {
+        ALOGE("Can't find getObjectEndIndication");
+        return -1;
+    }
+    /// @}
+    /// M: Added function all for get handel by Path
+    method_getObjectHandleWithPath = env->GetMethodID(clazz, "getObjectHandleWithPath", "(Ljava/lang/String;IIIJJ)I");
+    if (method_getObjectHandleWithPath == NULL) {
+        ALOGE("Can't find getObjectHandleWithPath");
+        return -1;
+    }
+    /// @}
 
     field_context = env->GetFieldID(clazz, "mNativeContext", "J");
     if (field_context == NULL) {

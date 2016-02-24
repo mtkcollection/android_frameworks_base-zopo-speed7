@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -386,6 +391,10 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
                         new Object[] { newLocale }, null);
                 execute("REINDEX LOCALIZED", null, null);
                 success = true;
+            /// M: in order to throw exception that is throwed by above statement @{
+            } catch (SQLiteException ex) {
+                throw ex;
+            ///M: @}
             } finally {
                 execute(success ? "COMMIT" : "ROLLBACK", null, null);
             }
@@ -1367,8 +1376,15 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
             if (operation != null) {
                 operation.mEndTime = System.currentTimeMillis();
                 operation.mFinished = true;
-                return SQLiteDebug.DEBUG_LOG_SLOW_QUERIES && SQLiteDebug.shouldLogSlowQuery(
-                                operation.mEndTime - operation.mStartTime);
+                /// M: enable log sql time information when elpaseTime > 500 @{
+                if ((operation.mEndTime - operation.mStartTime) >= 500) {
+                    return true;
+                } else {
+                    return false;
+                }
+                //return SQLiteDebug.DEBUG_LOG_SLOW_QUERIES && SQLiteDebug.shouldLogSlowQuery(
+                                //operation.mEndTime - operation.mStartTime);
+                /// M: @}
             }
             return false;
         }

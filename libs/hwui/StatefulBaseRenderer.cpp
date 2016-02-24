@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -176,7 +181,10 @@ bool StatefulBaseRenderer::clipPath(const SkPath* path, SkRegion::Op op) {
         if (mSnapshot->previous == firstSnapshot()) {
             clip.setRect(0, 0, getWidth(), getHeight());
         } else {
-            Rect* bounds = mSnapshot->previous->clipRect;
+            /// M: [ALPS01873597] intersect with previous's snapshot's clipRect.
+            /// mSnapshot->prevClipRect is always correct no matter defer/flush is enabled
+            /// but mSnapshot->previous->clipRect not.
+            Rect* bounds = &(mSnapshot->prevClipRect);
             clip.setRect(bounds->left, bounds->top, bounds->right, bounds->bottom);
         }
     }
@@ -214,6 +222,26 @@ void StatefulBaseRenderer::setClippingRoundRect(LinearAllocator& allocator,
     mSnapshot->setClippingRoundRect(allocator, rect, radius, highPriority);
 }
 
+/// M: output clip region for debug
+void StatefulBaseRenderer::outputClipRegion() {
+    SkRegion* clipRegion = mSnapshot->clipRegion;
+    if (clipRegion && clipRegion->isComplex()) {
+        String8 dump;
+
+        int count = 0;
+        SkRegion::Iterator iter(*clipRegion);
+        while (!iter.done()) {
+            const SkIRect& r = iter.rect();
+            dump.appendFormat("(%d,%d,%d,%d)", r.fLeft, r.fTop, r.fRight, r.fBottom);
+            count++;
+            if (count > 0 && count % 16 == 0) dump.append("\n");
+            iter.next();
+        }
+
+        ALOGD("===> currRegions %d <%p>", count, this);
+        ALOGD("%s", dump.string());
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Quick Rejection

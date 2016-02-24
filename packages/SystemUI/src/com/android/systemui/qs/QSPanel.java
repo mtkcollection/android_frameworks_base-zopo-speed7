@@ -41,12 +41,17 @@ import com.android.systemui.settings.BrightnessController;
 import com.android.systemui.settings.ToggleSlider;
 import com.android.systemui.statusbar.phone.QSTileHost;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 import java.util.Collection;
 
 /** View that represents the quick settings tile panel. **/
 public class QSPanel extends ViewGroup {
+    /// M: For Debug
+    private static final String TAG = "QSPanel";
+    private static final boolean DEBUG = true;
+
     private static final float TILE_ASPECT = 1.2f;
 
     private final Context mContext;
@@ -189,6 +194,10 @@ public class QSPanel extends ViewGroup {
     }
 
     public void setListening(boolean listening) {
+        if (DEBUG) {
+            Xlog.d(TAG, "setListening: old: " + mListening + ", new: " + listening);
+        }
+
         if (mListening == listening) return;
         mListening = listening;
         for (TileRecord r : mRecords) {
@@ -229,10 +238,18 @@ public class QSPanel extends ViewGroup {
     private void handleSetTileVisibility(View v, int visibility) {
         if (visibility == v.getVisibility()) return;
         v.setVisibility(visibility);
+
+        if (DEBUG) {
+            Xlog.d(TAG, "handleSetTileVisibility END: " + visibility + ", " + mGridContentVisible);
+        }
     }
 
     public void setTiles(Collection<QSTile<?>> tiles) {
         for (TileRecord record : mRecords) {
+            if (DEBUG) {
+                Xlog.d(TAG, "setTiles: removeView: " + record.tile.toString());
+            }
+
             removeView(record.tileView);
         }
         mRecords.clear();
@@ -253,11 +270,30 @@ public class QSPanel extends ViewGroup {
             @Override
             public void onStateChanged(QSTile.State state) {
                 int visibility = state.visible ? VISIBLE : GONE;
+
+                /// M: Fix timing issue of setting tile visibility @{
+                if (isShowingDetail() || isClosingDetail()) {
+                     if (DEBUG) {
+                         Xlog.d(TAG, "onStateChanged: SKIP " + r.tile.toString() +
+                             ", v: " + visibility +
+                             ", gv: " + mGridContentVisible);
+                     }
+                     r.tileView.onStateChanged(state);
+                     return;
+                }
+                /// M: Fix timing issue of setting tile visibility @}
+
                 if (state.visible && !mGridContentVisible) {
 
                     // We don't want to show it if the content is hidden,
                     // then we just set it to invisible, to ensure that it gets visible again
                     visibility = INVISIBLE;
+                }
+
+                if (DEBUG) {
+                    Xlog.d(TAG, "onStateChanged: " + r.tile.toString() +
+                        ", v: " + visibility +
+                        ", gv: " + mGridContentVisible);
                 }
                 setTileVisibility(r.tileView, visibility);
                 r.tileView.onStateChanged(state);
@@ -307,9 +343,17 @@ public class QSPanel extends ViewGroup {
         };
         r.tileView.init(click, clickSecondary, longClick);
         r.tile.setListening(mListening);
-        callback.onStateChanged(r.tile.getState());
+
+        // M: Fix timing issue of changing visibility with different threads
+        // refreshState() of QSTile will invoke onStateChanged() with Handler thread
+        // callback.onStateChanged(r.tile.getState());
+
         r.tile.refreshState();
         mRecords.add(r);
+
+        if (DEBUG) {
+            Xlog.d(TAG, "addTile: addView: " + r.tile.toString());
+        }
 
         addView(r.tileView);
     }
@@ -375,6 +419,11 @@ public class QSPanel extends ViewGroup {
             listener = mHideGridContentWhenDone;
         } else {
             mClosingDetail = true;
+
+            if (DEBUG) {
+                Xlog.d(TAG, "It's ClosingDetail");
+            }
+
             setGridContentVisibility(true);
             listener = mTeardownDetailWhenDone;
             fireScanStateChanged(false);
@@ -394,6 +443,10 @@ public class QSPanel extends ViewGroup {
         }
         mBrightnessView.setVisibility(newVis);
         mGridContentVisible = visible;
+
+        if (DEBUG) {
+            Xlog.d(TAG, "setGridContentVisibility END: " + visible);
+        }
     }
 
     @Override
@@ -516,6 +569,15 @@ public class QSPanel extends ViewGroup {
     private void setDetailRecord(Record r) {
         if (r == mDetailRecord) return;
         mDetailRecord = r;
+
+        if (DEBUG) {
+            if (mDetailRecord == null) {
+                Xlog.d(TAG, "It's NOT ShowingDetail");
+            } else {
+                Xlog.d(TAG, "It's ShowingDetail");
+            }
+        }
+
         final boolean scanState = mDetailRecord instanceof TileRecord
                 && ((TileRecord) mDetailRecord).scanState;
         fireScanStateChanged(scanState);
@@ -552,6 +614,10 @@ public class QSPanel extends ViewGroup {
             mDetailContent.removeAllViews();
             setDetailRecord(null);
             mClosingDetail = false;
+
+            if (DEBUG) {
+                Xlog.d(TAG, "It's NOT ClosingDetail");
+            }
         };
     };
 

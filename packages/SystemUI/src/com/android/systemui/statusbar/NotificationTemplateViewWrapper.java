@@ -54,7 +54,11 @@ public class NotificationTemplateViewWrapper extends NotificationViewWrapper {
     protected ImageView mPicture;
 
     /** Whether the icon needs to be forced grayscale when in dark mode. */
+/* Vanzo:tanglei on: Thu, 02 Jul 2015 14:34:54 +0800
     private boolean mIconForceGraysaleWhenDark;
+ */
+    private boolean mIconForceGraysaleWhenDark = false;
+// End of Vanzo:tanglei
 
     protected NotificationTemplateViewWrapper(Context ctx, View view) {
         super(view);
@@ -79,8 +83,17 @@ public class NotificationTemplateViewWrapper extends NotificationViewWrapper {
 
         // If the icon already has a color filter, we assume that we already forced the icon to be
         // white when we created the notification.
-        final Drawable iconDrawable = mIcon != null ? mIcon.getDrawable() : null;
-        mIconForceGraysaleWhenDark = iconDrawable != null && iconDrawable.getColorFilter() != null;
+/* Vanzo:tanglei on: Thu, 02 Jul 2015 14:30:46 +0800
+ * catch nullpointexception
+        mIconForceGraysaleWhenDark = mIcon != null && mIcon.getDrawable().getColorFilter() != null;
+ */
+        try {
+            mIconForceGraysaleWhenDark = mIcon != null && mIcon.getDrawable().getColorFilter() != null;
+        } catch (NullPointerException e) {
+            android.util.Log.d("NotificationTemplateViewWrapper", "Exception = " + e);
+            mIconForceGraysaleWhenDark = false;
+        }
+// End of Vanzo:tanglei
     }
 
     private ImageView resolveIcon(ImageView largeIcon, ImageView rightIcon) {

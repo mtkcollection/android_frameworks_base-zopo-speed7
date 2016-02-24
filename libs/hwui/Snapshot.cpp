@@ -82,6 +82,9 @@ Snapshot::Snapshot(const sp<Snapshot>& s, int saveFlags)
     } else {
         region = NULL;
     }
+
+    /// M: [ALPS01873597] copy the clip rect for corretness during flushing
+    prevClipRect.set(*(s->clipRect));
 }
 
 ///////////////////////////////////////////////////////////////////////////////

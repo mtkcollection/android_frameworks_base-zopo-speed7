@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!-- 
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+ -->
+
+<resources xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- For Power Reboot -->
+    <string name="global_action_reboot">重启</string>
+    <string name="reboot_confirm_question">"您要重启吗？"</string>
+    <string name="reboot_confirm">"您的手机将重启。"</string>
+    <string name="global_action_shotscreen">截屏</string>
+    <string name="global_actions_toggle_dataconnection_mode">数据连接</string>
+    <string name="global_actions_dataconnection_mode_on_status">数据连接已打开</string>
+    <string name="global_actions_dataconnection_mode_off_status">数据连接已关闭</string>
+    <string name="global_actions_toggle_wifi_mode">WIFI 模式</string>
+    <string name="global_actions_wifi_mode_on_status">WIFI已打开</string>
+    <string name="global_actions_wifi_mode_off_status">WIFI已关闭</string>
+    <string name="global_actions_toggle_longclick_notice">提示：\n强制关机：长按电源键6秒左右，直到手机黑屏。</string>
+</resources>

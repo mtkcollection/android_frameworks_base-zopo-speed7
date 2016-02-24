@@ -516,6 +516,11 @@ public final class AudioAttributes implements Parcelable {
                 case MediaRecorder.AudioSource.CAMCORDER:
                 case MediaRecorder.AudioSource.VOICE_RECOGNITION:
                 case MediaRecorder.AudioSource.VOICE_COMMUNICATION:
+                /// M: add for mtk BesRecord @{
+                case MediaRecorder.AudioSource.VOICE_CALL:
+                case MediaRecorder.AudioSource.VOICE_DOWNLINK:
+                case MediaRecorder.AudioSource.VOICE_UPLINK:
+                /// }@
                     mSource = preset;
                     break;
                 default:

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +22,22 @@
 package android.media;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.text.ParsePosition;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
+import android.util.Log;
+
 
 /**
  * This is a class for reading and writing Exif tags in a JPEG file.
  */
 public class ExifInterface {
+    /// M: log tag
+    private static final String TAG = "ExifInterface";
     // The Exif tag names
     /** Type is int. */
     public static final String TAG_ORIENTATION = "Orientation";
@@ -81,6 +91,36 @@ public class ExifInterface {
     /** Type is String. Name of GPS processing method used for location finding. */
     public static final String TAG_GPS_PROCESSING_METHOD = "GPSProcessingMethod";
 
+    /**
+     * M: TAG_MTK_CONSHOT_GROUP_ID 
+     * @hide
+     */    
+    public static final String TAG_MTK_CONSHOT_GROUP_ID = "MTKConshotGroupID";
+
+    /**
+     * M: TAG_MTK_CONSHOT_PIC_INDEX 
+     * @hide
+     */        
+    public static final String TAG_MTK_CONSHOT_PIC_INDEX = "MTKConshotPicIndex";
+
+    /**
+     * M: TAG_MTK_CONSHOT_FOCUS_HIGH 
+     * @hide
+     */      
+    public static final String TAG_MTK_CONSHOT_FOCUS_HIGH = "MTKConshotFocusHigh";
+
+    /**
+     * M: TAG_MTK_CONSHOT_FOCUS_LOW
+     * @hide
+     */
+    public static final String TAG_MTK_CONSHOT_FOCUS_LOW  = "MTKConshotFocusLow";
+
+    /**
+     * M: TAG_MTK_CAMERA_REFOCUS
+     * @hide
+     */
+    public static final String TAG_MTK_CAMERA_REFOCUS  = "MTKCameraRefocus";
+
     // Constants used for the Orientation Exif tag.
     public static final int ORIENTATION_UNDEFINED = 0;
     public static final int ORIENTATION_NORMAL = 1;
@@ -107,6 +147,9 @@ public class ExifInterface {
     private HashMap<String, String> mAttributes;
     private boolean mHasThumbnail;
 
+    /// M: get Exif from a given input stream
+    private InputStream mInputStream;
+
     // Because the underlying implementation (jhead) uses static variables,
     // there can only be one user at a time for the native functions (and
     // they cannot keep state in the native code across function calls). We
@@ -121,6 +164,15 @@ public class ExifInterface {
             throw new IllegalArgumentException("filename cannot be null");
         }
         mFilename = filename;
+        loadAttributes();
+    }
+
+    /**
+     * M: Reads Exif tags from the specified input stream.
+     * @hide
+     */
+    public ExifInterface(InputStream stream) throws IOException {
+        mInputStream = stream;
         loadAttributes();
     }
 
@@ -204,7 +256,16 @@ public class ExifInterface {
 
         String attrStr;
         synchronized (sLock) {
-            attrStr = getAttributesNative(mFilename);
+            if (mFilename != null) {
+                attrStr = getAttributesNative(mFilename);
+            } else {
+                byte[] buf = new byte[1024];
+                attrStr = getAttributesFromStreamNative(mInputStream, buf);
+            }
+        }
+
+        if (attrStr == null) {
+            return;
         }
 
         // get count
@@ -322,6 +383,7 @@ public class ExifInterface {
                 return true;
             } catch (IllegalArgumentException e) {
                 // if values are not parseable
+                Log.e(TAG, "getLatLong: IllegalArgumentException!", e);
             }
         }
 
@@ -360,6 +422,7 @@ public class ExifInterface {
             if (datetime == null) return -1;
             return datetime.getTime();
         } catch (IllegalArgumentException ex) {
+            Log.e(TAG, "getDateTime: IllegalArgumentException!", ex);
             return -1;
         }
     }
@@ -383,6 +446,7 @@ public class ExifInterface {
             if (datetime == null) return -1;
             return datetime.getTime();
         } catch (IllegalArgumentException ex) {
+            Log.e(TAG, "getGpsDateTime: IllegalArgumentException!", ex);
             return -1;
         }
     }
@@ -426,6 +490,8 @@ public class ExifInterface {
             String compressedAttributes);
 
     private native String getAttributesNative(String fileName);
+
+    private native String getAttributesFromStreamNative(InputStream stream, byte[] buf);
 
     private native void commitChangesNative(String fileName);
 

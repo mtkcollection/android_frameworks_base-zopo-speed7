@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,9 @@
 #ifndef RENDERNODEPROPERTIES_H
 #define RENDERNODEPROPERTIES_H
 
+#ifdef MTK_HWUI_RAM_OPTIMIZE
+#include <MTKRenderProperties.h>
+#else
 #include <algorithm>
 #include <stddef.h>
 #include <vector>
@@ -626,4 +634,5 @@ private:
 } /* namespace uirenderer */
 } /* namespace android */
 
+#endif /* MTK_HWUI_RAM_OPTIMIZE */
 #endif /* RENDERNODEPROPERTIES_H */

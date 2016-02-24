@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +62,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+
 
 /**
  * Service that offers to inspect and copy files that may reside on removable
@@ -221,9 +227,21 @@ public class DefaultContainerService extends IntentService {
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
 
             try {
+/* Vanzo:yucheng on: Wed, 04 Dec 2013 23:05:06 +0800
+ * Modify for ROM size customization
                 final StructStatVfs stat = Os.statvfs(path);
                 final long totalSize = stat.f_blocks * stat.f_bsize;
                 final long availSize = stat.f_bavail * stat.f_bsize;
+*/
+                android.os.StatFs localStatFs = new android.os.StatFs(path);
+                final long totalSize = ((long)localStatFs.getBlockSize()) * ((long)localStatFs.getBlockCount());
+                final long availSize = ((long)localStatFs.getBlockSize()) * ((long)localStatFs.getAvailableBlocks());
+                if (totalSize < 0 || availSize < 0) {
+                    String errStr = new String ("getFileSystemStats, totalSize:" + totalSize + ", availSize:" + availSize + ", path: " + path );
+                    Slog.w(TAG, errStr);
+                    throw new ErrnoException(errStr, -1);
+                }
+// End of Vanzo: yucheng
                 return new long[] { totalSize, availSize };
             } catch (ErrnoException e) {
                 throw new IllegalStateException(e);
@@ -269,6 +287,8 @@ public class DefaultContainerService extends IntentService {
 
     @Override
     protected void onHandleIntent(Intent intent) {
+        /// M: [ALPS01428323][Critical][Certification][KK][75/77 Only][CTS Verifier 4.4_r1] CTS disconnected after running  android.animation. (1/1) @{
+        try {
         if (PackageManager.ACTION_CLEAN_EXTERNAL_STORAGE.equals(intent.getAction())) {
             final IPackageManager pm = IPackageManager.Stub.asInterface(
                     ServiceManager.getService("package"));
@@ -285,6 +305,10 @@ public class DefaultContainerService extends IntentService {
             } catch (RemoteException e) {
             }
         }
+        } catch (NullPointerException npe) {
+            Slog.e(TAG, "Oops, NullPointerException caught.");
+        }
+        /// @}
     }
 
     void eraseFiles(File[] paths) {

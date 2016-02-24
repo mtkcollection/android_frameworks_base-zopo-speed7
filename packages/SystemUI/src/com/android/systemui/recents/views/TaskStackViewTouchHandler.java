@@ -25,9 +25,15 @@ import android.view.ViewConfiguration;
 import android.view.ViewParent;
 import com.android.systemui.recents.Constants;
 import com.android.systemui.recents.RecentsConfiguration;
+import com.mediatek.xlog.Xlog;
 
 /* Handles touch events for a TaskStackView. */
 class TaskStackViewTouchHandler implements SwipeHelper.Callback {
+
+    /// M: For Debug
+    static final String TAG = "views.TaskStackViewTouchHandler";
+    static final boolean DEBUG = true;
+
     static int INACTIVE_POINTER_ID = -1;
 
     RecentsConfiguration mConfig;
@@ -153,6 +159,15 @@ class TaskStackViewTouchHandler implements SwipeHelper.Callback {
                 mVelocityTracker.addMovement(createMotionEventForStackScroll(ev));
 
                 int activePointerIndex = ev.findPointerIndex(mActivePointerId);
+                /// M: [ALPS01903572] handle multi-touch exception @{
+                if (activePointerIndex < 0) {
+                    if (DEBUG) {
+                        Xlog.d(TAG, "findPointerIndex failed");
+                        mActivePointerId = INACTIVE_POINTER_ID;
+                        break;
+                    }
+                }
+                /// M: [ALPS01903572] handle multi-touch exception @}
                 int y = (int) ev.getY(activePointerIndex);
                 int x = (int) ev.getX(activePointerIndex);
                 if (Math.abs(y - mInitialMotionY) > mScrollTouchSlop) {
@@ -170,6 +185,16 @@ class TaskStackViewTouchHandler implements SwipeHelper.Callback {
                 mLastP = mSv.mLayoutAlgorithm.screenYToCurveProgress(mLastMotionY);
                 break;
             }
+            /// M: [ALPS01903572] handle multi-touch exception @{
+            case MotionEvent.ACTION_POINTER_UP: {
+                if (DEBUG) {
+                    int pointerIndex = ev.getActionIndex();
+                    int pointerId = ev.getPointerId(pointerIndex);
+
+                    Xlog.d(TAG, "Ignore multi-touch " + pointerIndex + "(" + pointerId + ")");
+                }
+            }
+            /// M: [ALPS01903572] handle multi-touch exception @}
             case MotionEvent.ACTION_CANCEL:
             case MotionEvent.ACTION_UP: {
                 // Animate the scroll back if we've cancelled
@@ -182,6 +207,8 @@ class TaskStackViewTouchHandler implements SwipeHelper.Callback {
                 recycleVelocityTracker();
                 break;
             }
+            default:
+                break;
         }
 
         return wasScrolling || mIsScrolling;

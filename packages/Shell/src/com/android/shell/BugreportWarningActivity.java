@@ -68,8 +68,11 @@ public class BugreportWarningActivity extends AlertActivity
     public void onClick(DialogInterface dialog, int which) {
         if (which == AlertDialog.BUTTON_POSITIVE) {
             // Remember confirm state, and launch target
-            setWarningState(this, mConfirmRepeat.isChecked() ? STATE_SHOW : STATE_HIDE);
-            startActivity(mSendIntent);
+            try{
+                setWarningState(this, mConfirmRepeat.isChecked() ? STATE_SHOW : STATE_HIDE);
+                startActivity(mSendIntent);
+            }catch(Exception e){
+            }
         }
 
         finish();

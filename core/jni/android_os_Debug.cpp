@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -570,6 +575,125 @@ static jlong android_os_Debug_getPss(JNIEnv *env, jobject clazz)
     return android_os_Debug_getPssPid(env, clazz, getpid(), NULL, NULL);
 }
 
+#ifndef MTK_BSP_PACKAGE
+static jlong android_os_Debug_getPswapPid(JNIEnv *env, jobject clazz, jint pid)
+{
+    char line[1024];
+    jlong pss = 0;
+    unsigned temp;
+
+    char tmp[128];
+    FILE *fp;
+
+    sprintf(tmp, "/proc/%d/smaps", pid);
+    fp = fopen(tmp, "r");
+    if (fp == 0) return 0;
+
+    while (true) {
+        if (fgets(line, 1024, fp) == 0) {
+            break;
+        }
+
+        if (sscanf(line, "PSwap: %d kB", &temp) == 1) {
+            pss += temp;
+        }
+    }
+
+    fclose(fp);
+
+    return pss;
+}
+
+static jlong android_os_Debug_getCompZram(JNIEnv *env, jobject clazz)
+{
+    FILE *fp;
+    char path[] = "/sys/block/zram0/mem_used_total";
+    char line[1024];
+    jlong compZram = 0;
+
+    fp = fopen(path, "r");
+
+    if (fp == 0) return 0;
+
+    if (fgets(line, 1024, fp) != 0) {
+        sscanf(line, "%d", &compZram);
+    }
+
+    fclose(fp);
+
+    return compZram;
+}
+
+static jlong android_os_Debug_getOrigZram(JNIEnv *env, jobject clazz)
+{
+    FILE *fp;
+    char path[] = "/sys/block/zram0/orig_data_size";
+    char line[1024];
+    jlong origZram = 0;
+
+    fp = fopen(path, "r");
+
+    if (fp == 0) return 0;
+
+    if (fgets(line, 1024, fp) != 0) {
+        sscanf(line, "%d", &origZram);
+    }
+
+    fclose(fp);
+
+    return origZram;
+}
+
+static jlong android_os_Debug_getTotalZram(JNIEnv *env, jobject clazz)
+{
+    FILE *fp;
+    char path[] = "/sys/block/zram0/disksize";
+    char line[1024];
+    jlong totalZram = 0;
+
+    fp = fopen(path, "r");
+
+    if (fp == 0) return 0;
+
+    if (fgets(line, 1024, fp) != 0) {
+        sscanf(line, "%d", &totalZram);
+    }
+
+    fclose(fp);
+
+    return totalZram;
+}
+
+
+static jshort android_os_Debug_getZramCompressMethod(JNIEnv *env, jobject clazz)
+{
+    FILE *fp;
+    char path[] = "/proc/zraminfo";
+    char line[1024];
+
+	char zram_compress_method[16];
+	jshort zram_compress_method_id = 0; //0: LZO, 1: LZ4K
+
+    fp = fopen(path, "r");
+
+    if (fp == 0) return 0;
+
+    while(fgets(line, 1024, fp) != 0) {
+        if (1 == sscanf(line, "Algorithm: [%15[^]]", zram_compress_method)) {
+			if (0 == strncmp("LZ4K", zram_compress_method, 15)) {
+				zram_compress_method_id = 1;
+			}
+           	break;
+        }
+    }
+    fclose(fp);
+
+    return zram_compress_method_id;
+}
+
+
+#endif
+
 enum {
     MEMINFO_TOTAL,
     MEMINFO_FREE,
@@ -977,6 +1101,18 @@ static JNINativeMethod gMethods[] = {
             (void*) android_os_Debug_getPss },
     { "getPss",                 "(I[J[J)J",
             (void*) android_os_Debug_getPssPid },
+#ifndef MTK_BSP_PACKAGE
+    { "getPswap",               "(I)J",
+            (void*) android_os_Debug_getPswapPid },
+    { "getCompZram",            "()J",
+            (void*) android_os_Debug_getCompZram },
+    { "getOrigZram",            "()J",
+            (void*) android_os_Debug_getOrigZram },
+    { "getTotalZram",            "()J",
+            (void*) android_os_Debug_getTotalZram },
+    { "getZramCompressMethod",   "()S",
+            (void*) android_os_Debug_getZramCompressMethod },
+#endif
     { "getMemInfo",             "([J)V",
             (void*) android_os_Debug_getMemInfo },
     { "dumpNativeHeap",         "(Ljava/io/FileDescriptor;)V",

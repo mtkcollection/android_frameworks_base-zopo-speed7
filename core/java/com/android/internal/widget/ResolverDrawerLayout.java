@@ -358,7 +358,7 @@ public class ResolverDrawerLayout extends ViewGroup {
     }
 
     private float performDrag(float dy) {
-        final float newPos = Math.max(0, Math.min(mCollapseOffset + dy,
+        final float newPos = Math.max(0, Math.min(mCollapseOffset + (int) (dy + 0.5f),
                 mCollapsibleHeight + mUncollapsibleHeight));
         if (newPos != mCollapseOffset) {
             dy = newPos - mCollapseOffset;

@@ -131,7 +131,12 @@ public class FusionEngine implements LocationListener {
     private void enableProvider(String name, long minTime) {
         ProviderStats stats = mStats.get(name);
 
+/* Vanzo:liqiquan on: Wed, 05 Aug 2015 16:05:15 +0800
+ * bugfix #116064, modify camera location provider
         if (stats.available) {
+ */
+        if (true) {
+// End of Vanzo: liqiquan
             if (!stats.requested) {
                 stats.requestTime = SystemClock.elapsedRealtime();
                 stats.requested = true;

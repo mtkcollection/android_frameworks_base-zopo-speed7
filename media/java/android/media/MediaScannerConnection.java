@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +45,7 @@ import android.util.Log;
 public class MediaScannerConnection implements ServiceConnection {
 
     private static final String TAG = "MediaScannerConnection";
+    private final static boolean LOG = true;
 
     private Context mContext;
     private MediaScannerConnectionClient mClient;
@@ -128,13 +134,13 @@ public class MediaScannerConnection implements ServiceConnection {
     public void disconnect() {
         synchronized (this) {
             if (mConnected) {
-                if (false) {
+                if (LOG) {
                     Log.v(TAG, "Disconnecting from Media Scanner");
                 }
                 try {
                     mContext.unbindService(this);
                 } catch (IllegalArgumentException ex) {
-                    if (false) {
+                    if (LOG) {
                         Log.v(TAG, "disconnect failed: " + ex);
                     }
                 }
@@ -166,12 +172,12 @@ public class MediaScannerConnection implements ServiceConnection {
                 throw new IllegalStateException("not connected to MediaScannerService");
             }
             try {
-                if (false) {
+                if (LOG) {
                     Log.v(TAG, "Scanning file " + path);
                 }
                 mService.requestScanFile(path, mimeType, mListener);
             } catch (RemoteException e) {
-                if (false) {
+                if (LOG) {
                     Log.d(TAG, "Failed to scan file " + path);
                 }
             }
@@ -242,7 +248,7 @@ public class MediaScannerConnection implements ServiceConnection {
      * Part of the ServiceConnection interface.  Do not call.
      */
     public void onServiceConnected(ComponentName className, IBinder service) {
-        if (false) {
+        if (LOG) {
             Log.v(TAG, "Connected to Media Scanner");
         }
         synchronized (this) {
@@ -257,7 +263,7 @@ public class MediaScannerConnection implements ServiceConnection {
      * Part of the ServiceConnection interface.  Do not call.
      */
     public void onServiceDisconnected(ComponentName className) {
-        if (false) {
+        if (LOG) {
             Log.v(TAG, "Disconnected from Media Scanner");
         }
         synchronized (this) {

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,7 @@ import org.xml.sax.Attributes;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
+import android.app.ActivityManager;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
@@ -30,7 +36,9 @@ import android.drm.DrmManagerClient;
 import android.graphics.BitmapFactory;
 import android.mtp.MtpConstants;
 import android.net.Uri;
+import android.net.TrafficStats;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.RemoteException;
 import android.os.SystemProperties;
 import android.provider.MediaStore;
@@ -61,6 +69,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Locale;
+
+import com.mediatek.dcfdecoder.DcfDecoder;
 
 /**
  * Internal service helper that no-one should use directly.
@@ -132,6 +142,13 @@ public class MediaScanner
     private static final int FILES_PRESCAN_FORMAT_COLUMN_INDEX = 2;
     private static final int FILES_PRESCAN_DATE_MODIFIED_COLUMN_INDEX = 3;
 
+/* Vanzo:yujianpeng on: Tue, 10 Mar 2015 11:33:45 +0800
+ * modify sim1 & sim2 different ringtone
+ */
+    private String mDefaultRingtoneSim2Filename;
+    private boolean mDefaultRingtoneSim2Set;
+    private static final String RINGTONE_SIM2_SET = "ringtone_sim2_set";
+// End of Vanzo:yujianpeng
     private static final String[] PLAYLIST_MEMBERS_PROJECTION = new String[] {
             Audio.Playlists.Members.PLAYLIST_ID, // 0
      };
@@ -304,11 +321,13 @@ public class MediaScanner
     private long mNativeContext;
     private Context mContext;
     private String mPackageName;
+    private int mContext1;
     private IContentProvider mMediaProvider;
     private Uri mAudioUri;
     private Uri mVideoUri;
     private Uri mImagesUri;
     private Uri mThumbsUri;
+    private Uri mVideoThumbsUri;
     private Uri mPlaylistsUri;
     private Uri mFilesUri;
     private Uri mFilesUriNoNotify;
@@ -324,6 +343,8 @@ public class MediaScanner
     // used when scanning the image database so we know whether we have to prune
     // old thumbnail files
     private int mOriginalCount;
+    /// M: old video thumbnail files
+    private int mOriginalVideoCount;
     /** Whether the database had any entries in it before the scan started */
     private boolean mWasEmptyPriorToScan = false;
     /** Whether the scanner has set a default sound for the ringer ringtone. */
@@ -385,6 +406,15 @@ public class MediaScanner
     private ArrayList<FileEntry> mPlayLists;
 
     private DrmManagerClient mDrmManagerClient = null;
+    public static final boolean IS_SUPPORT_DRM = SystemProperties.getBoolean("ro.mtk_oma_drm_support", true);
+    /// M: Add 3 flags to identify if alarm, notification and ringtone is set or not. @{
+    private static final String ALARM_SET = "alarm_set";
+    private static final String NOTIFICATION_SET = "notification_set";
+    private static final String RINGTONE_SET = "ringtone_set";
+    /// @}
+    /// M: limit bmp and gif file size, don't decode images if big over limit to avoid memory issue
+    private long mLimitBmpFileSize = Long.MAX_VALUE;
+    private long mLimitGifFileSize = Long.MAX_VALUE;
 
     public MediaScanner(Context c) {
         native_setup();
@@ -398,15 +428,34 @@ public class MediaScanner
         mExternalStoragePath = Environment.getExternalStorageDirectory().getAbsolutePath();
         mExternalIsEmulated = Environment.isExternalStorageEmulated();
         //mClient.testGenreNameConverter();
+
+        /// M: set bmp and gif decode limit size same as Gallery
+        final ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am.isLowRamDevice()) {
+            mLimitBmpFileSize = 6 * TrafficStats.MB_IN_BYTES;
+            mLimitGifFileSize = 10 * TrafficStats.MB_IN_BYTES;
+        } else {
+            mLimitBmpFileSize = 52 * TrafficStats.MB_IN_BYTES;
+            mLimitGifFileSize = 20 * TrafficStats.MB_IN_BYTES;
+        }
     }
 
     private void setDefaultRingtoneFileNames() {
         mDefaultRingtoneFilename = SystemProperties.get(DEFAULT_RINGTONE_PROPERTY_PREFIX
                 + Settings.System.RINGTONE);
+/* Vanzo:yujianpeng on: Tue, 10 Mar 2015 11:35:11 +0800
+ * modify sim1 & sim2 different ringtone
+ */
+        mDefaultRingtoneSim2Filename = SystemProperties.get(DEFAULT_RINGTONE_PROPERTY_PREFIX
+                + Settings.System.RINGTONE_SIM2);
+// End of Vanzo:yujianpeng
         mDefaultNotificationFilename = SystemProperties.get(DEFAULT_RINGTONE_PROPERTY_PREFIX
                 + Settings.System.NOTIFICATION_SOUND);
         mDefaultAlarmAlertFilename = SystemProperties.get(DEFAULT_RINGTONE_PROPERTY_PREFIX
                 + Settings.System.ALARM_ALERT);
+        /// M: Adds log to debug setting ringtones.
+        Log.v(TAG, "setDefaultRingtoneFileNames: ringtone=" + mDefaultRingtoneFilename
+                + ",notification=" + mDefaultNotificationFilename + ",alarm=" + mDefaultAlarmAlertFilename);
     }
 
     private final MyMediaScannerClient mClient = new MyMediaScannerClient();
@@ -438,10 +487,29 @@ public class MediaScanner
         private boolean mNoMedia;   // flag to suppress file from appearing in media tables
         private int mWidth;
         private int mHeight;
+        /// M: add for mtk drm @{
+        private String mDrmContentUr;
+        private long mDrmOffset;
+        private long mDrmDataLen;
+        private String mDrmRightsIssuer;
+        private String mDrmContentName;
+        private String mDrmContentDescriptioin;
+        private String mDrmContentVendor;
+        private String mDrmIconUri;
+        private long mDrmMethod;
+        /// @}
+        /// M: add for Live photo
+        private boolean mIsLivePhoto;
+        /// M: add for slow motion
+        private String mSlowMotionSpeed;
+        /// M: Add for fancy gallery homepage(Video get it's rotation)
+        private int mOrientation;
 
         public FileEntry beginFile(String path, String mimeType, long lastModified,
                 long fileSize, boolean isDirectory, boolean noMedia) {
-            mMimeType = mimeType;
+            /// M: Directory or folder's mimeType must be null, because some special name folder(such as
+            /// test.mp3) may give a wrong mimeType by MediaFile.getMimeTypeForFile(path).
+            mMimeType = isDirectory ? null : mimeType;
             mFileType = 0;
             mFileSize = fileSize;
             mIsDrm = false;
@@ -457,12 +525,28 @@ public class MediaScanner
                     mFileType = MediaFile.getFileTypeForMimeType(mimeType);
                 }
 
+                /// M: OMA DRM v1: however, for those DCF file, normally when scanning it,
+                // the input mime type should be "application/vnd.oma.drm.content";
+                // however, there's case that the input mimetype is, for example, "image/*"
+                // in these cases it will not call processFile() but processImageFile() instead.
+                // for these cases, we change the {mFileType} back to ZERO,
+                // and let Media.getFileType(path) to determine the type,
+                // so that it can call processFile() as normal. @{
+                if (MediaFile.isImageFileType(mFileType)) {
+                    int lastDot = path.lastIndexOf(".");
+                    if (lastDot > 0 && path.substring(lastDot + 1).toUpperCase().equals("DCF")) {
+                        Log.v(TAG, "detect a *.DCF file with input mime type:" + mimeType);
+                        mFileType = 0; // work around: change to ZERO
+                    }
+                }
+                /// @}
+
                 // if mimeType was not specified, compute file type based on file extension.
                 if (mFileType == 0) {
                     MediaFile.MediaFileType mediaFileType = MediaFile.getFileType(path);
                     if (mediaFileType != null) {
                         mFileType = mediaFileType.fileType;
-                        if (mMimeType == null) {
+                        if (mMimeType == null || isValueslessMimeType(mMimeType)) {
                             mMimeType = mediaFileType.mimeType;
                         }
                     }
@@ -470,6 +554,17 @@ public class MediaScanner
 
                 if (isDrmEnabled() && MediaFile.isDrmFileType(mFileType)) {
                     mFileType = getFileTypeFromDrm(path);
+                }
+                /// M: Add to get original mimetype from file for cta
+                if (isDrmEnabled() && path.endsWith(".mudp")) {
+                    if (mDrmManagerClient == null) {
+                        mDrmManagerClient = new DrmManagerClient(mContext);
+                    }
+                    if (mDrmManagerClient.canHandle(path, null)) {
+                        mMimeType = mDrmManagerClient.getOriginalMimeType(path);
+                        mIsDrm = true;
+                        Log.d(TAG, "get cta file " + path + " with original mimetype " + mMimeType);
+                    }
                 }
             }
 
@@ -489,6 +584,10 @@ public class MediaScanner
 
             if (mProcessPlaylists && MediaFile.isPlayListFileType(mFileType)) {
                 mPlayLists.add(entry);
+                /// M: MediaScanner Performance turning {@
+                /// Store playlist path and insert them in postScanAll
+                mPlaylistFilePathList.add(path);
+                /// @}
                 // we don't process playlists in the main scan, so return null
                 return null;
             }
@@ -509,6 +608,23 @@ public class MediaScanner
             mCompilation = 0;
             mWidth = 0;
             mHeight = 0;
+            /// M: add for mtk drm @{
+            mDrmContentDescriptioin = null;
+            mDrmContentName = null;
+            mDrmContentUr = null;
+            mDrmContentVendor = null;
+            mDrmIconUri = null;
+            mDrmRightsIssuer = null;
+            mDrmDataLen = -1;
+            mDrmOffset = -1;
+            mDrmMethod = -1;
+            /// @}
+            /// M: add for live photo
+            mIsLivePhoto = false;
+            /// M: add for slow motion
+            mSlowMotionSpeed = "(0,0)x0";
+            /// M: add for fancy gallery homepage
+            mOrientation = 0;
 
             return entry;
         }
@@ -550,27 +666,41 @@ public class MediaScanner
 
                         boolean isaudio = MediaFile.isAudioFileType(mFileType);
                         boolean isvideo = MediaFile.isVideoFileType(mFileType);
-                        boolean isimage = MediaFile.isImageFileType(mFileType);
 
-                        if (isaudio || isvideo || isimage) {
-                            if (mExternalIsEmulated && path.startsWith(mExternalStoragePath)) {
-                                // try to rewrite the path to bypass the sd card fuse layer
-                                String directPath = Environment.getMediaStorageDirectory() +
-                                        path.substring(mExternalStoragePath.length());
-                                File f = new File(directPath);
-                                if (f.exists()) {
-                                    path = directPath;
-                                }
-                            }
-                        }
+                        /**
+                         * M: because fork process can access external storage
+                         * path since ALPS00453547.@{
+                         */
+                        // if (isaudio || isvideo || isimage) {
+                        // if (mExternalIsEmulated &&
+                        // path.startsWith(mExternalStoragePath)) {
+                        // // try to rewrite the path to bypass the sd card fuse
+                        // layer
+                        // String directPath =
+                        // Environment.getMediaStorageDirectory() +
+                        // path.substring(mExternalStoragePath.length());
+                        // File f = new File(directPath);
+                        // if (f.exists()) {
+                        // path = directPath;
+                        // }
+                        // }
+                        // }
+                        /** @} */
 
                         // we only extract metadata for audio and video files
                         if (isaudio || isvideo) {
                             processFile(path, mimeType, this);
                         }
-
+                        /// M: process DRM image if needed @{
+                        boolean isimage = MediaFile.isImageFileType(mFileType);
+                        /// @}
                         if (isimage) {
-                            processImageFile(path);
+                            /// M: Decodes OMA DRM 1.0 FL image's width and height. ALPS00335107
+                            if (IS_SUPPORT_DRM && lowpath.endsWith(".dcf")) {
+                                processDcfImageFile(path);
+                            } else {
+                                processImageFile(path);
+                            }
                         }
 
                         result = endFile(entry, ringtones, notifications, alarms, music, podcasts);
@@ -603,6 +733,7 @@ public class MediaScanner
         }
 
         public void handleStringTag(String name, String value) {
+            // Log.v(TAG, "handleStringTag: name=" + name + ",value=" + value);
             if (name.equalsIgnoreCase("title") || name.startsWith("title;")) {
                 // Don't trim() here, to preserve the special \001 character
                 // used to force sorting. The media provider will trim() before
@@ -645,9 +776,39 @@ public class MediaScanner
                 mWidth = parseSubstring(value, 0, 0);
             } else if (name.equalsIgnoreCase("height")) {
                 mHeight = parseSubstring(value, 0, 0);
+            /// M: add for MTK added feature. {@
+            /// 1. DRM
+            } else if (name.equalsIgnoreCase("drm_content_uri")) {
+                mDrmContentUr = value.trim();
+            } else if (name.equalsIgnoreCase("drm_offset")) {
+                mDrmOffset = parseSubstring(value, 0, 0);
+            } else if (name.equalsIgnoreCase("drm_dataLen")) {
+                mDrmDataLen = parseSubstring(value, 0, 0);
+            } else if (name.equalsIgnoreCase("drm_rights_issuer")) {
+                mDrmRightsIssuer = value.trim();
+            } else if (name.equalsIgnoreCase("drm_content_name")) {
+                mDrmContentName = value.trim();
+            } else if (name.equalsIgnoreCase("drm_content_description")) {
+                mDrmContentDescriptioin = value.trim();
+            } else if (name.equalsIgnoreCase("drm_content_vendor")) {
+                mDrmContentVendor = value.trim();
+            } else if (name.equalsIgnoreCase("drm_icon_uri")) {
+                mDrmIconUri = value.trim();
+            } else if (name.equalsIgnoreCase("drm_method")) {
+                mDrmMethod = parseSubstring(value, 0, 0);
+            /// 2. live photo
+            } else if (name.equalsIgnoreCase("is_live_photo")) {
+                mIsLivePhoto = (parseSubstring(value, 0, 0) == 1);
+            /// 3. slow motion
+            } else if (name.equalsIgnoreCase("SlowMotion_Speed_Value")) {
+                mSlowMotionSpeed = "(0,0)x" + value;
+            /// 4. fancy gallery homepage
+            } else if (name.equalsIgnoreCase("rotation")) {
+                mOrientation = parseSubstring(value, 0, 0);
             } else {
                 //Log.v(TAG, "unknown tag: " + name + " (" + mProcessGenres + ")");
             }
+            /// @}
         }
 
         private boolean convertGenreCode(String input, String expected) {
@@ -659,6 +820,7 @@ public class MediaScanner
                 return false;
             }
         }
+
         private void testGenreNameConverter() {
             convertGenreCode("2", "Country");
             convertGenreCode("(2)", "Country");
@@ -679,6 +841,7 @@ public class MediaScanner
         public String getGenreName(String genreTagValue) {
 
             if (genreTagValue == null) {
+                Log.e(TAG, "getGenreName: Null genreTag!");
                 return null;
             }
             final int length = genreTagValue.length();
@@ -706,6 +869,7 @@ public class MediaScanner
                             if (genreIndex < ID3_GENRES.length && ID3_GENRES[genreIndex] != null) {
                                 return ID3_GENRES[genreIndex];
                             } else if (genreIndex == 0xFF) {
+                                Log.e(TAG, "getGenreName: genreIndex = 0xFF!");
                                 return null;
                             } else if (genreIndex < 0xFF && (i + 1) < length) {
                                 // genre is valid but unknown,
@@ -723,6 +887,7 @@ public class MediaScanner
                             }
                         }
                     } catch (NumberFormatException e) {
+                        Log.e(TAG, "getGenreName: invalidNum=" + number.toString(), e);
                     }
                 }
             }
@@ -731,6 +896,18 @@ public class MediaScanner
         }
 
         private void processImageFile(String path) {
+            /// M: If decode bmp and gif over limit size, just return.
+            long limitFileSize = Long.MAX_VALUE;
+            if (MediaFile.FILE_TYPE_BMP == mFileType) {
+                limitFileSize = mLimitBmpFileSize;
+            } else if (MediaFile.FILE_TYPE_GIF == mFileType) {
+                limitFileSize = mLimitGifFileSize;
+            }
+            if (mFileSize > limitFileSize) {
+                Log.w(TAG, "processImageFile " + path + " over limit size " + limitFileSize);
+                return;
+            }
+            /// @}
             try {
                 mBitmapOptions.outWidth = 0;
                 mBitmapOptions.outHeight = 0;
@@ -738,9 +915,30 @@ public class MediaScanner
                 mWidth = mBitmapOptions.outWidth;
                 mHeight = mBitmapOptions.outHeight;
             } catch (Throwable th) {
-                // ignore;
+                Log.e(TAG, "processImageFile: path=" + path, th);
+            }
+            Log.v(TAG, "processImageFile: path = " + path + ", width = " + mWidth + ", height = "
+                    + mHeight + ", limitFileSize = " + limitFileSize);
+        }
+
+        /// M: Decodes OMA DRM 1.0 FL image's width and height. ALPS00335107 @{
+        private DcfDecoder mDcfDecoder;
+        private void processDcfImageFile(String path) {
+            try {
+                mBitmapOptions.outWidth = 0;
+                mBitmapOptions.outHeight = 0;
+                if (mDcfDecoder == null) {
+                    mDcfDecoder = new DcfDecoder();
+                }
+                mDcfDecoder.decodeFile(path, mBitmapOptions, false);
+                mWidth = mBitmapOptions.outWidth;
+                mHeight = mBitmapOptions.outHeight;
+                Log.v(TAG, "processDcfImageFile: path=" + path + ",width=" + mWidth + ",height=" + mHeight);
+            } catch (Throwable th) {
+                Log.e(TAG, "processDcfImageFile: Error! path=" + path, th);
             }
         }
+        /// M: @}
 
         public void setMimeType(String mimeType) {
             if ("audio/mp4".equals(mMimeType) &&
@@ -752,6 +950,7 @@ public class MediaScanner
             }
             mMimeType = mimeType;
             mFileType = MediaFile.getFileTypeForMimeType(mimeType);
+            Log.v(TAG, "setMimeType: mMimeType = " + mMimeType);
         }
 
         /**
@@ -787,6 +986,12 @@ public class MediaScanner
                     if (resolution != null) {
                         map.put(Video.Media.RESOLUTION, resolution);
                     }
+                    /// M: Add for live photo
+                    map.put(Video.Media.IS_LIVE_PHOTO, mIsLivePhoto);
+                    /// M: Add for slow motion
+                    map.put(Video.Media.SLOW_MOTION_SPEED, mSlowMotionSpeed);
+                    /// M: Add for fancy gallery homepage
+                    map.put(Video.Media.ORIENTATION, mOrientation);
                 } else if (MediaFile.isImageFileType(mFileType)) {
                     // FIXME - add DESCRIPTION
                 } else if (MediaFile.isAudioFileType(mFileType)) {
@@ -806,12 +1011,31 @@ public class MediaScanner
                     map.put(Audio.Media.COMPILATION, mCompilation);
                 }
             }
+
+            /// M: drm media file, add new column values.
+            if (mIsDrm) {
+                map.put(MediaStore.MediaColumns.DRM_CONTENT_DESCRIPTION, mDrmContentDescriptioin);
+                map.put(MediaStore.MediaColumns.DRM_CONTENT_NAME, mDrmContentName);
+                map.put(MediaStore.MediaColumns.DRM_CONTENT_URI, mDrmContentUr);
+                map.put(MediaStore.MediaColumns.DRM_CONTENT_VENDOR, mDrmContentVendor);
+                map.put(MediaStore.MediaColumns.DRM_DATA_LEN, mDrmDataLen);
+                map.put(MediaStore.MediaColumns.DRM_ICON_URI, mDrmIconUri);
+                map.put(MediaStore.MediaColumns.DRM_OFFSET, mDrmOffset);
+                map.put(MediaStore.MediaColumns.DRM_RIGHTS_ISSUER, mDrmRightsIssuer);
+                map.put(MediaStore.MediaColumns.DRM_METHOD, mDrmMethod);
+            }
+            /// @}
             return map;
         }
 
         private Uri endFile(FileEntry entry, boolean ringtones, boolean notifications,
                 boolean alarms, boolean music, boolean podcasts)
                 throws RemoteException {
+/* Vanzo:yujianpeng on: Tue, 10 Mar 2015 11:37:15 +0800
+ * modify sim1 & sim2 different ringtone
+ */
+                 boolean isSim2Ringtone = false;
+// End of Vanzo:yujianpeng
             // update database
 
             // use album artist if artist is missing
@@ -856,12 +1080,14 @@ public class MediaScanner
                 values.put(Audio.Media.IS_ALARM, alarms);
                 values.put(Audio.Media.IS_MUSIC, music);
                 values.put(Audio.Media.IS_PODCAST, podcasts);
-            } else if (mFileType == MediaFile.FILE_TYPE_JPEG && !mNoMedia) {
+            /// M: MAV type MPO file need parse some info from exif
+            } else if ((mFileType == MediaFile.FILE_TYPE_JPEG || mFileType == MediaFile.FILE_TYPE_MPO) && !mNoMedia) {
                 ExifInterface exif = null;
                 try {
                     exif = new ExifInterface(entry.mPath);
                 } catch (IOException ex) {
                     // exif is null
+                    Log.e(TAG, "endFile: Null ExifInterface!", ex);
                 }
                 if (exif != null) {
                     float[] latlng = new float[2];
@@ -905,9 +1131,31 @@ public class MediaScanner
                         }
                         values.put(Images.Media.ORIENTATION, degree);
                     }
+
+                    /// M: Gets groupId and groupIndex for continuous shots images,
+                    /// gets focus value for best shots images. @{
+                    long groupId = 0L;
+                    String groupIdStr = exif.getAttribute(ExifInterface.TAG_MTK_CONSHOT_GROUP_ID);
+                    if (groupIdStr != null) {
+                        try {
+                            groupId = Long.parseLong(groupIdStr);
+                        } catch (NumberFormatException e) {
+                            Log.e(TAG, "endFile: " + groupIdStr + " cannot be converted to long.");
+                        }
+                    }
+                    int groupIndex = exif.getAttributeInt(ExifInterface.TAG_MTK_CONSHOT_PIC_INDEX, 0);
+                    long focusHigh = exif.getAttributeInt(ExifInterface.TAG_MTK_CONSHOT_FOCUS_HIGH, 0);
+                    long focusLow = exif.getAttributeInt(ExifInterface.TAG_MTK_CONSHOT_FOCUS_LOW, 0);
+                    values.put(Images.Media.FOCUS_VALUE_HIGH, focusHigh);
+                    values.put(Images.Media.FOCUS_VALUE_LOW, focusLow);
+                    values.put(Images.Media.GROUP_ID, groupId);
+                    values.put(Images.Media.GROUP_INDEX, groupIndex);
+                    /// Add recocus for camera(2014/08/20)
+                    int refocus = exif.getAttribute(ExifInterface.TAG_MTK_CAMERA_REFOCUS) == null ? 0 : 1;
+                    values.put(Images.Media.CAMERA_REFOCUS, refocus);
+                    /// @}
                 }
             }
-
             Uri tableUri = mFilesUri;
             MediaInserter inserter = mMediaInserter;
             if (!mNoMedia) {
@@ -935,24 +1183,53 @@ public class MediaScanner
                 // Setting a flag in order not to use bulk insert for the file related with
                 // notifications, ringtones, and alarms, because the rowId of the inserted file is
                 // needed.
-                if (mWasEmptyPriorToScan) {
-                    if (notifications && !mDefaultNotificationSet) {
-                        if (TextUtils.isEmpty(mDefaultNotificationFilename) ||
-                                doesPathHaveFilename(entry.mPath, mDefaultNotificationFilename)) {
-                            needToSetSettings = true;
-                        }
-                    } else if (ringtones && !mDefaultRingtoneSet) {
-                        if (TextUtils.isEmpty(mDefaultRingtoneFilename) ||
-                                doesPathHaveFilename(entry.mPath, mDefaultRingtoneFilename)) {
-                            needToSetSettings = true;
-                        }
-                    } else if (alarms && !mDefaultAlarmSet) {
-                        if (TextUtils.isEmpty(mDefaultAlarmAlertFilename) ||
-                                doesPathHaveFilename(entry.mPath, mDefaultAlarmAlertFilename)) {
-                            needToSetSettings = true;
-                        }
+
+                /// M: Set notification, ringtone and alarm if it wasn't set before. @{
+                if (notifications && ((mWasEmptyPriorToScan && !mDefaultNotificationSet) ||
+                        doesSettingEmpty(NOTIFICATION_SET))) {
+                    if (TextUtils.isEmpty(mDefaultNotificationFilename) ||
+                            doesPathHaveFilename(entry.mPath, mDefaultNotificationFilename)) {
+                        needToSetSettings = true;
+                        /// M: Adds log to debug setting ringtones.
+                        Log.v(TAG, "endFile: needToSetNotification=true.");
+                    }
+/* Vanzo:yujianpeng on: Sat, 07 Mar 2015 16:25:02 +0800
+ * modify sim1 & sim2 different ringtone
+                } else if (ringtones && ((mWasEmptyPriorToScan && !mDefaultRingtoneSet) ||
+                        doesSettingEmpty(RINGTONE_SET))) {
+                    if (TextUtils.isEmpty(mDefaultRingtoneFilename) ||
+                            doesPathHaveFilename(entry.mPath, mDefaultRingtoneFilename)) {
+                        needToSetSettings = true;
+                        /// M: Adds log to debug setting ringtones.
+                        Log.v(TAG, "endFile: needToSetRingtone=true.");
+                    }
+ */
+                } else if (ringtones && ((mWasEmptyPriorToScan && (!mDefaultRingtoneSet||!mDefaultRingtoneSim2Set)) ||
+                            doesSettingEmpty(RINGTONE_SET)||doesSettingEmpty(RINGTONE_SIM2_SET))) {
+                    if (TextUtils.isEmpty(mDefaultRingtoneFilename) ||
+                            doesPathHaveFilename(entry.mPath, mDefaultRingtoneFilename)) {
+                        needToSetSettings = true;
+                        /// M: Adds log to debug setting ringtones.
+                        Log.v(TAG, "endFile: needToSetRingtone=true.");
+                    }
+                    else if(TextUtils.isEmpty(mDefaultRingtoneSim2Filename) ||
+                            doesPathHaveFilename(entry.mPath, mDefaultRingtoneSim2Filename))
+                    {
+                        needToSetSettings = true;
+                        isSim2Ringtone = true;
+                        Log.v(TAG, "endFile: needToSetRingtone=true.sim2 default ringtone");
+                    }
+// End of Vanzo:yujianpeng
+                } else if (alarms && ((mWasEmptyPriorToScan && !mDefaultAlarmSet) ||
+                        doesSettingEmpty(ALARM_SET))) {
+                    if (TextUtils.isEmpty(mDefaultAlarmAlertFilename) ||
+                            doesPathHaveFilename(entry.mPath, mDefaultAlarmAlertFilename)) {
+                        needToSetSettings = true;
+                        /// M: Adds log to debug setting ringtones.
+                        Log.v(TAG, "endFile: needToSetAlarm=true.");
                     }
                 }
+                /// @}
 
                 // New file, insert it.
                 // Directories need to be inserted before the files they contain, so they
@@ -995,22 +1272,62 @@ public class MediaScanner
                     }
                     values.put(FileColumns.MEDIA_TYPE, mediaType);
                 }
+
                 mMediaProvider.update(mPackageName, result, values, null, null);
             }
-
+            ///M: Set ringtone if it wasn't set before. @{
             if(needToSetSettings) {
-                if (notifications) {
+                if (notifications && doesSettingEmpty(NOTIFICATION_SET)) {
                     setSettingIfNotSet(Settings.System.NOTIFICATION_SOUND, tableUri, rowId);
+                    setProfileSettings(RingtoneManager.TYPE_NOTIFICATION, tableUri, rowId);
                     mDefaultNotificationSet = true;
-                } else if (ringtones) {
+                    setSettingFlag(NOTIFICATION_SET);
+                    Log.v(TAG, "endFile: set notification. uri=" + tableUri + ", rowId=" + rowId);
+/* Vanzo:yujianpeng on: Sat, 07 Mar 2015 16:28:53 +0800
+ * modify sim1 & sim2 different ringtone
+                } else if (ringtones && doesSettingEmpty(RINGTONE_SET)) {
                     setSettingIfNotSet(Settings.System.RINGTONE, tableUri, rowId);
+                    setSettingIfNotSet(Settings.System.VIDEO_CALL, tableUri, rowId);
+                    setSettingIfNotSet(Settings.System.SIP_CALL, tableUri, rowId);
+                    setProfileSettings(RingtoneManager.TYPE_RINGTONE, tableUri, rowId);
+                    setProfileSettings(RingtoneManager.TYPE_VIDEO_CALL, tableUri, rowId);
+                    setProfileSettings(RingtoneManager.TYPE_SIP_CALL, tableUri, rowId);
                     mDefaultRingtoneSet = true;
-                } else if (alarms) {
+                    setSettingFlag(RINGTONE_SET);
+                    Log.v(TAG, "endFile: set ringtone. uri=" + tableUri + ", rowId=" + rowId);
+ */
+                } else if (ringtones && (doesSettingEmpty(RINGTONE_SET)||doesSettingEmpty(RINGTONE_SIM2_SET))){
+                  if(!isSim2Ringtone) {
+                      setSettingIfNotSet(Settings.System.RINGTONE, tableUri, rowId);
+                      setSettingIfNotSet(Settings.System.VIDEO_CALL, tableUri, rowId);
+                      setSettingIfNotSet(Settings.System.SIP_CALL, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_RINGTONE, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_VIDEO_CALL, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_SIP_CALL, tableUri, rowId);
+                      mDefaultRingtoneSet = true;
+                      setSettingFlag(RINGTONE_SET);
+                      Log.v(TAG, "endFile: set ringtone. uri=" + tableUri + ", rowId=" + rowId);
+                  } else {
+                      setSettingIfNotSet(Settings.System.RINGTONE_SIM2, tableUri, rowId);
+                      setSettingIfNotSet(Settings.System.VIDEO_CALL, tableUri, rowId);
+                      setSettingIfNotSet(Settings.System.SIP_CALL, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_RINGTONE_SIM2, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_VIDEO_CALL, tableUri, rowId);
+                      setProfileSettings(RingtoneManager.TYPE_SIP_CALL, tableUri, rowId);
+                      mDefaultRingtoneSim2Set = true;
+                      setSettingFlag(RINGTONE_SIM2_SET);
+                      Log.v(TAG, "endFile: set sim2 ringtone. uri=" + tableUri + ", rowId=" + rowId);
+
+                  }
+// End of Vanzo:yujianpeng
+                } else if (alarms && doesSettingEmpty(ALARM_SET)) {
                     setSettingIfNotSet(Settings.System.ALARM_ALERT, tableUri, rowId);
+                    setProfileSettings(RingtoneManager.TYPE_ALARM, tableUri, rowId);
                     mDefaultAlarmSet = true;
+                    setSettingFlag(ALARM_SET);
                 }
             }
-
+            /// @}
             return result;
         }
 
@@ -1021,6 +1338,22 @@ public class MediaScanner
                     pathFilenameStart + filenameLength == path.length();
         }
 
+        /// M: Modify for ringtone list is empty @{
+        private boolean doesSettingEmpty(String settingName) {
+            String existingSettingValue = Settings.System.getString(mContext.getContentResolver(), settingName);
+            if (TextUtils.isEmpty(existingSettingValue)) {
+                return true;
+            }
+            return false;
+        }
+
+        private void setSettingFlag(String settingName) {
+            final String VALUE = "yes";
+            Log.d(TAG, "setSettingFlag set:" + settingName);
+            Settings.System.putString(mContext.getContentResolver(), settingName, VALUE);
+        }
+        /// @}
+
         private void setSettingIfNotSet(String settingName, Uri uri, long rowId) {
 
             String existingSettingValue = Settings.System.getString(mContext.getContentResolver(),
@@ -1030,6 +1363,31 @@ public class MediaScanner
                 // Set the setting to the given URI
                 Settings.System.putString(mContext.getContentResolver(), settingName,
                         ContentUris.withAppendedId(uri, rowId).toString());
+                /// M: Adds log to debug setting ringtones.
+                Log.v(TAG, "setSettingIfNotSet: name=" + settingName + ",value=" + rowId);
+            } else {
+                /// M: Adds log to debug setting ringtones.
+                Log.e(TAG, "setSettingIfNotSet: name=" + settingName + " with value=" + existingSettingValue);
+            }
+        }
+
+        private void setProfileSettings(int type, Uri uri, long rowId) {
+            if (type == RingtoneManager.TYPE_NOTIFICATION) {
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_NOTIFICATION, uri, rowId);
+            } else if (type == RingtoneManager.TYPE_RINGTONE) {
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_RINGTONE, uri, rowId);
+/* Vanzo:yujianpeng on: Tue, 10 Mar 2015 11:39:40 +0800
+ * modify sim1 & sim2 different ringtone
+ */
+            } else if(type ==RingtoneManager.TYPE_RINGTONE_SIM2){
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_RINGTONE_SIM2, uri, rowId);
+// End of Vanzo:yujianpeng
+            } else if (type == RingtoneManager.TYPE_VIDEO_CALL) {
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_VIDEO_CALL, uri, rowId);
+            } else if (type == RingtoneManager.TYPE_SIP_CALL) {
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_SIP_CALL, uri, rowId);
+            } else if (type == RingtoneManager.TYPE_ALARM) {
+                setSettingIfNotSet(RingtoneManager.KEY_DEFAULT_ALARM, uri, rowId);
             }
         }
 
@@ -1058,6 +1416,8 @@ public class MediaScanner
     }; // end of anonymous MediaScannerClient instance
 
     private void prescan(String filePath, boolean prescanFiles) throws RemoteException {
+        /// M: Adds log for debug.
+        Log.v(TAG, "prescan>>> filePath=" + filePath + ",prescanFiles=" + prescanFiles);
         Cursor c = null;
         String where = null;
         String[] selectionArgs = null;
@@ -1087,6 +1447,10 @@ public class MediaScanner
         MediaBulkDeleter deleter = new MediaBulkDeleter(mMediaProvider, mPackageName,
                 builder.build());
 
+        /// M: Add to debug how many file scanned
+        int audioCount = 0;
+        long lastId = Long.MIN_VALUE;
+
         // Build the list of files from the content provider
         try {
             if (prescanFiles) {
@@ -1094,7 +1458,6 @@ public class MediaScanner
                 // Because we'll be deleting entries for missing files as we go,
                 // we need to query the database in small batches, to avoid problems
                 // with CursorWindow positioning.
-                long lastId = Long.MIN_VALUE;
                 Uri limitUri = mFilesUri.buildUpon().appendQueryParameter("limit", "1000").build();
                 mWasEmptyPriorToScan = true;
 
@@ -1131,6 +1494,8 @@ public class MediaScanner
                             try {
                                 exists = Os.access(path, android.system.OsConstants.F_OK);
                             } catch (ErrnoException e1) {
+                                /// M: Adds log for debug.
+                                Log.e(TAG, "prescan: ErrnoException! path=" + path);
                             }
                             if (!exists && !MtpConstants.isAbstractObject(format)) {
                                 // do not delete missing playlists, since they may have been
@@ -1162,13 +1527,43 @@ public class MediaScanner
             deleter.flush();
         }
 
-        // compute original size of images
-        mOriginalCount = 0;
-        c = mMediaProvider.query(mPackageName, mImagesUri, ID_PROJECTION, null, null, null, null);
-        if (c != null) {
-            mOriginalCount = c.getCount();
-            c.close();
+        try {
+            // compute original size of images
+            mOriginalCount = 0;
+            c = mMediaProvider.query(mPackageName, mImagesUri, ID_PROJECTION, null, null, null, null);
+            if (c != null) {
+                mOriginalCount = c.getCount();
+                c.close();
+                /// M: Make sure cursor not to be closed again in finally block.
+                c = null;
+            }
+            mOriginalVideoCount = 0;
+            c = mMediaProvider.query(mPackageName, mVideoUri, ID_PROJECTION, null, null, null, null);
+            if (c != null) {
+                mOriginalVideoCount = c.getCount();
+                c.close();
+                /// M: Make sure cursor not to be closed again in finally block.
+                c = null;
+            }
+            /// M: log audio count in device
+            c = mMediaProvider.query(mPackageName, mAudioUri, ID_PROJECTION, null, null, null, null);
+            if (c != null) {
+                audioCount = c.getCount();
+                c.close();
+                /// M: Make sure cursor not to be closed again in finally block.
+                c = null;
+            }
+        /// M: Make sure cursor to be closed. @{
+        } finally {
+            if (null != c) {
+                c.close();
+            }
+        /// @}
         }
+
+        /// M: Adds log to debug setting ringtones and how many file scanned.
+        Log.v(TAG, "prescan<<< imageCount=" + mOriginalCount + ",videoCount=" + mOriginalVideoCount
+                + ", audioCount=" + audioCount + ", lastId=" + lastId + ",isEmpty=" + mWasEmptyPriorToScan);
     }
 
     private boolean inScanDirectory(String path, String[] directories) {
@@ -1182,19 +1577,24 @@ public class MediaScanner
     }
 
     private void pruneDeadThumbnailFiles() {
+        Log.v(TAG, "pruneDeadThumbnailFiles>>>");
         HashSet<String> existingFiles = new HashSet<String>();
-        String directory = "/sdcard/DCIM/.thumbnails";
+        String directory = Environment.getExternalStorageDirectory().getPath() + "/"
+                + MiniThumbFile.getMiniThumbFileDirectoryPath();
         String [] files = (new File(directory)).list();
-        Cursor c = null;
-        if (files == null)
+        if (files == null) {
             files = new String[0];
-
+        }
         for (int i = 0; i < files.length; i++) {
             String fullPathString = directory + "/" + files[i];
             existingFiles.add(fullPathString);
         }
 
+        int imageThumbCount = 0;
+        int videoThumbCount = 0;
+        Cursor c = null;
         try {
+            /// M: remove useful image thumbnail files
             c = mMediaProvider.query(
                     mPackageName,
                     mThumbsUri,
@@ -1202,31 +1602,67 @@ public class MediaScanner
                     null,
                     null,
                     null, null);
-            Log.v(TAG, "pruneDeadThumbnailFiles... " + c);
             if (c != null && c.moveToFirst()) {
+                imageThumbCount = c.getCount();
                 do {
                     String fullPathString = c.getString(0);
                     existingFiles.remove(fullPathString);
                 } while (c.moveToNext());
             }
-
-            for (String fileToDelete : existingFiles) {
-                if (false)
-                    Log.v(TAG, "fileToDelete is " + fileToDelete);
-                try {
-                    (new File(fileToDelete)).delete();
-                } catch (SecurityException ex) {
+            /// M: close image thumb query cursor
+            if (c != null) {
+                c.close();
+                c = null;
+            }
+            /// M: remove useful video thumbnail files
+            c = mMediaProvider.query(
+                    mPackageName,
+                    mVideoThumbsUri,
+                    new String [] { "_data" },
+                    null,
+                    null,
+                    null, null);
+            if (c != null && c.moveToFirst()) {
+                videoThumbCount = c.getCount();
+                do {
+                    String fullPathString = c.getString(0);
+                    existingFiles.remove(fullPathString);
+                } while (c.moveToNext());
+            }
+            if (c != null) {
+                c.close();
+                c = null;
+            }
+            /// M: If exist image or video thumbnail, remove MiniThumbFiles
+            if (imageThumbCount > 0 || videoThumbCount > 0) {
+                String miniThumbFilePath = directory + "/" + MiniThumbFile.getMiniThumbFilePrefix();
+                Iterator<String> iterator = existingFiles.iterator();
+                while (iterator.hasNext()) {
+                    String path = iterator.next();
+                    if (path.startsWith(miniThumbFilePath)) {
+                        iterator.remove();
+                    }
                 }
             }
 
-            Log.v(TAG, "/pruneDeadThumbnailFiles... " + c);
+            for (String fileToDelete : existingFiles) {
+                Log.v(TAG, "delete dead thumbnail file " + fileToDelete);
+                try {
+                    (new File(fileToDelete)).delete();
+                } catch (SecurityException ex) {
+                    /// M: Adds log for debug.
+                    Log.e(TAG, "pruneDeadThumbnailFiles: path=" + fileToDelete, ex);
+                }
+            }
         } catch (RemoteException e) {
             // We will soon be killed...
+            Log.e(TAG, "pruneDeadThumbnailFiles: RemoteException!", e);
         } finally {
             if (c != null) {
                 c.close();
             }
         }
+        Log.v(TAG, "pruneDeadThumbnailFiles<<< for " + directory);
     }
 
     static class MediaBulkDeleter {
@@ -1252,6 +1688,7 @@ public class MediaScanner
                 flush();
             }
         }
+
         public void flush() throws RemoteException {
             int size = whereArgs.size();
             if (size > 0) {
@@ -1274,8 +1711,10 @@ public class MediaScanner
             processPlayLists();
         }
 
-        if (mOriginalCount == 0 && mImagesUri.equals(Images.Media.getContentUri("external")))
+        if ((mOriginalCount == 0 || mOriginalVideoCount == 0)
+                && mImagesUri.equals(Images.Media.getContentUri("external"))) {
             pruneDeadThumbnailFiles();
+        }
 
         // allow GC to clean up
         mPlayLists = null;
@@ -1297,6 +1736,7 @@ public class MediaScanner
         mVideoUri = Video.Media.getContentUri(volumeName);
         mImagesUri = Images.Media.getContentUri(volumeName);
         mThumbsUri = Images.Thumbnails.getContentUri(volumeName);
+        mVideoThumbsUri = Video.Thumbnails.getContentUri(volumeName);
         mFilesUri = Files.getContentUri(volumeName);
         mFilesUriNoNotify = mFilesUri.buildUpon().appendQueryParameter("nonotify", "1").build();
 
@@ -1336,7 +1776,7 @@ public class MediaScanner
             postscan(directories);
             long end = System.currentTimeMillis();
 
-            if (false) {
+            if (true) {
                 Log.d(TAG, " prescan time: " + (prescan - start) + "ms\n");
                 Log.d(TAG, "    scan time: " + (scan - prescan) + "ms\n");
                 Log.d(TAG, "postscan time: " + (end - scan) + "ms\n");
@@ -1363,6 +1803,7 @@ public class MediaScanner
 
             File file = new File(path);
             if (!file.exists()) {
+                Log.e(TAG, "scanSingleFile: Not exist path=" + path);
                 return null;
             }
 
@@ -1371,7 +1812,7 @@ public class MediaScanner
 
             // always scan the file, so we can return the content://media Uri for existing files
             return mClient.doScanFile(path, mimeType, lastModifiedSeconds, file.length(),
-                    false, true, MediaScanner.isNoMediaPath(path));
+                    file.isDirectory(), true, isNoMediaPath(path));
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in MediaScanner.scanFile()", e);
             return null;
@@ -1462,6 +1903,11 @@ public class MediaScanner
                             return true;
                         }
                     }
+                    /// M: avoid loop in while@{
+                    else if(slashIndex == offset) {
+                        slashIndex++; //pass "//" case
+                    }
+                    /// @}
                     offset = slashIndex;
                 }
                 mMediaPaths.put(parent, "");
@@ -1484,7 +1930,9 @@ public class MediaScanner
 
             // no need to use the media scanner, but we need to update last modified and file size
             ContentValues values = new ContentValues();
-            values.put(Files.FileColumns.SIZE, file.length());
+            /// M: ALPS00670132, for WHQL ObjectSize folder case, folder file size must be 0
+            values.put(Files.FileColumns.SIZE, format == MtpConstants.FORMAT_ASSOCIATION ? 0 : file.length());
+
             values.put(Files.FileColumns.DATE_MODIFIED, lastModifiedSeconds);
             try {
                 String[] whereArgs = new String[] {  Integer.toString(objectHandle) };
@@ -1545,6 +1993,8 @@ public class MediaScanner
                 return new FileEntry(rowId, path, lastModified, format);
             }
         } catch (RemoteException e) {
+            /// M: Adds log for debug.
+            Log.e(TAG, "makeEntryFor: RemoteException! path=" + path, e);
         } finally {
             if (c != null) {
                 c.close();
@@ -1854,6 +2304,8 @@ public class MediaScanner
                 }
             }
         } catch (RemoteException e1) {
+            /// M: Adds log for debug.
+            Log.e(TAG, "processPlayLists: RemoteException!", e1);
         } finally {
             if (fileList != null) {
                 fileList.close();
@@ -1886,4 +2338,207 @@ public class MediaScanner
         mContext.getContentResolver().releaseProvider(mMediaProvider);
         native_finalize();
     }
+
+    /// M: Checks out whether the mimetype is application/octet-stream. @(
+    private static final String MIME_APPLICATION_OCTET_STREAM = "application/octet-stream";
+    private boolean isValueslessMimeType(String mimetype) {
+        boolean valueless = false;
+        if (MIME_APPLICATION_OCTET_STREAM.equalsIgnoreCase(mimetype)) {
+            valueless = true;
+            Log.v(TAG, "isValueslessMimeType: mimetype=" + mimetype);
+        }
+        return valueless;
+    }
+    /// M: @}
+
+    /// M: MediaScanner Performance turning {@
+    /// Add some new api for MediaScanner performance enhancement feature,
+    /// we use threadpool to scan every folder in directories.
+
+    /**
+     * M: Store playlist file path and return to MediaScannerService so that it will process them
+     * when postScanAll called.
+     */
+    private ArrayList<String> mPlaylistFilePathList = new ArrayList<String>();
+
+    /**
+     * M: Pre-scan all, only call by this scanner created in thread pool.
+     * @hide
+     */
+    public void preScanAll(String volume) {
+        try {
+            initialize(volume);
+            prescan(null, true);
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in MediaScanner.scan()", e);
+        }
+    }
+
+    /**
+     * M: Post scan all, only call by this scanner created in thread pool.
+     *
+     * @param playlistPath playlist file path, process them to database.
+     * @hide
+     */
+    public void postScanAll(ArrayList<String> playlistFilePathList) {
+        try {
+            /// handle playlists last, after we know what media files are on the storage.
+            /// Restore path list to file entry list, then process these playlist
+            if (mProcessPlaylists) {
+                for (String path : playlistFilePathList) {
+                    FileEntry entry = makeEntryFor(path);
+                    File file = new File(path);
+                    long lastModified = file.lastModified();
+                    // add some slack to avoid a rounding error
+                    long delta = (entry != null) ? (lastModified - entry.mLastModified) : 0;
+                    boolean wasModified = delta > 1 || delta < -1;
+                    if (entry == null || wasModified) {
+                        if (wasModified) {
+                            entry.mLastModified = lastModified;
+                        } else {
+                            entry = new FileEntry(0, path, lastModified, 0);
+                        }
+                        entry.mLastModifiedChanged = true;
+                    }
+                    mPlayLists.add(entry);
+                }
+                processPlayLists();
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in MediaScanner.scan()", e);
+        }
+
+        if ((mOriginalCount == 0 || mOriginalVideoCount == 0)
+                && mImagesUri.equals(Images.Media.getContentUri("external"))) {
+            pruneDeadThumbnailFiles();
+        }
+
+        /// allow GC to clean up
+        mPlayLists = null;
+        mMediaProvider = null;
+        Log.v(TAG, "postScanAll");
+    }
+
+    /**
+     * M: Scan all given folder with right method. Single file and empty folder need scan special one by one.
+     *
+     * @param insertHanlder use to do entries insert
+     * @param folders The folders given to scan.
+     * @param volume External or internal
+     * @param isSingelFile whether the given folders is single file
+     *
+     * @return playlist file path scan in these folders
+     *
+     * @hide
+     */
+    public ArrayList<String> scanFolders(Handler insertHanlder, String[] folders, String volume, boolean isSingelFile) {
+        try {
+            initialize(volume);
+
+            /// Init mPlaylist because we may insert playlist in begin file.
+            if (mPlayLists == null) {
+                mPlayLists = new ArrayList<FileEntry>();
+            } else {
+                mPlayLists.clear();
+            }
+
+            if (ENABLE_BULK_INSERTS) {
+                /// create MediaInserter for bulk inserts
+                mMediaInserter = new MediaInserter(insertHanlder, 100);
+            }
+            /// Single file scan it directly and folder need scan all it's sub files.
+            for (String path : folders) {
+                if (isSingelFile) {
+                    File file = new File(path);
+                    long lastModifiedSeconds = file.lastModified() / 1000; // lastModified is in milliseconds on Files.
+                    mClient.doScanFile(path, null, lastModifiedSeconds, file.length(),
+                            file.isDirectory(), false, isNoMediaPath(path));
+                } else {
+                    processDirectory(path, mClient);
+                }
+            }
+            if (ENABLE_BULK_INSERTS) {
+                /// flush remaining inserts
+                mMediaInserter.flushAll();
+                mMediaInserter = null;
+            }
+        } catch (SQLException e) {
+            /// this might happen if the SD card is removed while the media scanner is running
+            Log.e(TAG, "SQLException in MediaScanner.scan()", e);
+        } catch (UnsupportedOperationException e) {
+            /// this might happen if the SD card is removed while the media scanner is running
+            Log.e(TAG, "UnsupportedOperationException in MediaScanner.scan()", e);
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in MediaScanner.scan()", e);
+        }
+
+        /// allow GC to clean up
+        mPlayLists = null;
+        mMediaProvider = null;
+
+        return mPlaylistFilePathList;
+    }
+
+    /**
+     * M: Scan all given folder with right method. Single file and empty folder need scan special one by one.
+     *
+     * @param folders The folders given to scan.
+     * @param volume External or internal
+     * @param isSingelFileOrEmptyFolder whether the given folders is single file or empty folder
+     *
+     * @return playlist file path scan in these folders
+     * @hide
+     */
+    public ArrayList<String> scanFolders(String[] folders, String volume, boolean isSingelFileOrEmptyFolder) {
+        try {
+            initialize(volume);
+
+            /// Init mPlaylist because we may insert playlist in begin file.
+            if (mPlayLists == null) {
+                mPlayLists = new ArrayList<FileEntry>();
+            } else {
+                mPlayLists.clear();
+            }
+
+            if (ENABLE_BULK_INSERTS) {
+                /// create MediaInserter for bulk inserts
+                mMediaInserter = new MediaInserter(mMediaProvider, mPackageName, 200);
+            }
+            /// M: Call doScanFile to scan folder and use processDirecitory to scan subfolders.
+            for (String folder : folders) {
+                  File file = new File(folder);
+                  if (file.exists()) {
+                      // lastModified is in milliseconds on Files.
+                      long lastModifiedSeconds = file.lastModified() / 1000;
+                      mClient.doScanFile(folder, null, lastModifiedSeconds, file.length(),
+                              file.isDirectory(), false, isNoMediaPath(folder));
+                  }
+
+                  if (!isSingelFileOrEmptyFolder) {
+                    processDirectory(folder, mClient);
+                  }
+            }
+
+            if (ENABLE_BULK_INSERTS) {
+                /// flush remaining inserts
+                mMediaInserter.flushAll();
+                mMediaInserter = null;
+            }
+        } catch (SQLException e) {
+            /// this might happen if the SD card is removed while the media scanner is running
+            Log.e(TAG, "SQLException in MediaScanner.scan()", e);
+        } catch (UnsupportedOperationException e) {
+            /// this might happen if the SD card is removed while the media scanner is running
+            Log.e(TAG, "UnsupportedOperationException in MediaScanner.scan()", e);
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in MediaScanner.scan()", e);
+        }
+
+        /// allow GC to clean up
+        mPlayLists = null;
+        mMediaProvider = null;
+
+        return mPlaylistFilePathList;
+    }
+    /// @}
 }

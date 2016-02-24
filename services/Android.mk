@@ -33,7 +33,31 @@ services := \
 # The convention is to name each service module 'services.$(module_name)'
 LOCAL_STATIC_JAVA_LIBRARIES := $(addprefix services.,$(services))
 
+ifeq ($(strip $(MTK_BSP_PACKAGE)),no)
+LOCAL_STATIC_JAVA_LIBRARIES += mobile_manager
+endif
+
+ifeq ($(strip $(MTK_BSP_PACKAGE)),no)
+LOCAL_STATIC_JAVA_LIBRARIES += recovery_manager
+endif
+
 include $(BUILD_JAVA_LIBRARY)
+
+ifeq ($(strip $(BUILD_MTK_API_DEP)), yes)
+# services API table.
+# ============================================================
+LOCAL_MODULE := services-api
+
+LOCAL_JAVA_LIBRARIES += $(LOCAL_STATIC_JAVA_LIBRARIES)
+LOCAL_MODULE_CLASS := JAVA_LIBRARIES
+
+LOCAL_DROIDDOC_OPTIONS:= \
+		-api $(TARGET_OUT_COMMON_INTERMEDIATES)/PACKAGING/services-api.txt \
+		-nodocs \
+		-hidden
+
+include $(BUILD_DROIDDOC)
+endif
 
 # native library
 # =============================================================

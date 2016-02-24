@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +35,12 @@ import static com.android.server.wm.WindowManagerService.LayoutFields.SET_ORIENT
 import static com.android.server.wm.WindowManagerService.LayoutFields.SET_WALLPAPER_ACTION_PENDING;
 
 import android.content.Context;
+import android.graphics.PixelFormat;
 import android.os.Debug;
 import android.os.SystemClock;
+import android.os.SystemProperties;
+import android.os.Trace;
+import android.os.PowerManager;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
@@ -46,6 +55,8 @@ import com.android.server.wm.WindowManagerService.LayoutFields;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+/// M: BMW
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 /**
  * Singleton class that carries out the animations and Surface operations in a separate task
@@ -87,6 +98,12 @@ public class WindowAnimator {
     SparseArray<DisplayContentsAnimator> mDisplayContentsAnimators =
             new SparseArray<DisplayContentsAnimator>(2);
 
+    /// M: [ALPS00388255] Solve the flash screen issue caused by too early unset the freeze state
+    boolean mDisplayed = false;
+    /// M:[SmartBook] Turn on phone screen when specific application launched @{
+    boolean mSbReadyToWakeUp = false;
+    /// @}
+
     boolean mInitialized = false;
 
     boolean mKeyguardGoingAway;
@@ -123,7 +140,9 @@ public class WindowAnimator {
             public void run() {
                 synchronized (mService.mWindowMap) {
                     mService.mAnimationScheduled = false;
+                    Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "wmAnimate");
                     animateLocked();
+                    Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
                 }
             }
         };
@@ -218,6 +237,12 @@ public class WindowAnimator {
                             "updateWindowsApps...: done animating exiting " + appAnimator.mAppToken);
                 }
             }
+            /// M: BMW. Update stack background synchronously @{
+            if(MultiWindowProxy.isFeatureSupport()) {
+                //stack.resetStackBackgroundAnimator();
+                stack.setStackBackground(false);
+            }
+            /// @}
         }
     }
 
@@ -642,6 +667,7 @@ public class WindowAnimator {
         SurfaceControl.openTransaction();
         SurfaceControl.setAnimationTransaction();
         try {
+            mDisplayed = false;
             final int numDisplays = mDisplayContentsAnimators.size();
             for (int i = 0; i < numDisplays; i++) {
                 final int displayId = mDisplayContentsAnimators.keyAt(i);
@@ -666,6 +692,12 @@ public class WindowAnimator {
                             mService.mAccessibilityController.onRotationChangedLocked(
                                     mService.getDefaultDisplayContentLocked(), mService.mRotation);
                         }
+                        /// M: It means the rotaion animation is done
+                        ///    The input dispatch should be enabled.
+                        mService.mInputMonitor.thawInputDispatchingLw();
+
+                        /// M: ALPS00431397. AMS should not halt resuming activity
+                        mService.haltActivityResuming(false);
                     }
                 }
 
@@ -679,6 +711,12 @@ public class WindowAnimator {
                 for (int j = 0; j < N; j++) {
                     windows.get(j).mWinAnimator.prepareSurfaceLocked(true);
                 }
+                /// M: [ALPS00388255] Solve the flash screen issue caused by too early unset the freeze state @{
+                if (!mDisplayed && !mService.mDisplayFrozenTimeout) {
+                    mBulkUpdateParams &= ~SET_ORIENTATION_CHANGE_COMPLETE;
+                    Slog.v(TAG, "No window is displayed, unset the SET_ORIENTATION_CHANGE_COMPLETE flag");
+                }
+                /// @}
             }
 
             for (int i = 0; i < numDisplays; i++) {
@@ -734,6 +772,13 @@ public class WindowAnimator {
         boolean doRequest = false;
         if (mBulkUpdateParams != 0) {
             doRequest = mService.copyAnimToLayoutParamsLocked();
+            /// M:[SmartBook]Wake up when display ready @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                if ((mBulkUpdateParams & LayoutFields.SET_TURN_ON_SCREEN) != 0) {
+                    mSbReadyToWakeUp = true;
+                }
+            }
+            /// @}
         }
 
         if (hasPendingLayoutChanges || doRequest) {
@@ -743,6 +788,23 @@ public class WindowAnimator {
         if (!mAnimating && wasAnimating) {
             mService.requestTraversalLocked();
         }
+
+        /// M:[SmartBook]Wake up when display ready @{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            if (mSbReadyToWakeUp && !mAnimating) {
+                if (mService.mSbParams.getPlugState() == WindowManagerService.SmartBookParams.SMARTBOOK_HAS_PLUGGED_IN) {
+                    if (mService.mSbParams.checkWindowInSmartBookWhiteList()) {
+                        if (!mService.IS_USER_BUILD)
+                            Slog.d(TAG, "Win:" + mService.mSbParams.mTurnOnScreenWin + " display ready, call wakeUpByReason");
+                        mService.mPowerManager.wakeUpByReason(SystemClock.uptimeMillis(), PowerManager.WAKE_UP_REASON_SMARTBOOK);
+                    }
+                }
+                // After animation done, mSbReadyToWakeUp should be reset
+                mSbReadyToWakeUp = false;
+            }
+        }
+        /// @}
+
         if (WindowManagerService.DEBUG_WINDOW_TRACE) {
             Slog.i(TAG, "!!! animate: exit mAnimating=" + mAnimating
                 + " mBulkUpdateParams=" + Integer.toHexString(mBulkUpdateParams)
@@ -824,16 +886,12 @@ public class WindowAnimator {
         if (displayId < 0) {
             return 0;
         }
-        DisplayContent displayContent = mService.getDisplayContentLocked(displayId);
-        return (displayContent != null) ? displayContent.pendingLayoutChanges : 0;
+        return mService.getDisplayContentLocked(displayId).pendingLayoutChanges;
     }
 
     void setPendingLayoutChanges(final int displayId, final int changes) {
         if (displayId >= 0) {
-            DisplayContent displayContent = mService.getDisplayContentLocked(displayId);
-            if (displayContent != null) {
-                displayContent.pendingLayoutChanges |= changes;
-            }
+            mService.getDisplayContentLocked(displayId).pendingLayoutChanges |= changes;
         }
     }
 

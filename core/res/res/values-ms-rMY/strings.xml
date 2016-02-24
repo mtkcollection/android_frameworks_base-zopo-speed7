@@ -1341,7 +1341,7 @@
   </plurals>
     <string name="wifi_available_sign_in" msgid="4029489716605255386">"Log masuk ke rangkaian Wi-Fi"</string>
     <string name="network_available_sign_in" msgid="8495155593358054676">"Log masuk ke rangkaian"</string>
-    <!-- no translation found for network_available_sign_in_detailed (8000081941447976118) -->
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
     <skip />
     <string name="wifi_watchdog_network_disabled" msgid="7904214231651546347">"Tidak boleh menyambung kepada Wi-Fi"</string>
     <string name="wifi_watchdog_network_disabled_detailed" msgid="5548780776418332675">" mempunyai sambungan internet yang kurang baik."</string>
@@ -1852,6 +1852,10 @@
     <item quantity="one" msgid="597194865053253679">"Selama satu jam (sehingga <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
     <item quantity="other" msgid="2827214920627669898">"Selama %1$d jam (sehingga <xliff:g id="FORMATTEDTIME">%2$s</xliff:g>)"</item>
   </plurals>
+    <string name="storage_phone">Storan telefon</string>
+    <string name="storage_external_usb">Storan USB luaran</string>
+    <string name="storage_ic_usb1">Storan1 IC-USB luaran</string>
+    <string name="storage_ic_usb2">Storan2 IC-USB luaran</string>
   <plurals name="zen_mode_duration_minutes">
     <item quantity="one" msgid="9040808414992812341">"Selama satu minit"</item>
     <item quantity="other" msgid="6924190729213550991">"Selama %d minit"</item>

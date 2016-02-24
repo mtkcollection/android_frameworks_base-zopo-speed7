@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,7 @@ package android.text;
 
 import android.graphics.Bitmap;
 import android.graphics.Paint;
+import android.os.Trace;
 import android.text.style.LeadingMarginSpan;
 import android.text.style.LeadingMarginSpan.LeadingMarginSpan2;
 import android.text.style.LineHeightSpan;
@@ -169,6 +175,11 @@ public class StaticLayout extends Layout {
         int v = 0;
         boolean needMultiply = (spacingmult != 1 || spacingadd != 0);
 
+        if (TextUtils.DEBUG_LOG) {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, "Text-generate");
+            TextUtils.printDebugLog(TAG, "[generate] " + "start") ;
+        }
+        long beforeTime = System.currentTimeMillis();
         Paint.FontMetricsInt fm = mFontMetricsInt;
         int[] chooseHtv = null;
 
@@ -179,6 +190,9 @@ public class StaticLayout extends Layout {
             spanned = (Spanned) source;
 
         int paraEnd;
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[generate] " + "for-0-start") ;
+        }
         for (int paraStart = bufStart; paraStart <= bufEnd; paraStart = paraEnd) {
             paraEnd = TextUtils.indexOf(source, CHAR_NEW_LINE, paraStart, bufEnd);
             if (paraEnd < 0)
@@ -195,6 +209,9 @@ public class StaticLayout extends Layout {
             if (spanned != null) {
                 LeadingMarginSpan[] sp = getParagraphSpans(spanned, paraStart, paraEnd,
                         LeadingMarginSpan.class);
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG, "[generate] " + "for-1-start") ;
+                }
                 for (int i = 0; i < sp.length; i++) {
                     LeadingMarginSpan lms = sp[i];
                     firstWidth -= sp[i].getLeadingMargin(true);
@@ -209,6 +226,9 @@ public class StaticLayout extends Layout {
                                 lmsFirstLine + lms2.getLeadingMarginLineCount());
                     }
                 }
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG, "[generate] " + "for-1-end") ;
+                }
 
                 chooseHt = getParagraphSpans(spanned, paraStart, paraEnd, LineHeightSpan.class);
 
@@ -217,7 +237,9 @@ public class StaticLayout extends Layout {
                         chooseHtv.length < chooseHt.length) {
                         chooseHtv = ArrayUtils.newUnpaddedIntArray(chooseHt.length);
                     }
-
+                    if (TextUtils.DEBUG_LOG) {
+                        TextUtils.printDebugLog(TAG, "[generate] " + "for-2-start") ;
+                    }
                     for (int i = 0; i < chooseHt.length; i++) {
                         int o = spanned.getSpanStart(chooseHt[i]);
 
@@ -232,7 +254,10 @@ public class StaticLayout extends Layout {
                             chooseHtv[i] = v;
                         }
                     }
-                }
+                    if (TextUtils.DEBUG_LOG) {
+                        TextUtils.printDebugLog(TAG, "[generate] " + "for-2-end") ;
+                    }
+               }
             }
 
             measured.setPara(source, paraStart, paraEnd, textDir);
@@ -268,13 +293,21 @@ public class StaticLayout extends Layout {
             boolean hasTabOrEmoji = false;
             boolean hasTab = false;
             TabStops tabStops = null;
-
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG, "[generate] " + "for-3-start") ;
+            }
             for (int spanStart = paraStart, spanEnd; spanStart < paraEnd; spanStart = spanEnd) {
 
                 if (spanned == null) {
                     spanEnd = paraEnd;
                     int spanLen = spanEnd - spanStart;
+                    if (TextUtils.DEBUG_LOG) {
+                        TextUtils.printDebugLog(TAG, "[generate] " + "addStyleRun-nospan-start " + spanLen) ;
+                    }
                     measured.addStyleRun(paint, spanLen, fm);
+                    if (TextUtils.DEBUG_LOG) {
+                        TextUtils.printDebugLog(TAG, "[generate] " + "addStyleRun-nospan-end") ;
+                    }
                 } else {
                     spanEnd = spanned.nextSpanTransition(spanStart, paraEnd,
                             MetricAffectingSpan.class);
@@ -282,14 +315,22 @@ public class StaticLayout extends Layout {
                     MetricAffectingSpan[] spans =
                             spanned.getSpans(spanStart, spanEnd, MetricAffectingSpan.class);
                     spans = TextUtils.removeEmptySpans(spans, spanned, MetricAffectingSpan.class);
+                    if (TextUtils.DEBUG_LOG) {
+                        TextUtils.printDebugLog(TAG, "[generate] " + "addStyleRun-span-start " + spanLen) ;
+                    }
                     measured.addStyleRun(paint, spans, spanLen, fm);
+                    if (TextUtils.DEBUG_LOG) {
+                       TextUtils.printDebugLog(TAG, "[generate] " + "addStyleRun-span-end") ;
+                    }
                 }
 
                 int fmTop = fm.top;
                 int fmBottom = fm.bottom;
                 int fmAscent = fm.ascent;
                 int fmDescent = fm.descent;
-
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG, "[generate] " + "for-4-start") ;
+                }
                 for (int j = spanStart; j < spanEnd; j++) {
                     char c = chs[j - paraStart];
 
@@ -452,11 +493,18 @@ public class StaticLayout extends Layout {
                         }
                     }
                 }
+                if (TextUtils.DEBUG_LOG) {
+                    TextUtils.printDebugLog(TAG, "[generate] " + "for-4-end") ;
+                }
+            }
+            if (TextUtils.DEBUG_LOG) {
+                TextUtils.printDebugLog(TAG, "[generate] " + "for-3-end") ;
             }
 
             if (paraEnd != here && mLineCount < mMaximumVisibleLineCount) {
                 if ((fitTop | fitBottom | fitDescent | fitAscent) == 0) {
-                    paint.getFontMetricsInt(fm);
+                    /// M: new FontMetrics method for complex text support.
+                    paint.getFontMetricsInt(source, fm);
 
                     fitTop = fm.top;
                     fitBottom = fm.bottom;
@@ -480,17 +528,19 @@ public class StaticLayout extends Layout {
 
             paraStart = paraEnd;
 
-            if (paraEnd == bufEnd)
+            if (paraEnd == bufEnd || mLineCount >= mMaximumVisibleLineCount)
                 break;
+        }
+        if (TextUtils.DEBUG_LOG) {
+            TextUtils.printDebugLog(TAG, "[generate] " + "for-0-end") ;
         }
 
         if ((bufEnd == bufStart || source.charAt(bufEnd - 1) == CHAR_NEW_LINE) &&
                 mLineCount < mMaximumVisibleLineCount) {
             // Log.e("text", "output last " + bufEnd);
 
-            measured.setPara(source, bufStart, bufEnd, textDir);
-
-            paint.getFontMetricsInt(fm);
+            /// M: new FontMetrics method for complex text support.
+            paint.getFontMetricsInt(source, fm);
 
             v = out(source,
                     bufEnd, bufEnd, fm.ascent, fm.descent,
@@ -502,6 +552,14 @@ public class StaticLayout extends Layout {
                     includepad, trackpad, null,
                     null, bufStart, ellipsize,
                     ellipsizedWidth, 0, paint, false);
+        }
+        long diffTime = System.currentTimeMillis() - beforeTime ;
+        if (TextUtils.DEBUG_LOG) {
+            if (diffTime > 0) {
+                TextUtils.printDebugLog(TAG, "[generate] " + "diff " + String.valueOf(diffTime)) ;
+            }
+            TextUtils.printDebugLog(TAG, "[generate] " + "end") ;
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
     }
 
@@ -583,7 +641,8 @@ public class StaticLayout extends Layout {
         }
 
 
-        if (needMultiply && !lastLine) {
+        //if (needMultiply && !lastLine) {
+        if (needMultiply) {
             double ex = (below - above) * (spacingmult - 1) + spacingadd;
             if (ex >= 0) {
                 extra = (int)(ex + EXTRA_ROUNDING);
@@ -623,12 +682,14 @@ public class StaticLayout extends Layout {
             boolean forceEllipsis = moreChars && (mLineCount + 1 == mMaximumVisibleLineCount);
 
             boolean doEllipsis =
-                        (((mMaximumVisibleLineCount == 1 && moreChars) || (firstLine && !moreChars)) &&
+                        ((((mMaximumVisibleLineCount == 1 && moreChars) || (firstLine && !moreChars)) &&
                                 ellipsize != TextUtils.TruncateAt.MARQUEE) ||
                         (!firstLine && (currentLineIsTheLastVisibleOne || !moreChars) &&
-                                ellipsize == TextUtils.TruncateAt.END);
+                                ellipsize == TextUtils.TruncateAt.END)) &&
+                        (start != end) ;
             if (doEllipsis) {
-                calculateEllipsis(start, end, widths, widthStart,
+                /// M: Pass text for checking
+                calculateEllipsis(text, start, end, widths, widthStart,
                         ellipsisWidth, ellipsize, j,
                         textWidth, paint, forceEllipsis);
             }
@@ -639,6 +700,21 @@ public class StaticLayout extends Layout {
     }
 
     private void calculateEllipsis(int lineStart, int lineEnd,
+                                   float[] widths, int widthStart,
+                                   float avail, TextUtils.TruncateAt where,
+                                   int line, float textWidth, TextPaint paint,
+                                   boolean forceEllipsis) {
+        /// M: Bypass to overloading method
+        calculateEllipsis(null, lineStart, lineEnd, widths, widthStart, avail,
+                where, line, textWidth, paint, forceEllipsis);
+    }
+
+    /**
+     * M: Add an additional text parameter at the beginning. We need to know the
+     *    text content for character checking
+     * @hide
+     */
+    private void calculateEllipsis(CharSequence text, int lineStart, int lineEnd,
                                    float[] widths, int widthStart,
                                    float avail, TextUtils.TruncateAt where,
                                    int line, float textWidth, TextPaint paint,
@@ -664,7 +740,13 @@ public class StaticLayout extends Layout {
                 int i;
 
                 for (i = len; i >= 0; i--) {
-                    float w = widths[i - 1 + lineStart - widthStart];
+                    /// M: Check the validation of array index
+                    int idx = i - 1 + lineStart - widthStart;
+                    if (idx < 0) {
+                        break;
+                    }
+
+                    float w = widths[idx];
 
                     if (w + sum + ellipsisWidth > avail) {
                         break;
@@ -686,7 +768,12 @@ public class StaticLayout extends Layout {
             int i;
 
             for (i = 0; i < len; i++) {
-                float w = widths[i + lineStart - widthStart];
+                /// M: Check the validation of array index
+                int idx = i + lineStart - widthStart;
+                if (idx < 0) {
+                    break;
+                }
+                float w = widths[idx];
 
                 if (w + sum + ellipsisWidth > avail) {
                     break;
@@ -698,8 +785,10 @@ public class StaticLayout extends Layout {
             ellipsisStart = i;
             ellipsisCount = len - i;
             if (forceEllipsis && ellipsisCount == 0 && len > 0) {
-                ellipsisStart = len - 1;
-                ellipsisCount = 1;
+                /// M: Check for surrogated character
+                final int legnthOfChar = TextUtils.isSurrogateChar(text, lineEnd - 1) ? 2 : 1;
+                ellipsisStart = len - legnthOfChar;
+                ellipsisCount = legnthOfChar;
             }
         } else {
             // where = TextUtils.TruncateAt.MIDDLE We only support middle ellipsis on a single line
@@ -709,7 +798,13 @@ public class StaticLayout extends Layout {
 
                 float ravail = (avail - ellipsisWidth) / 2;
                 for (right = len; right > 0; right--) {
-                    float w = widths[right - 1 + lineStart - widthStart];
+                    /// M: Check the validation of array index
+                    int idx = right - 1 + lineStart - widthStart;
+                    if (idx < 0) {
+                        break;
+                    }
+
+                    float w = widths[idx];
 
                     if (w + rsum > ravail) {
                         break;
@@ -720,7 +815,13 @@ public class StaticLayout extends Layout {
 
                 float lavail = avail - ellipsisWidth - rsum;
                 for (left = 0; left < right; left++) {
-                    float w = widths[left + lineStart - widthStart];
+                    /// M: Check the validation of array index
+                    int idx = left + lineStart - widthStart;
+                    if (idx < 0) {
+                        break;
+                    }
+
+                    float w = widths[idx];
 
                     if (w + lsum > lavail) {
                         break;
@@ -853,11 +954,19 @@ public class StaticLayout extends Layout {
         mMeasured = MeasuredText.recycle(mMeasured);
     }
 
+    /**
+    * M: Override
+    * @hide
+    */
+    @Override
+    public boolean isSingleLineRtoL() {
+        return (getLineDirections(0).mDirections[1] & RUN_RTL_FLAG) != 0;
+    }
+
     // returns an array with terminal sentinel value -1 to indicate end
     // this is so that arrays can be recycled instead of allocating new arrays
     // every time
     private static native int[] nLineBreakOpportunities(String locale, char[] text, int length, int[] recycle);
-
     private int mLineCount;
     private int mTopPadding, mBottomPadding;
     private int mColumns;

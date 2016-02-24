@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +37,12 @@ import android.view.View;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
+
+/* Vanzo:songlixin on: Mon, 12 Jan 2015 16:25:04 +0800
+ */
+ import android.os.SystemProperties;
+ import com.android.featureoption.FeatureOption;
+// End of Vanzo:songlixin
 
 /**
  * This class describes all device configuration information that can
@@ -605,6 +616,13 @@ public final class Configuration implements Parcelable, Comparable<Configuration
     public static final int NATIVE_CONFIG_LAYOUTDIR = 0x4000;
 
     /**
+     * M: sim locale feature
+     * if the locale is set by Telephony Framework, it will be true
+     * @hide
+     */
+    public boolean simSetLocale;
+
+    /**
      * Construct an invalid Configuration.  You must call {@link #setToDefaults}
      * for this object to be valid.  {@more}
      */
@@ -644,6 +662,7 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         compatScreenHeightDp = o.compatScreenHeightDp;
         compatSmallestScreenWidthDp = o.compatSmallestScreenWidthDp;
         seq = o.seq;
+        simSetLocale = o.simSetLocale; /// M: sim locale feature
     }
     
     public String toString() {
@@ -788,7 +807,11 @@ public final class Configuration implements Parcelable, Comparable<Configuration
      * Set this object to the system defaults.
      */
     public void setToDefaults() {
+/* Vanzo:Kern on: Wed, 27 Jun 2012 20:26:38 +0800
         fontScale = 1;
+*/
+        fontScale = Float.parseFloat(SystemProperties.get("ro.init.font_scale", FeatureOption.VANZO_FEATURE_DEFAULT_FONT_SCALE));
+// End of Vanzo: Kern
         mcc = mnc = 0;
         locale = null;
         userSetLocale = false;
@@ -806,6 +829,7 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         smallestScreenWidthDp = compatSmallestScreenWidthDp = SMALLEST_SCREEN_WIDTH_DP_UNDEFINED;
         densityDpi = DENSITY_DPI_UNDEFINED;
         seq = 0;
+        simSetLocale = false; /// M: sim locale feature
     }
 
     /** {@hide} */
@@ -824,6 +848,13 @@ public final class Configuration implements Parcelable, Comparable<Configuration
     public int updateFrom(Configuration delta) {
         int changed = 0;
         if (delta.fontScale > 0 && fontScale != delta.fontScale) {
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:14:40 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+            if (com.android.featureoption.FeatureOption.VANZO_FEATURE_LOVELYFONTS_SUPPORT) {
+                android.graphics.Typeface.nativeUpdateLovelyfonts(android.graphics.Typeface.sDefaultTypeface.native_instance);
+            }
+// End of Vanzo:zhangjingzhi
             changed |= ActivityInfo.CONFIG_FONT_SCALE;
             fontScale = delta.fontScale;
         }
@@ -906,6 +937,13 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         }
         if (delta.uiMode != (UI_MODE_TYPE_UNDEFINED|UI_MODE_NIGHT_UNDEFINED)
                 && uiMode != delta.uiMode) {
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:16:22 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+            if (com.android.featureoption.FeatureOption.VANZO_FEATURE_LOVELYFONTS_SUPPORT) {
+                android.graphics.Typeface.nativeUpdateLovelyfonts(android.graphics.Typeface.sDefaultTypeface.native_instance);
+            }
+// End of Vanzo:zhangjingzhi
             changed |= ActivityInfo.CONFIG_UI_MODE;
             if ((delta.uiMode&UI_MODE_TYPE_MASK) != UI_MODE_TYPE_UNDEFINED) {
                 uiMode = (uiMode&~UI_MODE_TYPE_MASK)
@@ -948,7 +986,14 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         if (delta.seq != 0) {
             seq = delta.seq;
         }
-        
+
+        /// M: sim locale feature @{
+        if (delta.simSetLocale && (!simSetLocale || ((changed & ActivityInfo.CONFIG_LOCALE) != 0))) {
+            simSetLocale = true;
+            changed |= ActivityInfo.CONFIG_LOCALE;
+        }
+        /// @}
+
         return changed;
     }
 
@@ -1147,6 +1192,15 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         dest.writeInt(compatScreenHeightDp);
         dest.writeInt(compatSmallestScreenWidthDp);
         dest.writeInt(seq);
+
+        /// M: sim locale feature @{
+        if (simSetLocale) {
+            dest.writeInt(1);
+        } else {
+            dest.writeInt(0);
+        }
+        /// @}
+
     }
 
     public void readFromParcel(Parcel source) {
@@ -1175,6 +1229,7 @@ public final class Configuration implements Parcelable, Comparable<Configuration
         compatScreenHeightDp = source.readInt();
         compatSmallestScreenWidthDp = source.readInt();
         seq = source.readInt();
+        simSetLocale = (source.readInt()==1); /// M: sim locale feature
     }
     
     public static final Parcelable.Creator<Configuration> CREATOR

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,8 @@ package com.android.server;
 
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
+import android.app.ActivityManager.RunningAppProcessInfo;
+import android.app.AppOpsManager;
 import android.Manifest;
 import android.app.ActivityManagerNative;
 import android.app.AppOpsManager;
@@ -62,6 +69,7 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Slog;
 import android.util.Xml;
+import android.widget.Toast;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -76,10 +84,10 @@ import com.android.server.pm.PackageManagerService;
 import com.android.server.pm.UserManagerService;
 import com.google.android.collect.Lists;
 import com.google.android.collect.Maps;
-
 import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.codec.DecoderException;
 import org.xmlpull.v1.XmlPullParserException;
+import com.mediatek.storage.StorageManagerEx;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -88,6 +96,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidParameterException;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
@@ -105,6 +114,7 @@ import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.Set;
 
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
@@ -122,22 +132,43 @@ class MountService extends IMountService.Stub
     // Static direct instance pointer for the tightly-coupled idle service to use
     static MountService sSelf = null;
 
+    public static final String ACTION_ENCRYPTION_TYPE_CHANGED = "com.mediatek.intent.extra.ACTION_ENCRYPTION_TYPE_CHANGED";
+    private int mOldEncryptionType = -1;
+
     // TODO: listen for user creation/deletion
 
-    private static final boolean LOCAL_LOGD = false;
-    private static final boolean DEBUG_UNMOUNT = false;
-    private static final boolean DEBUG_EVENTS = false;
+    private static final boolean LOCAL_LOGD = true;
+    private static final boolean DEBUG_UNMOUNT = true;
+    private static final boolean DEBUG_EVENTS = true;
     private static final boolean DEBUG_OBB = false;
 
     // Disable this since it messes up long-running cryptfs operations.
     private static final boolean WATCHDOG_ENABLE = false;
 
+    // Change it to config format wipe or not, default set as true
+    private static final boolean FORMAT_WIPE = true;
+
     private static final String TAG = "MountService";
 
     private static final String VOLD_TAG = "VoldConnector";
+    ///usbotg:
+    private static final String LABLE_OTG = "usbotg";
+    private static final String LABLE_SD = "sdcard";
+    private static final int OTG_EVENT605_LENGTH = 13;
+    private static final int OTG_EVENT632_LENGTH = 7;
 
     /** Maximum number of ASEC containers allowed to be mounted. */
     private static final int MAX_CONTAINERS = 250;
+
+
+    /// M: javaopt_removal @{
+    private static final String PROP_SHARED_SDCARD = "ro.mtk_shared_sdcard";
+    private static final String PROP_2SDCARD_SWAP = "ro.mtk_2sdcard_swap";
+    private static final String PROP_OWNER_SDCARD_SUPPORT = "ro.mtk_owner_sdcard_support";
+    private static final String PROP_MULTI_PARTITION = "ro.mtk_multi_patition";
+    private static final String PROP_DM_APP = "ro.mtk_dm_app";
+    private static final String PROP_VOLD_DECRYPT = "vold.decrypt";    
+    /// @}
 
     /*
      * Internal vold volume state constants
@@ -153,6 +184,19 @@ class MountService extends IMountService.Stub
         public static final int Formatting = 6;
         public static final int Shared     = 7;
         public static final int SharedMnt  = 8;
+    }
+
+    /*
+     * BICR
+     * Internal CD Rom volume state constants
+     */
+    class CDRomState {
+        public static final int Unknown    = -1;
+        public static final int Shared     = 0;
+        public static final int Unshared   = 1;
+        public static final int Sharing    = 2;
+        public static final int Unsharing  = 3;
+        public static final int Not_Exist  = 4;
     }
 
     /*
@@ -174,6 +218,9 @@ class MountService extends IMountService.Stub
         public static final int ShareStatusResult              = 210;
         public static final int AsecPathResult                 = 211;
         public static final int ShareEnabledResult             = 212;
+        /// M: BICR @{
+        public static final int CdromStatusResult              = 214;
+        /// @}
 
         /*
          * 400 series - Command was accepted, but the requested action
@@ -190,11 +237,17 @@ class MountService extends IMountService.Stub
          * 600 series - Unsolicited broadcasts.
          */
         public static final int VolumeStateChange              = 605;
+        public static final int VolumeMountFailedBlank         = 610;
         public static final int VolumeUuidChange               = 613;
         public static final int VolumeUserLabelChange          = 614;
         public static final int VolumeDiskInserted             = 630;
         public static final int VolumeDiskRemoved              = 631;
         public static final int VolumeBadRemoval               = 632;
+
+        // M : ALPS00446260
+        public static final int VolumeEjectBeforeSwap          = 633 ;
+        // M : ALPS00446260
+        public static final int VolumeUnmountable          = 634 ;
 
         /*
          * 700 series - fstrim
@@ -238,6 +291,71 @@ class MountService extends IMountService.Stub
     private final CountDownLatch mConnectedSignal = new CountDownLatch(1);
     private final CountDownLatch mAsecsScanned = new CountDownLatch(1);
     private boolean                               mSendUmsConnectedOnBoot = false;
+    /// M: Add  some objects  for new feature or bug fix @{
+    private static final String                   EXTERNAL_SD1 = (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && !SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) ? "/storage/emulated/0" : "/storage/sdcard0";
+    private static final String                   EXTERNAL_SD2 = "/storage/sdcard1";
+    private static final String                   EXTERNAL_OTG = Environment.DIRECTORY_USBOTG;
+    private static final String                   LABEL_SD1 = "sdcard0"; //internal storage
+    private static final String                   LABEL_SD2 = "sdcard1"; //external storage
+    // by MTP request
+    private static final int                      MTP_RESERVE_SPACE = 10;
+    private static final long                     MAX_FILE_SIZE     = (((long) 4) * 1024 * 1024 * 1024 - 1);
+    // before unmount, send MEDIA_EJECT and wait some time to let APP release their fd in sd card
+    private static final int                      MEDIA_EJECT_TIME = 1500;
+    private static final int                      MEDIA_EJECT_SHUTDOWN_TIME = 500;
+    private boolean                               mIsAnyAllowUMS = false;
+    private int                                   mShutdownCount = 0;
+    private static final Object                   TURNONUSB_SYNC_LOCK = new Object();
+    private static final String                   BOOT_IPO = "android.intent.action.ACTION_BOOT_IPO";
+    private static final String                   MOUNT_UNMOUNT_ALL = "mount_unmount_all";
+    private static final String                   FIRST_BOOT_MOUNTED = "first_boot_mounted";
+    private static final String                   INSERT_OTG = "insert_otg";
+    private boolean                               mBootCompleted = false;
+    private boolean                               mShutdownSD = false;
+    private int                                   mShutdownRet = StorageResultCode.OperationSucceeded;
+    private boolean                               mSD1BootMounted = false;
+    private boolean                               mSD2BootMounted = false;
+    // this will set to true when user is turning on UMS or turning off UMS
+    private boolean                               mIsTurnOnOffUsb = false;
+    private boolean                               mIsUsbConnected = true;
+    private int                                   mUMSCount = 0;
+    private boolean                               mSetDefaultEnable = false;
+    private boolean                               mMountAll = false;
+    private boolean                               mUnmountPrimary = false;
+    // SD swap
+    private static final String                   PROP_SD_SWAP = "vold.swap.state";
+    private static final String                   PROP_SD_SWAP_TRUE = "1";
+    private static final String                   PROP_SD_SWAP_FALSE = "0";
+    private static final String                   PROP_SWAPPING = "sys.sd.swapping";
+    private static final String                   PROP_UNMOUNTING = "sys.sd.unmounting";
+    private StorageVolume                         mVolumePrimary;
+    private StorageVolume                         mVolumeSecondary;
+    private boolean                               mMountSwap = false;
+    private boolean                               mUnmountSwap = false;
+    private static final String                   INTENT_SD_SWAP = "com.mediatek.SD_SWAP";
+    private static final String                   SD_EXIST       = "SD_EXIST";
+    private boolean                               mFirstTimeSDSwapIntent = true;
+    private boolean                               mSwapStateForSDSwapIntent = false;
+    private boolean                               mSwapStateForSDSwapMountPoint = false;
+    private boolean                               mFirstTime_SwapStateForSDSwapMountPoint = true; // force to swap mount point when boot/ipo start
+    // OMA DM support
+    private static final String OMADM_USB_ENABLE =  "com.mediatek.dm.LAWMO_UNLOCK";
+    private static final String OMADM_USB_DISABLE = "com.mediatek.dm.LAWMO_LOCK";
+    private static final String OMADM_SD_FORMAT =   "com.mediatek.dm.LAWMO_WIPE";
+    private static final Object OMADM_SYNC_LOCK = new Object();
+    /// @}
+
+    // Privacy Protection
+    private static final String PRIVACY_PROTECTION_LOCK =   "com.mediatek.ppl.NOTIFY_LOCK";
+    private static final String PRIVACY_PROTECTION_UNLOCK = "com.mediatek.ppl.NOTIFY_UNLOCK";
+    private static final String PRIVACY_PROTECTION_WIPE =   "com.mediatek.ppl.NOTIFY_MOUNT_SERVICE_WIPE";
+    private static final String PRIVACY_PROTECTION_WIPE_DONE =   "com.mediatek.ppl.MOUNT_SERVICE_WIPE_RESPONSE";
+
+    /// M: sdcard&otg only for owner @{
+    private int mOldUserId = -1;
+    private int mUserId = -1;
+    private boolean mUmountSdByUserSwitch;
+    /// @}
 
     /**
      * Private hash of currently mounted secure containers.
@@ -381,6 +499,7 @@ class MountService extends IMountService.Stub
         final String path;
         final boolean force;
         final boolean removeEncryption;
+        final boolean byUserSwitch;
         int retries;
 
         UnmountCallBack(String path, boolean force, boolean removeEncryption) {
@@ -388,11 +507,38 @@ class MountService extends IMountService.Stub
             this.path = path;
             this.force = force;
             this.removeEncryption = removeEncryption;
+            this.byUserSwitch = false;
         }
 
+        UnmountCallBack(String path, boolean force, boolean removeEncryption, boolean byUserSwitch) {
+            retries = 0;
+            this.path = path;
+            this.force = force;
+            this.removeEncryption = removeEncryption;
+            this.byUserSwitch = byUserSwitch;
+        }
         void handleFinished() {
             if (DEBUG_UNMOUNT) Slog.i(TAG, "Unmounting " + path);
-            doUnmountVolume(path, true, removeEncryption);
+            /// M: sdcard&otg only for owner @{
+            if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") && byUserSwitch) {
+                doUnmountVolumeForUserSwitch(path, true, removeEncryption);
+            } else {
+            /// @}
+                doUnmountVolume(path, true, removeEncryption);
+            /// M: sdcard&otg only for owner @{
+            }
+            /// @}
+            if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap) {
+                try {
+                    SystemProperties.set(PROP_SWAPPING, "0");
+                } catch (IllegalArgumentException e) {
+                    Slog.e(TAG, "IllegalArgumentException when set default path:", e);
+                }
+                doSDSwapVolumeUpdate();
+                mUnmountSwap = false;
+                updateDefaultpath();
+                sendSDSwapIntent();
+            }
         }
     }
 
@@ -406,8 +552,38 @@ class MountService extends IMountService.Stub
 
         @Override
         void handleFinished() {
-            super.handleFinished();
-            doShareUnshareVolume(path, method, true);
+            if (!mIsUsbConnected) {
+                StorageVolume volume = null;
+                synchronized (mVolumesLock) {
+                    volume = mVolumesByPath.get(this.path);
+                }
+                updatePublicVolumeState(volume, Environment.MEDIA_CHECKING);
+                sendStorageIntent(Intent.ACTION_MEDIA_CHECKING, volume, UserHandle.ALL);
+                updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED);
+                sendStorageIntent(Intent.ACTION_MEDIA_MOUNTED, volume, UserHandle.ALL);
+            } else {
+                synchronized (TURNONUSB_SYNC_LOCK) {
+                    boolean unmountSwap = mUnmountSwap;
+                    super.handleFinished();
+
+                    // share SD & Turn off UMS case, external sd will shift to storage/sdcard1
+                    if (unmountSwap) {
+                        doShareUnshareVolume(EXTERNAL_SD2 , method, true);
+                    } else {
+                        doShareUnshareVolume(path, method, true);
+                    }
+                }
+            }
+            mUMSCount--;
+            if (mUMSCount <= 0) {
+                new Thread() {
+                    public void run() {
+                        SystemClock.sleep(300);
+                        mIsTurnOnOffUsb = false;
+                    }
+                } .start();
+                mUnmountPrimary = false;
+            }
         }
     }
 
@@ -423,6 +599,14 @@ class MountService extends IMountService.Stub
             int ret = doUnmountVolume(path, true, removeEncryption);
             Slog.i(TAG, "Unmount completed: " + path + ", result code: " + ret);
             mMountShutdownLatch.countDown();
+
+            mShutdownRet = mShutdownRet | ret;
+            mShutdownCount--;
+            if (mShutdownCount <= 0) {
+                mShutdownSD = false;
+                mUnmountPrimary = false;
+                mShutdownRet = StorageResultCode.OperationSucceeded;
+            }
         }
     }
 
@@ -464,13 +648,56 @@ class MountService extends IMountService.Stub
                 case H_UNMOUNT_PM_UPDATE: {
                     if (DEBUG_UNMOUNT) Slog.i(TAG, "H_UNMOUNT_PM_UPDATE");
                     UnmountCallBack ucb = (UnmountCallBack) msg.obj;
+                    StorageVolume volume = null;
+                    synchronized (mVolumesLock) {
+                        volume = mVolumesByPath.get(ucb.path);
+                    }
+                    if (volume == null) {
+                        Slog.e(TAG, "H_UNMOUNT_PM_UPDATE volume is not exist!");
+                        break;
+                    }
+                    /// M: sdcard&otg only for owner @{
+                    if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") &&
+                        ucb.byUserSwitch &&
+                        mUserId == UserHandle.USER_OWNER) {
+                        Slog.i(TAG, "H_UNMOUNT_PM_UPDATE stop unmount because of user changed to owner");
+
+                        updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED);
+                        if (mSetDefaultEnable && !mIsTurnOnOffUsb && !mMountSwap && !mUnmountSwap) {
+                            Slog.i(TAG, "updateDefaultpath Environment.MEDIA_MOUNTED");
+                            updateDefaultpath();
+                        }
+                        sendStorageIntent(Intent.ACTION_MEDIA_MOUNTED, volume, UserHandle.ALL);
+                        break;
+                    }
+                    /// @}
+                    sendStorageIntent(Intent.ACTION_MEDIA_EJECT, volume, UserHandle.ALL);
+                    if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap && !ucb.path.equals(EXTERNAL_SD2)) {
+                        StorageVolume swapVolume = null;
+                        synchronized (mVolumesLock) {
+                            swapVolume = mVolumesByPath.get(EXTERNAL_SD2);
+                        }
+                        sendStorageIntent(Intent.ACTION_MEDIA_EJECT, swapVolume, UserHandle.ALL);
+                    }
+                    if (mShutdownCount > 0) {
+                        SystemClock.sleep(MEDIA_EJECT_SHUTDOWN_TIME);
+                    } else {
+                        SystemClock.sleep(MEDIA_EJECT_TIME);
+                    }
+
                     mForceUnmounts.add(ucb);
                     if (DEBUG_UNMOUNT) Slog.i(TAG, " registered = " + mUpdatingStatus);
                     // Register only if needed.
                     if (!mUpdatingStatus) {
                         if (DEBUG_UNMOUNT) Slog.i(TAG, "Updating external media status on PackageManager");
-                        mUpdatingStatus = true;
-                        mPms.updateExternalMediaStatus(false, true);
+                        if (ucb.path.equals(EXTERNAL_SD1)) {
+                            mUpdatingStatus = true;
+                            mPms.updateExternalMediaStatus(false, true);
+                        } else if (!mUnmountPrimary) {
+                            //if shutdown or turn on UMS, and mnt/sdcard need unmount
+                            //do not send message until PMS done
+                            finishMediaUpdate();
+                        }
                     }
                     break;
                 }
@@ -486,7 +713,33 @@ class MountService extends IMountService.Stub
                     ServiceManager.getService("activity");
                     for (int i = 0; i < size; i++) {
                         UnmountCallBack ucb = mForceUnmounts.get(i);
+                        /// M: sdcard&otg only for owner @{
+                        StorageVolume volume = null;
+                        synchronized (mVolumesLock) {
+                            volume = mVolumesByPath.get(ucb.path);
+                        }
+                        if (volume == null) {
+                            Slog.e(TAG, "H_UNMOUNT_PM_DONE volume is not exist!");
+                            sizeArr[sizeArrN++] = i;
+                            continue;
+                        }
+                        if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") &&
+                            ucb.byUserSwitch &&
+                            mUserId == UserHandle.USER_OWNER) {
+                            sizeArr[sizeArrN++] = i;
+                            Slog.i(TAG, "H_UNMOUNT_PM_DONE stop unmount because of user changed to owner");
+
+                            updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED);
+                            if (mSetDefaultEnable && !mIsTurnOnOffUsb && !mMountSwap && !mUnmountSwap) {
+                                Slog.i(TAG, "updateDefaultpath Environment.MEDIA_MOUNTED");
+                                updateDefaultpath();
+                            }
+                            sendStorageIntent(Intent.ACTION_MEDIA_MOUNTED, volume, UserHandle.ALL);
+                            continue;
+                        }
+                        /// @}
                         String path = ucb.path;
+                        boolean needKill = false;
                         boolean done = false;
                         if (!ucb.force) {
                             done = true;
@@ -494,14 +747,41 @@ class MountService extends IMountService.Stub
                             int pids[] = getStorageUsers(path);
                             if (pids == null || pids.length == 0) {
                                 done = true;
-                            } else {
-                                // Eliminate system process here?
-                                ams.killPids(pids, "unmount media", true);
-                                // Confirm if file references have been freed.
-                                pids = getStorageUsers(path);
-                                if (pids == null || pids.length == 0) {
+                            } else if (ams != null) {
+                                List<RunningAppProcessInfo> runningList = ams.getRunningAppProcesses();
+                                if (runningList != null) {
+                                    int len = pids.length;
+                                    for (int k = 0; k < len; k++) {
+                                        if (needKill) {
+                                            break;
+                                        } else {
+                                            for (RunningAppProcessInfo p : runningList) {
+                                                if (p.pid == pids[k]) {
+                                                    needKill = true;
+                                                    Slog.i(TAG, "java process, need kill!");
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Slog.i(TAG, "runningList from AMS is null!");
+                                }
+
+                                if (needKill) {
+                                    // Eliminate system process here?
+                                    ams.killPids(pids, "unmount media", true);
+                                    // Confirm if file references have been freed.
+                                    pids = getStorageUsers(path);
+                                    if (pids == null || pids.length == 0) {
+                                        done = true;
+                                    }
+                                } else {
+                                    Slog.i(TAG, "all native process, don't need kill!");
                                     done = true;
                                 }
+                            } else {
+                                Slog.e(TAG, "Fail to get AMS while unmount!");
                             }
                         }
                         if (!done && (ucb.retries < MAX_UNMOUNT_RETRIES)) {
@@ -530,6 +810,29 @@ class MountService extends IMountService.Stub
                 case H_UNMOUNT_MS: {
                     if (DEBUG_UNMOUNT) Slog.i(TAG, "H_UNMOUNT_MS");
                     UnmountCallBack ucb = (UnmountCallBack) msg.obj;
+                    /// M: sdcard&otg only for owner @{
+                    StorageVolume volume = null;
+                    synchronized (mVolumesLock) {
+                        volume = mVolumesByPath.get(ucb.path);
+                    }
+                    if (volume == null) {
+                        Slog.e(TAG, "H_UNMOUNT_MS volume is not exist!");
+                        break;
+                    }
+                    if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") &&
+                        ucb.byUserSwitch &&
+                        mUserId == UserHandle.USER_OWNER) {
+                        Slog.i(TAG, "H_UNMOUNT_MS stop unmount because of user changed to owner");
+
+                        updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED);
+                        if (mSetDefaultEnable && !mIsTurnOnOffUsb && !mMountSwap && !mUnmountSwap) {
+                            Slog.i(TAG, "updateDefaultpath Environment.MEDIA_MOUNTED");
+                            updateDefaultpath();
+                        }
+                        sendStorageIntent(Intent.ACTION_MEDIA_MOUNTED, volume, UserHandle.ALL);
+                        break;
+                    }
+                    /// @}
                     ucb.handleFinished();
                     break;
                 }
@@ -609,20 +912,65 @@ class MountService extends IMountService.Stub
     private void handleSystemReady() {
         // Snapshot current volume states since it's not safe to call into vold
         // while holding locks.
+        Slog.i(TAG, "handleSystemReady");
         final HashMap<String, String> snapshot;
         synchronized (mVolumesLock) {
             snapshot = new HashMap<String, String>(mVolumeStates);
         }
+        mMountAll = true;
 
-        for (Map.Entry<String, String> entry : snapshot.entrySet()) {
-            final String path = entry.getKey();
-            final String state = entry.getValue();
+        // Damage external sd card may cost long time to do mount
+        // this may block intermal sd card mount time
+        // so we force to mount internal sd card first, also shoud consider swap case.
+        String[] paths;
+        String[] rawPaths;
+        String[] states;
+        int count;
+        Set<String> keys = snapshot.keySet();
+        count = keys.size();
+        rawPaths = keys.toArray(new String[count]); //[storage/sdcard1, storage/sdcard0]
+        paths = new String[count];
+        states = new String[count];
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            paths = rawPaths;
+            for (int i = 0; i < count; i++) {
+                states[i] = snapshot.get(paths[i]);
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                paths[i] = rawPaths[count - 1 - i];
+                states[i] = snapshot.get(paths[i]);
+            }
+        }
+
+        //for (Map.Entry<String, String> entry : snapshot.entrySet()) {
+        for (int i = 0; i < count; i++) {
+            final String path = paths[i];
+            final String state = states[i];
 
             if (state.equals(Environment.MEDIA_UNMOUNTED)) {
-                int rc = doMountVolume(path);
-                if (rc != StorageResultCode.OperationSucceeded) {
-                    Slog.e(TAG, String.format("Boot-time mount failed (%d)",
-                            rc));
+                /*
+                 * if platform support multi partition,
+                 * volume may become null after otg plug out
+                 */                
+                try {
+                    if (path.equals(EXTERNAL_SD1)) {
+                        mSD1BootMounted = true;
+                        Slog.i(TAG, "mSD1BootMounted = true");
+                    } else if (path.equals(EXTERNAL_SD2)) {
+                        mSD2BootMounted = true;
+                        Slog.i(TAG, "mSD2BootMounted = true");
+                    }
+                    int rc = doMountVolume(path);
+                    if (rc != StorageResultCode.OperationSucceeded) {
+                        Slog.e(TAG, String.format("Boot-time mount failed (%d)",
+                                rc));
+                    }
+                    doSDSwapVolumeUpdate();
+                    //updateDefaultpath();
+                    sendSDSwapIntent();
+                } catch (Exception ex) {
+                    Slog.w(TAG, "Failed to mount media on boot", ex);
                 }
             } else if (state.equals(Environment.MEDIA_SHARED)) {
                 /*
@@ -651,6 +999,18 @@ class MountService extends IMountService.Stub
             sendUmsIntent(true);
             mSendUmsConnectedOnBoot = false;
         }
+
+        // Because timing issue, onEvent may come late than doMountVolume return
+        // so this can cause defaultPath change, we force updateDefaultpath() do later..
+        new Thread() {
+            public void run() {
+                SystemClock.sleep(2000);
+                updateDefaultpath();
+            }
+        } .start();
+        mSetDefaultEnable = true;
+        mMountAll = false;
+        mUnmountPrimary = false;
 
         /*
          * Start scheduling nominally-daily fstrim operations
@@ -683,7 +1043,17 @@ class MountService extends IMountService.Stub
                         removeVolumeLocked(volume);
                     }
                 }
+            /// M: multiple user @{
+            } else if (Intent.ACTION_USER_SWITCHED.equals(action)) {
+                /// M: sdcard&otg only for owner @{
+                mOldUserId = mUserId;
+                mUserId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_OWNER);
+                if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1")) {
+                    handleUserSwitch();
+                }
+                /// @}
             }
+            /// @}
         }
     };
 
@@ -691,8 +1061,286 @@ class MountService extends IMountService.Stub
         @Override
         public void onReceive(Context context, Intent intent) {
             boolean available = (intent.getBooleanExtra(UsbManager.USB_CONNECTED, false) &&
-                    intent.getBooleanExtra(UsbManager.USB_FUNCTION_MASS_STORAGE, false));
+                    intent.getBooleanExtra(UsbManager.USB_FUNCTION_MASS_STORAGE, false) &&
+                    !intent.getBooleanExtra("SettingUsbCharging", false));
+            mIsUsbConnected = available;
             notifyShareAvailabilityChange(available);
+        }
+    };
+
+    // M: add for OMA DM
+    private final BroadcastReceiver mDMReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (action.equals(OMADM_USB_ENABLE)) {
+                Slog.e(TAG, "USB enable");
+                new Thread() {
+                    public void run() {
+                        synchronized (OMADM_SYNC_LOCK) {
+                            enableUSBFuction(true);
+                        }
+                    }
+                } .start();
+            } else if (action.equals(OMADM_USB_DISABLE)) {
+                Slog.e(TAG, "USB disable");
+                new Thread() {
+                    public void run() {
+                        synchronized (OMADM_SYNC_LOCK) {
+                           enableUSBFuction(false);
+                        }
+                    }
+                } .start();
+            } else if (action.equals(OMADM_SD_FORMAT)) {
+                Slog.e(TAG, "format SD");
+                new Thread() {
+                    public void run() {
+                        synchronized (OMADM_SYNC_LOCK) {
+                            int length = mVolumes.size();
+                            String path = null;
+                            for (int i = 0; i < length; i++) {
+                                path = mVolumes.get(i).getPath();
+                                try {
+                                    String mCurState = getVolumeState(path);
+                                    Slog.e(TAG, mCurState);
+                                    if (mCurState.equals(Environment.MEDIA_MOUNTED)) {
+                                        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+                                            unmountVolumeNotSwap(path, true, true);
+                                        } else {
+                                            unmountVolume(path, true, true);
+                                        }
+                                            //wait for unmount succeed...
+                                        for (int j = 0; j < 20; j++) {
+                                            sleep(1000);
+                                            mCurState = getVolumeState(path);
+                                            if (mCurState.equals(Environment.MEDIA_UNMOUNTED)) {
+                                                Slog.e(TAG, "Unmount Succeeded!");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    else if (mCurState.equals(Environment.MEDIA_SHARED)) {
+                                        doShareUnshareVolume(path, "ums", false);
+                                    }
+
+                                    int ret = formatVolume(path);
+                                    if (StorageResultCode.OperationSucceeded == ret) {
+                                        Slog.e(TAG, "SD format Succeed!");
+                                    } else {
+                                        Slog.e(TAG, "SD format Failed!");
+                                    }
+                                } catch (InterruptedException e) {
+                                    Slog.e(TAG, "SD format exception", e);
+                                } catch (IllegalArgumentException x) {
+                                    Slog.e(TAG, "SD format exception", x);
+                                } catch (SecurityException x) {
+                                    Slog.e(TAG, "SD format exception", x);
+                                } catch (NullPointerException e) {
+                                    Slog.e(TAG, "SD format exception", e);
+                                }
+                            }
+                        }
+                    }
+                } .start();
+            }
+        }
+    };
+
+    // M: Privacy Protection
+    private final BroadcastReceiver mPrivacyProtectionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (action.equals(PRIVACY_PROTECTION_UNLOCK)) {
+                Slog.i(TAG, "Privacy Protection unlock!");
+                new Thread() {
+                    public void run() {
+                        enableUSBFuction(true);
+                    }
+                } .start();
+            } else if (action.equals(PRIVACY_PROTECTION_LOCK)) {
+                Slog.i(TAG, "Privacy Protection lock!");
+                new Thread() {
+                    public void run() {
+                        enableUSBFuction(false);
+                    }
+                } .start();
+            } else if (action.equals(PRIVACY_PROTECTION_WIPE)) {
+                Slog.i(TAG, "Privacy Protection wipe!");
+                new Thread() {
+                    public void run() {
+                        ArrayList<StorageVolume> tempVolumes = Lists.newArrayList();
+                        synchronized (mVolumesLock) {
+                            for (StorageVolume volume : mVolumes) {
+                                if (!volume.getPath().equals(EXTERNAL_OTG) && !volume.isEmulated()) {
+                                    tempVolumes.add(volume);
+                                }
+                            }
+                        }
+
+                        String state = null;
+                        String path = null;
+                        for (StorageVolume volume : tempVolumes) {
+                            path = volume.getPath();
+                            state = getVolumeState(path);
+                            Slog.i(TAG, "Privacy Protection wipe: path " + path + "is " + state);
+                            // first need to wait leave checking state if needed
+                            if (state.equals(Environment.MEDIA_CHECKING)) {
+                                Slog.i(TAG, "Privacy Protection wipe: path " + path + "is checking, wait..");
+                                for (int i = 0; i < 30; i++) {
+                                    try {
+                                        sleep(1000);
+                                    } catch (InterruptedException ex) {
+                                        Slog.e(TAG, "Exception when wait!", ex);
+                                    }
+                                    state = getVolumeState(path);
+                                    if (!state.equals(Environment.MEDIA_CHECKING)) {
+                                        Slog.i(TAG, "Privacy Protection wipe: wait checking done!");
+                                        break;
+                                    }
+                                }
+                            }
+                            // then unmount if needed
+                            if (state.equals(Environment.MEDIA_MOUNTED)) {
+                                Slog.i(TAG, "Privacy Protection wipe: path " + path + "is mounted, wait..");
+                                unmountVolumeNotSwap(path, true, false);
+                                for (int i = 0; i < 30; i++) {
+                                    try {
+                                        sleep(1000);
+                                    } catch (InterruptedException ex) {
+                                        Slog.e(TAG, "Exception when wait!", ex);
+                                    }
+                                    state = getVolumeState(path);
+                                    if (state.equals(Environment.MEDIA_UNMOUNTED)) {
+                                        Slog.i(TAG, "Privacy Protection wipe: wait unmount done!");
+                                        break;
+                                    }
+                                }
+                            }
+                            // then unshare if needed
+                            if (state.equals(Environment.MEDIA_SHARED)) {
+                                Slog.i(TAG, "Privacy Protection wipe: path " + path + "is shared, wait..");
+                                doShareUnshareVolume(path, "ums", false);
+                                for (int i = 0; i < 30; i++) {
+                                    try {
+                                        sleep(1000);
+                                    } catch (InterruptedException ex) {
+                                        Slog.e(TAG, "Exception when wait!", ex);
+                                    }
+                                    state = getVolumeState(path);
+                                    if (state.equals(Environment.MEDIA_UNMOUNTED)) {
+                                        Slog.i(TAG, "Privacy Protection wipe: wait unshare done!");
+                                        break;
+                                    }
+                                }
+                            }
+                            // we can format it now
+                            if (state.equals(Environment.MEDIA_UNMOUNTED)) {
+                                Slog.i(TAG, "Privacy Protection wipe: format " + path);
+                                doFormatVolume(path);
+                                for (int i = 0; i < 30; i++) {
+                                    try {
+                                        sleep(1000);
+                                    } catch (InterruptedException ex) {
+                                        Slog.e(TAG, "Exception when wait!", ex);
+                                    }
+                                    state = getVolumeState(path);
+                                    if (state.equals(Environment.MEDIA_UNMOUNTED)) {
+                                        Slog.i(TAG, "Privacy Protection wipe: format done!");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // notify Privacy Protection that format done
+                        Intent intent = new Intent(PRIVACY_PROTECTION_WIPE_DONE);
+                        mContext.sendBroadcast(intent);
+                        Slog.d(TAG, "Privacy Protection wipe: send " + intent);
+                    }
+                } .start();
+            }
+        }
+    };
+
+    // M: add for BOOT IPO
+    private final BroadcastReceiver mBootIPOReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            // set mBootCompleted when receive BOOT_COMPLETE or BOOT_IPO
+            // then just return while BOOT_COMPLETE
+            String action = intent.getAction();
+            if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
+                Slog.d(TAG, "MountService BOOT_COMPLETED!");
+                mBootCompleted = true;
+                return;
+            }
+
+            new Thread() {
+                public void run() {
+                    Slog.d(TAG, "MountService BOOT_IPO!");
+                    try {
+                        Slog.d(TAG, "Notify VOLD IPO startup");
+                        mConnector.execute("volume", "ipo", "startup");
+                    } catch (NativeDaemonConnectorException e) {
+                        Slog.e(TAG, "Error reinit SD card while IPO", e);
+                    }
+
+                    if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+                        mFirstTime_SwapStateForSDSwapMountPoint = true;
+                        doSDSwapVolumeUpdate() ;
+                    }
+                    try {
+                        final String[] vols = NativeDaemonEvent.filterMessageList(
+                                mConnector.executeForList("volume", "list"),
+                                VoldResponseCode.VolumeListResult);
+                        for (String volstr : vols) {
+                            String[] tok = volstr.split(" ");
+                            // FMT: <label> <mountpoint> <state>
+                            String path = tok[1];
+                            String state = Environment.MEDIA_REMOVED;
+
+                            final StorageVolume volume;
+                            synchronized (mVolumesLock) {
+                                volume = mVolumesByPath.get(path);
+                            }
+                            if (volume == null) {
+                                    Slog.e(TAG, "Error processing initial volume state:  volume == null");
+                                    continue;
+                                }
+
+                            int st = Integer.parseInt(tok[2]);
+                            if (st == VolumeState.NoMedia) {
+                                state = Environment.MEDIA_REMOVED;
+                            } else if (st == VolumeState.Idle) {
+                                state = Environment.MEDIA_UNMOUNTED;
+                            } else if (st == VolumeState.Mounted) {
+                                state = Environment.MEDIA_MOUNTED;
+                                Slog.i(TAG, "Media already mounted on daemon connection");
+                            } else if (st == VolumeState.Shared) {
+                                state = Environment.MEDIA_SHARED;
+                                Slog.i(TAG, "Media shared on daemon connection");
+                            } else {
+                                throw new InvalidParameterException(String.format("Unexpected state %d", st));
+                            }
+
+                            if (state != null) {
+                                if (DEBUG_EVENTS) Slog.i(TAG, "Updating valid state " + state);
+                                if (path.equals(EXTERNAL_OTG) && state.equals(Environment.MEDIA_REMOVED)) {
+                                    Slog.i(TAG, "do not update /storage/usbotg MEDIA_REMOVED state in IPO");
+                                } else {
+                                    updatePublicVolumeState(volume, state);
+                                }
+                            }
+                        }
+                    } catch (NativeDaemonConnectorException e) {
+                        Slog.e(TAG, "Error processing initial volume state", e);
+                    } catch (InvalidParameterException e) {
+                        Slog.e(TAG, "Error processing initial volume state", e);
+                    }
+                    handleSystemReady();
+                }
+            } .start();
+
         }
     };
 
@@ -735,6 +1383,11 @@ class MountService extends IMountService.Stub
             throw new IllegalArgumentException(String.format("Method %s not supported", method));
         }
 
+        if (path.contains("emulated")) {
+            Slog.i(TAG, "emulated storage cannot be share/unshare");
+            return;
+        }
+
         try {
             mConnector.execute("volume", enable ? "share" : "unshare", path, method);
         } catch (NativeDaemonConnectorException e) {
@@ -743,6 +1396,14 @@ class MountService extends IMountService.Stub
     }
 
     private void updatePublicVolumeState(StorageVolume volume, String state) {
+        updatePublicVolumeState(volume, state, null);
+    }
+
+    private void updatePublicVolumeState(StorageVolume volume, String state, String label) {
+        if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1") && volume == null) {
+            Slog.i(TAG, "updatePublicVolumeState: volume had been deleted,just return!");
+            return;
+        }
         final String path = volume.getPath();
         final String oldState;
         synchronized (mVolumesLock) {
@@ -757,25 +1418,59 @@ class MountService extends IMountService.Stub
         }
 
         Slog.d(TAG, "volume state changed for " + path + " (" + oldState + " -> " + state + ")");
+        Slog.d(TAG, "state=" + state + ", mSetDefaultEnable=" + mSetDefaultEnable + ", mIsTurnOnOffUsb=" + mIsTurnOnOffUsb + ", mMountSwap=" + mMountSwap + ", mUnmountSwap=" + mUnmountSwap);
+        // update default path for MEDIA_UNMOUNTED
+        if (Environment.MEDIA_UNMOUNTED.equals(state)
+                && mSetDefaultEnable
+                && ((!mIsTurnOnOffUsb && !SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) || SystemProperties.get(PROP_SHARED_SDCARD).equals("1"))
+                && !mMountSwap
+                && !mUnmountSwap) {
+            Slog.i(TAG, "updateDefaultpath MEDIA_UNMOUNTED");
+            updateDefaultpath();
+        }
 
         // Tell PackageManager about changes to primary volume state, but only
         // when not emulated.
-        if (volume.isPrimary() && !volume.isEmulated()) {
-            if (Environment.MEDIA_UNMOUNTED.equals(state)) {
-                mPms.updateExternalMediaStatus(false, false);
 
-                /*
-                 * Some OBBs might have been unmounted when this volume was
-                 * unmounted, so send a message to the handler to let it know to
-                 * remove those from the list of mounted OBBS.
-                 */
-                mObbActionHandler.sendMessage(mObbActionHandler.obtainMessage(
-                        OBB_FLUSH_MOUNT_STATE, path));
-            } else if (Environment.MEDIA_MOUNTED.equals(state)) {
-                mPms.updateExternalMediaStatus(true, false);
+        /*
+         * MountService need and must call updateExternalMediaStatus()
+         * when storage mount/unmount which may contains app.
+         * There are 4 cases:
+         * 1. phone storage + sd (no swap) : app 2 phone storage
+         * 3. share sd           + sd (no swap): not allowed
+         * 2. phone storage + sd (swap)      : app 2 sd (swap only allowed app install to external sd)
+         * 4. share sd           + sd (swap)     : app 2 sd
+         *
+         * So, MountService should notify PMS in the following cases:
+         * must primary storage, when swap enable, must be the external sd, swap disable, the phone storage.
+         */
+        if (path.equals(EXTERNAL_SD1)) {
+            if ((!SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && !SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) ||
+                    (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && LABEL_SD2.equals(label))) {
+                if (Environment.MEDIA_UNMOUNTED.equals(state)) {
+                    mPms.updateExternalMediaStatus(false, false);
+
+                    /*
+                     * Some OBBs might have been unmounted when this volume was
+                     * unmounted, so send a message to the handler to let it know to
+                     * remove those from the list of mounted OBBS.
+                     */
+                    mObbActionHandler.sendMessage(mObbActionHandler.obtainMessage(
+                            OBB_FLUSH_MOUNT_STATE, path));
+                } else if (Environment.MEDIA_MOUNTED.equals(state)) {
+                    mPms.updateExternalMediaStatus(true, false);
+                }
             }
         }
-
+        if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") &&
+            mUserId != UserHandle.USER_OWNER &&
+            (volume.getPath().equals(EXTERNAL_SD2) ||
+            volume.getPath().startsWith(EXTERNAL_OTG)) &&
+            !Environment.MEDIA_UNMOUNTED.equals(state))
+            {
+                Slog.d(TAG, "Do not CALLBACK EXTERNAL_SD2 and EXTERNAL_OTG removed msg when user_id = " + mUserId);
+                return;
+            }
         synchronized (mListeners) {
             for (int i = mListeners.size() -1; i >= 0; i--) {
                 MountServiceBinderListener bl = mListeners.get(i);
@@ -805,6 +1500,35 @@ class MountService extends IMountService.Stub
                 /**
                  * Determine media state and UMS detection status
                  */
+                final String encryptProgress = SystemProperties.get("vold.encrypt_progress");
+                final String decrypt = SystemProperties.get("vold.decrypt");
+                Slog.e(TAG, "encryptProgress(" + encryptProgress + "), decrypt(" + decrypt + ")");
+                if (!encryptProgress.equals("") && "trigger_restart_min_framework".equals(decrypt)) {
+                    Slog.e(TAG, "encryptProgress(" + encryptProgress + "), skip the command to vold.");
+                    StorageVolume primaryVolume = getPrimaryPhysicalVolume();
+                    if (primaryVolume != null) {
+                        updatePublicVolumeState(primaryVolume, Environment.MEDIA_REMOVED);
+                    }
+                    /*
+                      * Now that we've done our initialization, release
+                      * the hounds!
+                      */
+                    // M: socket may disconnect, so when onDaemonConnected called
+                    // the object may already null
+                    if (mConnectedSignal != null) {
+                        mConnectedSignal.countDown();
+                    }
+
+                    // Notify people waiting for ASECs to be scanned that it's done.
+                    // M: socket may disconnect, so when onDaemonConnected called
+                    // the object may already null
+                    if (mAsecsScanned != null) {
+                        mAsecsScanned.countDown();
+                    }
+
+                    return;
+                }
+
                 try {
                     final String[] vols = NativeDaemonEvent.filterMessageList(
                             mConnector.executeForList("volume", "list", "broadcast"),
@@ -818,6 +1542,11 @@ class MountService extends IMountService.Stub
                         final StorageVolume volume;
                         synchronized (mVolumesLock) {
                             volume = mVolumesByPath.get(path);
+                        }
+                        if (volume == null &&
+                            !(SystemProperties.get(PROP_MULTI_PARTITION).equals("1") && path.contains(LABLE_OTG))) {
+                            Slog.e(TAG, "Error processing initial volume state:  volume == null");
+                            continue;
                         }
 
                         int st = Integer.parseInt(tok[2]);
@@ -837,22 +1566,55 @@ class MountService extends IMountService.Stub
 
                         if (state != null) {
                             if (DEBUG_EVENTS) Slog.i(TAG, "Updating valid state " + state);
-                            updatePublicVolumeState(volume, state);
+                            if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+                                //usbotg
+                                if (null == volume && path.contains(LABLE_OTG)) {
+                                    StorageVolume usbotgVolume;
+                                    synchronized (mVolumes) {
+                                        int size = mVolumes.size();
+                                        Slog.d(TAG, "usbotg: mountservice onDaemonConnected:before mVolumes size is " + size);
+                                        usbotgVolume =  new StorageVolume(new File(path), -1,  false, true, false, 0, false, 0L, null);
+                                        boolean bPathIncluded = isVolumeRegistered(usbotgVolume.getPath());
+                                        Slog.d(TAG, "usbotg: mountservice onDaemonConnected:otg path is registered? " + bPathIncluded);
+                                        if (!bPathIncluded) {
+                                            if (DEBUG_EVENTS) Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:add volume " + size);
+                                            mVolumes.add(usbotgVolume);
+                                            mVolumesByPath.put(path, usbotgVolume);
+                                        }
+                                        Slog.d(TAG, "usbotg: mountservice onDaemonConnected:after mVolumes size is " + mVolumes.size());
+                                        for (int i = 0; i < mVolumes.size(); i++) {
+                                            mVolumes.get(i).setStorageId(i);
+                                        }
+                                    }
+                                    updatePublicVolumeState(usbotgVolume, state);
+                                } else {
+                                    updatePublicVolumeState(volume, state);
+                                }
+                            } else {
+                                updatePublicVolumeState(volume, state);
+                            }
                         }
                     }
                 } catch (Exception e) {
                     Slog.e(TAG, "Error processing initial volume state", e);
-                    final StorageVolume primary = getPrimaryPhysicalVolume();
-                    if (primary != null) {
-                        updatePublicVolumeState(primary, Environment.MEDIA_REMOVED);
-                    }
+                    //final StorageVolume primary = getPrimaryPhysicalVolume();
+                    //if (primary != null) {
+                    //    updatePublicVolumeState(primary, Environment.MEDIA_REMOVED);
+                    //}
+                }
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+                    doSDSwapVolumeUpdate();
                 }
 
                 /*
                  * Now that we've done our initialization, release
                  * the hounds!
                  */
-                mConnectedSignal.countDown();
+                // M: socket may disconnect, so when onDaemonConnected called
+                // the object may already null
+                if (mConnectedSignal != null) {
+                    mConnectedSignal.countDown();
+                }
 
                 // On an encrypted device we can't see system properties yet, so pull
                 // the system locale out of the mount service.
@@ -864,7 +1626,11 @@ class MountService extends IMountService.Stub
                 mPms.scanAvailableAsecs();
 
                 // Notify people waiting for ASECs to be scanned that it's done.
-                mAsecsScanned.countDown();
+                // M: socket may disconnect, so when onDaemonConnected called
+                // the object may already null
+                if (mAsecsScanned != null) {
+                    mAsecsScanned.countDown();
+                }
             }
         }.start();
     }
@@ -925,9 +1691,30 @@ class MountService extends IMountService.Stub
              * Format: "NNN Volume <label> <path> state changed
              * from <old_#> (<old_str>) to <new_#> (<new_str>)"
              */
-            notifyVolumeStateChange(
+            if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+                ///usbotg:
+                if ((LABLE_OTG.equals(cooked[2])) && (cooked.length == OTG_EVENT605_LENGTH)) {
+                    notifyVolumeChange(
+                            cooked[2], cooked[3], Integer.parseInt(cooked[7]),
+                                    Integer.parseInt(cooked[10]));
+                } else {
+                    boolean bValue = false;
+                    if (cooked[12].equals("1"))
+                        bValue = true;
+
+                    notifyVolumeStateChange(
+                        cooked[2], cooked[3], Integer.parseInt(cooked[7]),
+                                Integer.parseInt(cooked[10]), bValue);
+                }
+            } else {
+                boolean bValue = false;
+                if (cooked[12].equals("1"))
+                    bValue = true;
+
+                notifyVolumeStateChange(
                     cooked[2], cooked[3], Integer.parseInt(cooked[7]),
-                            Integer.parseInt(cooked[10]));
+                            Integer.parseInt(cooked[10]), bValue);
+            }
         } else if (code == VoldResponseCode.VolumeUuidChange) {
             // Format: nnn <label> <path> <uuid>
             final String path = cooked[2];
@@ -937,7 +1724,6 @@ class MountService extends IMountService.Stub
             if (vol != null) {
                 vol.setUuid(uuid);
             }
-
         } else if (code == VoldResponseCode.VolumeUserLabelChange) {
             // Format: nnn <label> <path> <label>
             final String path = cooked[2];
@@ -947,7 +1733,6 @@ class MountService extends IMountService.Stub
             if (vol != null) {
                 vol.setUserLabel(userLabel);
             }
-
         } else if ((code == VoldResponseCode.VolumeDiskInserted) ||
                    (code == VoldResponseCode.VolumeDiskRemoved) ||
                    (code == VoldResponseCode.VolumeBadRemoval)) {
@@ -977,43 +1762,178 @@ class MountService extends IMountService.Stub
             }
 
             if (code == VoldResponseCode.VolumeDiskInserted) {
+                if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") &&
+                    mUserId != UserHandle.USER_OWNER &&
+                    (volume.getPath().equals(EXTERNAL_SD2) ||
+                    volume.getPath().startsWith(EXTERNAL_OTG))) {
+                    Slog.d(TAG, "Do not mount EXTERNAL_SD2 and EXTERNAL_OTG when user_id = " + mUserId);
+                    return true;
+                }
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && !path.startsWith(EXTERNAL_OTG)) {
+                    // Swap plug out, need to send eject for /storage/sdcard1 also.
+                    StorageVolume primaryVolume;
+                    synchronized (mVolumesLock) {
+                        primaryVolume = mVolumesByPath.get(EXTERNAL_SD1);
+                    }
+                    sendStorageIntent(Intent.ACTION_MEDIA_EJECT, primaryVolume, UserHandle.ALL);
+                    doSDSwapVolumeUpdate();
+                    updateDefaultpath();
+                    sendSDSwapIntent();
+                }
                 new Thread("MountService#VolumeDiskInserted") {
                     @Override
                     public void run() {
+                        Slog.d(TAG, "onEvent: VolumeDiskInserted, start to mount " + path);
                         try {
-                            int rc;
-                            if ((rc = doMountVolume(path)) != StorageResultCode.OperationSucceeded) {
-                                Slog.w(TAG, String.format("Insertion mount failed (%d)", rc));
+                            if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1") &&
+                                path.startsWith(EXTERNAL_OTG)) {
+                                int rc;
+                                waitForReady();
+                                if ((rc = doMountVolume(path)) != StorageResultCode.OperationSucceeded) {
+                                    Slog.w(TAG, String.format("Insertion mount failed (%d)", rc));
+                                }
+                                if (!path.startsWith(EXTERNAL_OTG)) {
+                                    doSDSwapVolumeUpdate();
+                                    updateDefaultpath();
+                                    sendSDSwapIntent();
+                                }
+
+                                try{
+                                    Thread.sleep(500);                                   
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }  
+
+                                if (rc == StorageResultCode.OperationSucceeded && enableDefaultPathDialog()) {
+                                    Intent intent = new Intent("com.mediatek.storage.StorageDefaultPathDialog");
+                                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    if (path.contains(EXTERNAL_OTG)) {
+                                        intent.putExtra(INSERT_OTG, true);
+                                    }
+                                    mContext.startActivity(intent);
+                                } else {
+                                    Slog.w(TAG, String.format("Insertion mount failed (%d)", rc));
+                                }                                
+                            } else {
+                                if (isUsbMassStorageEnabled()) {
+                                    // just share to pc
+                                    doShareUnshareVolume(path, "ums", true);
+                                } else {
+                                    int rc;
+                                    if ((rc = doMountVolume(path)) != StorageResultCode.OperationSucceeded) {
+                                        Slog.w(TAG, String.format("Insertion mount failed (%d)", rc));
+                                    }
+                                    if (!path.startsWith(EXTERNAL_OTG)) {
+                                        doSDSwapVolumeUpdate();
+                                        updateDefaultpath();
+                                        sendSDSwapIntent();
+                                    }
+                                    
+                                    try{
+                                        Thread.sleep(500);                                   
+                                    } catch (InterruptedException e) {
+                                        e.printStackTrace();
+                                    }  
+
+                                    if (rc == StorageResultCode.OperationSucceeded && enableDefaultPathDialog()) {
+                                        Intent intent = new Intent("com.mediatek.storage.StorageDefaultPathDialog");
+                                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                        if (path.equals(EXTERNAL_OTG)) {
+                                            intent.putExtra(INSERT_OTG, true);
+                                        }
+                                        mContext.startActivity(intent);
+                                    } else {
+                                        Slog.w(TAG, String.format("Insertion mount failed (%d)", rc));
+                                    }
+                                }
                             }
+
                         } catch (Exception ex) {
                             Slog.w(TAG, "Failed to mount media on insertion", ex);
                         }
                     }
                 }.start();
+                action = Intent.ACTION_SD_INSERTED;
             } else if (code == VoldResponseCode.VolumeDiskRemoved) {
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && !path.startsWith(EXTERNAL_OTG)) {
+                    Slog.i(TAG, "[SWAP] removed MTK_2SDCARD_SWAP");
+                    mUnmountSwap = true;
+                    doSDSwapVolumeUpdate();
+                    updateDefaultpath();
+                    sendSDSwapIntent();
+                    mUnmountSwap = false;
+                }
                 /*
                  * This event gets trumped if we're already in BAD_REMOVAL state
                  */
-                if (getVolumeState(path).equals(Environment.MEDIA_BAD_REMOVAL)) {
+                if (getVolumeState(path) != null && getVolumeState(path).equals(Environment.MEDIA_BAD_REMOVAL)) {
                     return true;
                 }
+                if (DEBUG_EVENTS) Slog.i(TAG, "Sending eject event first");
+                sendStorageIntent(Intent.ACTION_MEDIA_EJECT, volume, UserHandle.ALL);
                 /* Send the media unmounted event first */
                 if (DEBUG_EVENTS) Slog.i(TAG, "Sending unmounted event first");
-                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED);
+
+                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED, label);
                 sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED, volume, UserHandle.ALL);
 
                 if (DEBUG_EVENTS) Slog.i(TAG, "Sending media removed");
                 updatePublicVolumeState(volume, Environment.MEDIA_REMOVED);
                 action = Intent.ACTION_MEDIA_REMOVED;
+                if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+                    ///usbotg:
+                    if (LABLE_OTG.equals(cooked[2])) {
+                        if (!isVolumeRegistered(path)) {
+                            return true;
+                        }
+                        sendStorageIntent(action, volume, UserHandle.ALL);
+                        notifyVolumeChange(label, path);
+                    }
+                }
             } else if (code == VoldResponseCode.VolumeBadRemoval) {
+                if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+                    ///usbotg:
+                    if (LABLE_OTG.equals(cooked[2])) {
+                        if (!isVolumeRegistered(path)) {
+                            return true;
+                        }
+                        //notifyVolumeChange(label,path);
+                    }
+                }
+                if (DEBUG_EVENTS) Slog.i(TAG, "Sending eject event first");
+                sendStorageIntent(Intent.ACTION_MEDIA_EJECT, volume, UserHandle.ALL);
+                // Swap plug out, need to send eject for /storage/sdcard1 also.
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && !path.startsWith(EXTERNAL_OTG)) {
+                    StorageVolume secondaryVolume;
+                    synchronized (mVolumesLock) {
+                        secondaryVolume = mVolumesByPath.get(EXTERNAL_SD2);
+                    }
+                    sendStorageIntent(Intent.ACTION_MEDIA_EJECT, secondaryVolume, UserHandle.ALL);
+                }
                 if (DEBUG_EVENTS) Slog.i(TAG, "Sending unmounted event first");
                 /* Send the media unmounted event first */
-                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED);
+                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED, label);
                 sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED, volume, UserHandle.ALL);
 
                 if (DEBUG_EVENTS) Slog.i(TAG, "Sending media bad removal");
                 updatePublicVolumeState(volume, Environment.MEDIA_BAD_REMOVAL);
                 action = Intent.ACTION_MEDIA_BAD_REMOVAL;
+                if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1")) {
+                    ///usbotg:
+                    if ((LABLE_OTG.equals(cooked[2])) && (cooked.length == OTG_EVENT632_LENGTH)) {
+                        if (!isVolumeRegistered(path)) {
+                            return true;
+                        }
+                        notifyVolumeChange(label, path);
+                    }
+                }
+                /// M: ALPS00773050
+                String defaultPath = this.getDefaultPath();
+                updateDefaultpath();
+                /// M: ALPS00773050
+                if (enableDefaultToast() && (path.equals(defaultPath))) {
+                    Toast.makeText(mContext, mContext.getString(com.mediatek.internal.R.string.sdcard_default_path_change), Toast.LENGTH_LONG).show();
+                }
             } else if (code == VoldResponseCode.FstrimCompleted) {
                 EventLogTags.writeFstrimFinish(SystemClock.elapsedRealtime());
             } else {
@@ -1023,6 +1943,57 @@ class MountService extends IMountService.Stub
             if (action != null) {
                 sendStorageIntent(action, volume, UserHandle.ALL);
             }
+        } else if (code == VoldResponseCode.VolumeEjectBeforeSwap) {
+            // M : ALPS00446260
+            String action = null;
+            final String label = cooked[2];
+            final String path = cooked[3];
+
+            final StorageVolume volume;
+            synchronized (mVolumesLock) {
+                volume = mVolumesByPath.get(path);
+            }
+            Slog.i(TAG, "VoldResponseCode.VolumeEjectBeforeSwap: send eject to volume :"  + volume.toString());
+            sendStorageIntent(Intent.ACTION_MEDIA_EJECT, volume, UserHandle.ALL);
+            // M : ALPS00446260
+        } else if (code == VoldResponseCode.VolumeUnmountable) {
+            String action = null;
+            final String label = cooked[2];
+            final String path = cooked[3];
+
+            final StorageVolume volume;
+            synchronized (mVolumesLock) {
+                volume = mVolumesByPath.get(path);
+            }
+            Slog.i(TAG, "VoldResponseCode.VolumeUnmountable: send MEDIA_UNMOUNTABLE to volume :"  + volume.toString());
+            updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTABLE);
+            sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTABLE, volume, UserHandle.ALL);
+            updateDefaultpath();
+            doSDSwapVolumeUpdate();
+            // force setting UI to refresh default path
+            Intent intent = new Intent(INTENT_SD_SWAP);
+            intent.putExtra(SD_EXIST, getSwapState());
+            Slog.d(TAG, "sendSDSwapIntent " + intent);
+            mContext.sendBroadcast(intent);
+        } else if (code == VoldResponseCode.VolumeMountFailedBlank) {
+            String action = null;
+            final String label = cooked[2];
+            final String path = cooked[3];
+
+            final StorageVolume volume;
+            synchronized (mVolumesLock) {
+                volume = mVolumesByPath.get(path);
+            }
+            Slog.i(TAG, "VoldResponseCode.VolumeMountFailedBlank: send MEDIA_NOFS to volume :"  + volume.toString());
+            updatePublicVolumeState(volume, Environment.MEDIA_NOFS);
+            sendStorageIntent(Intent.ACTION_MEDIA_NOFS, volume, UserHandle.ALL);
+            updateDefaultpath();
+            doSDSwapVolumeUpdate();
+            // force setting UI to refresh default path
+            Intent intent = new Intent(INTENT_SD_SWAP);
+            intent.putExtra(SD_EXIST, getSwapState());
+            Slog.d(TAG, "sendSDSwapIntent " + intent);
+            mContext.sendBroadcast(intent);
         } else {
             return false;
         }
@@ -1030,15 +2001,118 @@ class MountService extends IMountService.Stub
         return true;
     }
 
+    private boolean isVolumeRegistered(String path) {
+        boolean isVolumeRegistered = false;
+        for (int i = 0; i < mVolumes.size(); i++) {
+            if (mVolumes.get(i).getPath().equals(path)) {
+                isVolumeRegistered = true;
+                break;
+            }
+        }
+        return isVolumeRegistered;
+    }
+
+    ///usbotg:
+    private void notifyVolumeChange(String label, String path, int oldState, int newState) {
+        if (DEBUG_EVENTS) Slog.i(TAG, "otg patition state change");
+        if ((label == null) || (path == null)) {
+            Slog.e(TAG, "usbotg: mountservice notifyVolumeChange:invalid lable or invalid path");
+            return;
+        }
+
+        if (oldState == newState) {
+            if (DEBUG_EVENTS) Slog.e(TAG, "usbotg: mountservice notifyVolumeChange:oldState=newState,don't care");
+            return;
+        } else {
+            synchronized (mVolumes) {
+                if (mVolumes == null) {
+                    if (DEBUG_EVENTS) Slog.e(TAG, "usbotg: mountservice notifyVolumeChange: volumes is null... ");
+                    return;
+                }
+                int size = mVolumes.size();
+                Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:before mVolumes size is " + size);
+                StorageVolume volume =  new StorageVolume(new File(path), -1,  false, true, false, 0, false, 0L, null);
+                boolean bPathIncluded = isVolumeRegistered(volume.getPath());
+                Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:otg path is registered? " + bPathIncluded);
+                if ((oldState == VolumeState.NoMedia) && (newState == VolumeState.Idle)) {
+                    if (!bPathIncluded) {
+                        if (DEBUG_EVENTS) Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:add volume " + size);
+                        //mVolumes.add(volume);
+                        //mVolumesByPath.put(path, volume);
+                        addVolumeLocked(volume);
+                        mVolumeStates.put(volume.getPath(), Environment.MEDIA_REMOVED);
+                    }
+                    Slog.d(TAG, "usbotg: mountservice notifyVolumeChange,Volume state is: " + newState);
+                    notifyVolumeStateChange(label, path, oldState, newState);
+                } else if ((oldState == VolumeState.Idle) && (newState == VolumeState.Checking)) {
+                    Slog.d(TAG, "usbotg: mountservice notifyVolumeChange,Volume state is: " + newState);
+                    notifyVolumeStateChange(label, path, oldState, newState);
+                } else if (newState == VolumeState.Mounted) {
+                    Slog.d(TAG, "usbotg: mountservice notifyVolumeChange,Volume state is: " + newState);
+                    notifyVolumeStateChange(label, path, oldState, newState);
+                } else if ((oldState == VolumeState.Unmounting) && (newState == VolumeState.Idle)) {
+                    notifyVolumeStateChange(label, path, oldState,newState);
+                }else if ((oldState == VolumeState.Checking)&&(newState == VolumeState.Idle)) {
+		    Slog.d(TAG, "usbotg: mountservice notifyVolumeChange,Volume state is: " + newState);
+                    notifyVolumeStateChange(label, path, oldState,newState);
+                } else {
+                    return;
+                }
+                Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:after mVolumes size is " + mVolumes.size());
+                for (int i = 0; i < mVolumes.size(); i++) {
+                    mVolumes.get(i).setStorageId(i);
+                }
+            }
+        }
+    }
+
+    ///usbotg:
+    private void notifyVolumeChange(String label, final String path) {
+        if (DEBUG_EVENTS) Slog.i(TAG, "usbotg: mountservice notifyVolumeChange:disk bad removal");
+        if ((label == null) || (path == null)) {
+            Slog.e(TAG, "usbotg: mountservice notifyVolumeChange:invalid lable or invalid path");
+            return;
+        }
+        synchronized (mVolumes) {
+            if (mVolumes == null) {
+                if (DEBUG_EVENTS) Slog.e(TAG, "usbotg: mountservice notifyVolumeChange:volumes is null... ");
+                return;
+            }
+            int size = mVolumes.size();
+            int idx_incd = 0;
+            Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:before mVolumes size is " + size);
+            StorageVolume volume =  new StorageVolume(new File(path), -1,  false, true, false, 0, false, 0L, null);
+            idx_incd = mVolumes.indexOf(volume);
+            if (idx_incd != -1) {
+                if (DEBUG_EVENTS) Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:remove volume " + idx_incd);
+                removeVolumeLocked(volume);
+            } else {
+                return;
+            }
+            Slog.d(TAG, "usbotg: mountservice notifyVolumeChange:after mVolumes size is " + mVolumes.size());
+            for (int i = 0; i < mVolumes.size(); i++) {
+                mVolumes.get(i).setStorageId(i);
+            }
+        }
+    }
+
     private void notifyVolumeStateChange(String label, String path, int oldState, int newState) {
+          notifyVolumeStateChange(label, path, oldState, newState, false);
+    }
+
+    private void notifyVolumeStateChange(String label, String path, int oldState, int newState, boolean bValue) {
         final StorageVolume volume;
-        final String state;
+        String state;
         synchronized (mVolumesLock) {
             volume = mVolumesByPath.get(path);
+            if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1") && volume == null) {
+                Slog.i(TAG, "notifyVolumeStateChange: volume had been deleted,just return!");
+                return;
+            }
             state = getVolumeState(path);
         }
 
-        if (DEBUG_EVENTS) Slog.i(TAG, "notifyVolumeStateChange::" + state);
+        if (DEBUG_EVENTS) Slog.i(TAG, "notifyVolumeStateChange::" + state + " bValue::" + bValue);
 
         String action = null;
 
@@ -1051,18 +2125,34 @@ class MountService extends IMountService.Stub
         } else if (newState == VolumeState.NoMedia) {
             // NoMedia is handled via Disk Remove events
         } else if (newState == VolumeState.Idle) {
+
+            // set prop unmounting
+            try {
+                Slog.i(TAG, "set prop sys.sd.unmounting = 0");
+                SystemProperties.set(PROP_UNMOUNTING, "0");
+            } catch (IllegalArgumentException e) {
+                Slog.e(TAG, "IllegalArgumentException when set sys.sd.unmounting:", e);
+            }
+
             /*
              * Don't notify if we're in BAD_REMOVAL, NOFS, UNMOUNTABLE, or
              * if we're in the process of enabling UMS
              */
+            Slog.i(TAG, "get state again, before get state=" + state);
+            state = getVolumeState(path);
+
+            Slog.i(TAG, "get state again, after get state=" + state);
             if (!state.equals(
                     Environment.MEDIA_BAD_REMOVAL) && !state.equals(
                             Environment.MEDIA_NOFS) && !state.equals(
                                     Environment.MEDIA_UNMOUNTABLE) && !getUmsEnabling()) {
                 if (DEBUG_EVENTS) Slog.i(TAG, "updating volume state for media bad removal nofs and unmountable");
-                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED);
+                updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED, label);
                 action = Intent.ACTION_MEDIA_UNMOUNTED;
-            }
+                // for fix time issue,must broadcast now
+                sendStorageIntent(action, volume, UserHandle.ALL);
+                return;
+            }            
         } else if (newState == VolumeState.Pending) {
         } else if (newState == VolumeState.Checking) {
             if (DEBUG_EVENTS) Slog.i(TAG, "updating volume state checking");
@@ -1070,15 +2160,26 @@ class MountService extends IMountService.Stub
             action = Intent.ACTION_MEDIA_CHECKING;
         } else if (newState == VolumeState.Mounted) {
             if (DEBUG_EVENTS) Slog.i(TAG, "updating volume state mounted");
-            updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED);
+            if (bValue) {
+                Slog.i(TAG, "the filesystem of the mounted storage is FAT32. update maxFileSize to 4G");
+                volume.setMaxFileSize(MAX_FILE_SIZE);
+            } else {
+                Slog.i(TAG, "the filesystem of the mounted storage is not FAT32. update maxFileSize to 0");
+                volume.setMaxFileSize(0);
+            }
+            updatePublicVolumeState(volume, Environment.MEDIA_MOUNTED, label);
+            if (mSetDefaultEnable && !mIsTurnOnOffUsb && !mMountSwap && !mUnmountSwap) {
+                Slog.i(TAG, "updateDefaultpath VolumeState.Mounted");
+                updateDefaultpath();
+            }
             action = Intent.ACTION_MEDIA_MOUNTED;
         } else if (newState == VolumeState.Unmounting) {
-            action = Intent.ACTION_MEDIA_EJECT;
+            //action = Intent.ACTION_MEDIA_EJECT;
         } else if (newState == VolumeState.Formatting) {
         } else if (newState == VolumeState.Shared) {
             if (DEBUG_EVENTS) Slog.i(TAG, "Updating volume state media mounted");
             /* Send the media unmounted event first */
-            updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED);
+            updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED, label);
             sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED, volume, UserHandle.ALL);
 
             if (DEBUG_EVENTS) Slog.i(TAG, "Updating media shared");
@@ -1112,7 +2213,12 @@ class MountService extends IMountService.Stub
 
         if (DEBUG_EVENTS) Slog.i(TAG, "doMountVolume: Mouting " + path);
         try {
-            mConnector.execute("volume", "mount", path);
+            final Command cmd = new Command("volume", "mount", path);
+            if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mMountSwap) {
+                cmd.appendArg("swap");
+            }
+            Slog.d(TAG, "doMountVolume  cmd:" + cmd);
+            mConnector.execute(cmd);
         } catch (NativeDaemonConnectorException e) {
             /*
              * Mount failed for some reason
@@ -1148,7 +2254,22 @@ class MountService extends IMountService.Stub
              * Send broadcast intent (if required for the failure)
              */
             if (action != null) {
-                sendStorageIntent(action, volume, UserHandle.ALL);
+               if(SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") 
+                  && (mOldUserId != mUserId)) {
+                   /*
+                    * we have to send the intent in another thread to avoid dead lock as
+                    * AMS will call #getVolumeList() to acquire the mVolumesLock.
+                    */
+                    final String tempAction = action;
+                    final StorageVolume tempV = volume;
+                    new Thread() {
+                        public void run() {                        
+                             sendStorageIntent(tempAction, tempV, UserHandle.ALL);
+                        }
+                    }.start();
+               } else {
+                   sendStorageIntent(action, volume, UserHandle.ALL);
+               }              
             }
         }
 
@@ -1178,15 +2299,30 @@ class MountService extends IMountService.Stub
          * open on the external storage.
          */
         Runtime.getRuntime().gc();
+        System.runFinalization();
 
         // Redundant probably. But no harm in updating state again.
-        mPms.updateExternalMediaStatus(false, false);
+
+        if (path.equals(EXTERNAL_SD1)) {
+            mPms.updateExternalMediaStatus(false, false);
+        }
+
         try {
             final Command cmd = new Command("volume", "unmount", path);
             if (removeEncryption) {
-                cmd.appendArg("force_and_revert");
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap) {
+                    cmd.appendArg("force_and_revert_and_swap");
+                } else {
+                    cmd.appendArg("force_and_revert");
+                }
             } else if (force) {
-                cmd.appendArg("force");
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap) {
+                    cmd.appendArg("force_and_swap");
+                } else {
+                    cmd.appendArg("force");
+                }
+            } else {
+                cmd.appendArg("swap");
             }
             mConnector.execute(cmd);
             // We unmounted the volume. None of the asec containers are available now.
@@ -1208,9 +2344,66 @@ class MountService extends IMountService.Stub
         }
     }
 
+    private int doUnmountVolumeForUserSwitch(String path, boolean force, boolean removeEncryption) {
+
+        /*
+         * Force a GC to make sure AssetManagers in other threads of the
+         * system_server are cleaned up. We have to do this since AssetManager
+         * instances are kept as a WeakReference and it's possible we have files
+         * open on the external storage.
+         */
+        Runtime.getRuntime().gc();
+        System.runFinalization();
+
+        // Redundant probably. But no harm in updating state again.
+
+        if (path.equals(EXTERNAL_SD1)) {
+            mPms.updateExternalMediaStatus(false, false);
+        }
+
+        try {
+            final Command cmd = new Command("volume", "unmount", path);
+            if (removeEncryption) {
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap) {
+                    cmd.appendArg("force_and_revert_and_swap");
+                } else {
+                    cmd.appendArg("force_and_revert");
+                }
+            } else if (force) {
+                if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && mUnmountSwap) {
+                    cmd.appendArg("force_and_swap");
+                } else {
+                    cmd.appendArg("force");
+                }
+            } else {
+                cmd.appendArg("swap");
+            }
+            mConnector.execute(cmd);
+            // We unmounted the volume. None of the asec containers are available now.
+            synchronized (mAsecMountSet) {
+                mAsecMountSet.clear();
+            }
+            return StorageResultCode.OperationSucceeded;
+        } catch (NativeDaemonConnectorException e) {
+            // Don't worry about mismatch in PackageManager since the
+            // call back will handle the status changes any way.
+            int code = e.getCode();
+            if (code == VoldResponseCode.OpFailedVolNotMounted) {
+                return StorageResultCode.OperationFailedStorageNotMounted;
+            } else if (code == VoldResponseCode.OpFailedStorageBusy) {
+                return StorageResultCode.OperationFailedStorageBusy;
+            } else {
+                return StorageResultCode.OperationFailedInternalError;
+            }
+        }
+    }
     private int doFormatVolume(String path) {
         try {
-            mConnector.execute("volume", "format", path);
+            if (FORMAT_WIPE) {
+                mConnector.execute("volume", "format", path, "wipe");
+            } else {
+                mConnector.execute("volume", "format", path);
+            }
             return StorageResultCode.OperationSucceeded;
         } catch (NativeDaemonConnectorException e) {
             int code = e.getCode();
@@ -1225,6 +2418,10 @@ class MountService extends IMountService.Stub
     }
 
     private boolean doGetVolumeShared(String path, String method) {
+        if (path.contains("emulated")) {
+            return false;
+        }
+
         final NativeDaemonEvent event;
         try {
             event = mConnector.execute("volume", "shared", path, method);
@@ -1262,38 +2459,72 @@ class MountService extends IMountService.Stub
             mSendUmsConnectedOnBoot = avail;
         }
 
-        final StorageVolume primary = getPrimaryPhysicalVolume();
-        if (avail == false && primary != null
-                && Environment.MEDIA_SHARED.equals(getVolumeState(primary.getPath()))) {
-            final String path = primary.getPath();
+        if (!avail) {
+            // M: two case need turn off
+            // 1. is turning on UMS
+            // 2. there is any storage at SHARED status
+            boolean needTurnOff = false;
+            if (mIsTurnOnOffUsb) {
+                needTurnOff = true;
+            } else {
+                synchronized (mVolumes) {
+                    int size = mVolumes.size();
+                    for (int i = 0; i < size; i++) {
+                        if (getVolumeState(mVolumes.get(i).getPath()).equals(Environment.MEDIA_SHARED)) {
+                            needTurnOff = true;
+                            break;
+                        }
+                    }
+                }
+            }
             /*
              * USB mass storage disconnected while enabled
              */
-            new Thread("MountService#AvailabilityChange") {
-                @Override
-                public void run() {
-                    try {
-                        int rc;
-                        Slog.w(TAG, "Disabling UMS after cable disconnect");
-                        doShareUnshareVolume(path, "ums", false);
-                        if ((rc = doMountVolume(path)) != StorageResultCode.OperationSucceeded) {
-                            Slog.e(TAG, String.format(
-                                    "Failed to remount {%s} on UMS enabled-disconnect (%d)",
-                                            path, rc));
+            if (needTurnOff) {
+                new Thread("MountService#AvailabilityChange") {
+                    @Override
+                    public void run() {
+                        synchronized (TURNONUSB_SYNC_LOCK) {
+                            setUsbMassStorageEnabled(false);
                         }
-                    } catch (Exception ex) {
-                        Slog.w(TAG, "Failed to mount media on UMS enabled-disconnect", ex);
                     }
-                }
-            }.start();
+                } .start();
+            }
         }
     }
 
     private void sendStorageIntent(String action, StorageVolume volume, UserHandle user) {
+        if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1") && volume == null) {
+            Slog.i(TAG, "sendStorageIntent: volume had been deleted,just return!");
+            return;
+        }
         final Intent intent = new Intent(action, Uri.parse("file://" + volume.getPath()));
+        // M: tell MediaScanner all sd card will be mount unmount together
+        if (((action.equals(Intent.ACTION_MEDIA_EJECT) && (mShutdownSD == true || mUMSCount > 0)) ||
+                (action.equals(Intent.ACTION_MEDIA_MOUNTED) && mMountAll == true) ||
+                (action.equals(Intent.ACTION_MEDIA_UNMOUNTED) && mIsTurnOnOffUsb == true)) &&
+                !SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) {
+            intent.putExtra(MOUNT_UNMOUNT_ALL, true);
+        }
+
+        if ((mSD1BootMounted || mSD2BootMounted) && action.equals(Intent.ACTION_MEDIA_MOUNTED)) {
+            if (mSD1BootMounted && volume.getPath().equals(EXTERNAL_SD1)) {
+                mSD1BootMounted = false;
+                if (!mBootCompleted) {
+                    intent.putExtra(FIRST_BOOT_MOUNTED, true);
+                    Slog.i(TAG, "sendStorageIntent mSD1BootMounted");
+                }
+            } else if (mSD2BootMounted && volume.getPath().equals(EXTERNAL_SD2)) {
+                mSD2BootMounted = false;
+                if (!mBootCompleted) {
+                    intent.putExtra(FIRST_BOOT_MOUNTED, true);
+                    Slog.i(TAG, "sendStorageIntent mSD2BootMounted");
+                }
+            }
+        }
         intent.putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, volume);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-        Slog.d(TAG, "sendStorageIntent " + intent + " to " + user);
+        Slog.d(TAG, "sendStorageIntent " + intent + " to " + user + ", " + intent.getExtras());
         mContext.sendBroadcastAsUser(intent, user);
     }
 
@@ -1301,6 +2532,10 @@ class MountService extends IMountService.Stub
         mContext.sendBroadcastAsUser(
                 new Intent((c ? Intent.ACTION_UMS_CONNECTED : Intent.ACTION_UMS_DISCONNECTED)),
                 UserHandle.ALL);
+    }
+
+    private void sendEncryptionTypeIntent() {
+        mContext.sendBroadcastAsUser(new Intent(ACTION_ENCRYPTION_TYPE_CHANGED), UserHandle.ALL);
     }
 
     private void validatePermission(String perm) {
@@ -1326,7 +2561,8 @@ class MountService extends IMountService.Stub
 
     private void readStorageListLocked() {
         mVolumes.clear();
-        mVolumeStates.clear();
+        // remove this for IPO, it will cause error notication
+        //mVolumeStates.clear();
 
         Resources resources = mContext.getResources();
 
@@ -1358,19 +2594,40 @@ class MountService extends IMountService.Stub
                             com.android.internal.R.styleable.Storage_removable, false);
                     boolean emulated = a.getBoolean(
                             com.android.internal.R.styleable.Storage_emulated, false);
-                    int mtpReserve = a.getInt(
-                            com.android.internal.R.styleable.Storage_mtpReserve, 0);
+
+                    // M: Only SHARED_SDCARD can use mtpReserve, set it to 0 first.
+                    //int mtpReserve = a.getInt(
+                    //        com.android.internal.R.styleable.Storage_mtpReserve, 0);
+                    int mtpReserve = 0;
                     boolean allowMassStorage = a.getBoolean(
                             com.android.internal.R.styleable.Storage_allowMassStorage, false);
                     // resource parser does not support longs, so XML value is in megabytes
                     long maxFileSize = a.getInt(
                             com.android.internal.R.styleable.Storage_maxFileSize, 0) * 1024L * 1024L;
 
+                    // M: Don't use storage_list to set up emulated sd, handle in code instead
+                    // When share sd enabled, "/storage/sdcard0" will be init as the emulated
+                    if (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && primary) {
+                        path = null;
+                        //descriptionId = com.android.internal.R.string.storage_phone;
+                        description = mContext.getString(descriptionId);
+                        primary = true;
+                        removable = false;
+                        emulated = true;
+                        mtpReserve = MTP_RESERVE_SPACE;
+                    }
+
                     Slog.d(TAG, "got storage path: " + path + " description: " + description +
                             " primary: " + primary + " removable: " + removable +
                             " emulated: " + emulated +  " mtpReserve: " + mtpReserve +
                             " allowMassStorage: " + allowMassStorage +
                             " maxFileSize: " + maxFileSize);
+
+                    if (SystemProperties.get(PROP_MULTI_PARTITION).equals("1") 
+                           && path!=null && path.startsWith(EXTERNAL_OTG)) {  
+                        Slog.d(TAG, "with multi partition, ignore storage : " + path);  
+                        continue;
+                    }                    
 
                     if (emulated) {
                         // For devices with emulated storage, we create separate
@@ -1381,6 +2638,14 @@ class MountService extends IMountService.Stub
                         final UserManagerService userManager = UserManagerService.getInstance();
                         for (UserInfo user : userManager.getUsers(false)) {
                             createEmulatedVolumeForUserLocked(user.getUserHandle());
+                        }
+
+                        if (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && mVolumePrimary == null) {
+                            for (StorageVolume shareVolume : mVolumes) {
+                                if (shareVolume.getPath().equals(EXTERNAL_SD1)) {
+                                    mVolumePrimary = shareVolume;
+                                }
+                            }
                         }
 
                     } else {
@@ -1395,6 +2660,16 @@ class MountService extends IMountService.Stub
                             // Until we hear otherwise, treat as unmounted
                             mVolumeStates.put(volume.getPath(), Environment.MEDIA_UNMOUNTED);
                             volume.setState(Environment.MEDIA_UNMOUNTED);
+
+                            if (allowMassStorage) {
+                                mIsAnyAllowUMS = true;
+                            }
+
+                            if (mVolumePrimary == null && path.equals(EXTERNAL_SD1)) {
+                                mVolumePrimary = volume;
+                            } else if (mVolumeSecondary == null && path.equals(EXTERNAL_SD2)) {
+                                mVolumeSecondary = volume;
+                            }
                         }
                     }
 
@@ -1447,8 +2722,9 @@ class MountService extends IMountService.Stub
         mVolumes.add(volume);
         final StorageVolume existing = mVolumesByPath.put(volume.getPath(), volume);
         if (existing != null) {
-            throw new IllegalStateException(
-                    "Volume at " + volume.getPath() + " already exists: " + existing);
+            Slog.d(TAG, "Volume at " + volume.getPath() + " already exists: " + existing);
+            //throw new IllegalStateException(
+            //        "Volume at " + volume.getPath() + " already exists: " + existing);
         }
     }
 
@@ -1495,14 +2771,43 @@ class MountService extends IMountService.Stub
         final IntentFilter userFilter = new IntentFilter();
         userFilter.addAction(Intent.ACTION_USER_ADDED);
         userFilter.addAction(Intent.ACTION_USER_REMOVED);
+
+        /// M: sdcard&otg only for owner
+        userFilter.addAction(Intent.ACTION_USER_SWITCHED);
         mContext.registerReceiver(mUserReceiver, userFilter, null, mHandler);
 
         // Watch for USB changes on primary volume
-        final StorageVolume primary = getPrimaryPhysicalVolume();
-        if (primary != null && primary.allowMassStorage()) {
-            mContext.registerReceiver(
-                    mUsbReceiver, new IntentFilter(UsbManager.ACTION_USB_STATE), null, mHandler);
+        // Because share sd also can support UMS, so we check each volume can support UMS
+        synchronized (mVolumesLock) {
+            for (StorageVolume volume : mVolumes) {
+                if (volume.allowMassStorage()) {
+                    mContext.registerReceiver(
+                            mUsbReceiver, new IntentFilter(UsbManager.ACTION_USB_STATE), null, mHandler);
+                    break;
+                }
+            }
         }
+
+        // M: OMA DM
+        if (SystemProperties.get(PROP_DM_APP).equals("1")) {
+            final IntentFilter DMFilter = new IntentFilter();
+            DMFilter.addAction(OMADM_USB_ENABLE);
+            DMFilter.addAction(OMADM_USB_DISABLE);
+            DMFilter.addAction(OMADM_SD_FORMAT);
+            mContext.registerReceiver(mDMReceiver, DMFilter, null, mHandler);
+        }
+
+        final IntentFilter privacyProtectionFilter = new IntentFilter();
+        privacyProtectionFilter.addAction(PRIVACY_PROTECTION_LOCK);
+        privacyProtectionFilter.addAction(PRIVACY_PROTECTION_UNLOCK);
+        privacyProtectionFilter.addAction(PRIVACY_PROTECTION_WIPE);
+        mContext.registerReceiver(mPrivacyProtectionReceiver, privacyProtectionFilter, null, mHandler);
+
+        // M: Boot IPO receiver
+        final IntentFilter bootIPOFilter = new IntentFilter();
+        bootIPOFilter.addAction(BOOT_IPO);
+        bootIPOFilter.addAction(Intent.ACTION_BOOT_COMPLETED); // for MediaScanner
+        mContext.registerReceiver(mBootIPOReceiver, bootIPOFilter, null, mHandler);
 
         // Add OBB Action Handler to MountService thread.
         mObbActionHandler = new ObbActionHandler(IoThread.get().getLooper());
@@ -1577,49 +2882,85 @@ class MountService extends IMountService.Stub
         validatePermission(android.Manifest.permission.SHUTDOWN);
 
         Slog.i(TAG, "Shutting down");
+        mShutdownCount = 0;
+        mSetDefaultEnable = false;
+        mBootCompleted = false;
+        final HashMap<String, String> snapshot;
         synchronized (mVolumesLock) {
-            // Get all volumes to be unmounted.
-            MountShutdownLatch mountShutdownLatch = new MountShutdownLatch(observer,
-                                                            mVolumeStates.size());
+            snapshot = new HashMap<String, String>(mVolumeStates);
+        }
+        //if /storage/sdcard0 is mounted while shutdown
+        //need to wait PMS unmount apk finish then can real unmount all sd card
+        String mState = getVolumeState(EXTERNAL_SD1);
+        if (mState.equals(Environment.MEDIA_MOUNTED)) {
+            mShutdownSD = true;
+            mUnmountPrimary = true;
+        } else if (mState.equals(Environment.MEDIA_SHARED)) {
+            mShutdownSD = true;
+        }
+        MountShutdownLatch mountShutdownLatch = new MountShutdownLatch(observer,
+                                                        snapshot.size());
 
-            for (String path : mVolumeStates.keySet()) {
-                String state = mVolumeStates.get(path);
+        for (String path : snapshot.keySet()) {
+            String state = snapshot.get(path);
 
-                if (state.equals(Environment.MEDIA_SHARED)) {
-                    /*
-                     * If the media is currently shared, unshare it.
-                     * XXX: This is still dangerous!. We should not
-                     * be rebooting at *all* if UMS is enabled, since
-                     * the UMS host could have dirty FAT cache entries
-                     * yet to flush.
-                     */
-                    setUsbMassStorageEnabled(false);
-                } else if (state.equals(Environment.MEDIA_CHECKING)) {
-                    /*
-                     * If the media is being checked, then we need to wait for
-                     * it to complete before being able to proceed.
-                     */
-                    // XXX: @hackbod - Should we disable the ANR timer here?
-                    int retries = 30;
-                    while (state.equals(Environment.MEDIA_CHECKING) && (retries-- >=0)) {
-                        try {
-                            Thread.sleep(1000);
-                        } catch (InterruptedException iex) {
-                            Slog.e(TAG, "Interrupted while waiting for media", iex);
-                            break;
-                        }
-                        state = Environment.getExternalStorageState();
+            if (state.equals(Environment.MEDIA_SHARED)) {
+                /*
+                 * If the media is currently shared, unshare it.
+                 * XXX: This is still dangerous!. We should not
+                 * be rebooting at *all* if UMS is enabled, since
+                 * the UMS host could have dirty FAT cache entries
+                 * yet to flush.
+                 */
+                //M: Shutdown case, just unshare volume, no need to mount it.
+                //setUsbMassStorageEnabled(false);
+                doShareUnshareVolume(path, "ums", false);
+            } else if (state.equals(Environment.MEDIA_CHECKING)) {
+                /*
+                 * If the media is being checked, then we need to wait for
+                 * it to complete before being able to proceed.
+                 */
+                // XXX: @hackbod - Should we disable the ANR timer here?
+                int retries = 30;
+                while (state.equals(Environment.MEDIA_CHECKING) && (retries-- >= 0)) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException iex) {
+                        Slog.e(TAG, "Interrupted while waiting for media", iex);
+                        break;
                     }
-                    if (retries == 0) {
-                        Slog.e(TAG, "Timed out waiting for media to check");
+                    state = getVolumeState(path);
+                }
+                if (retries == 0) {
+                    Slog.e(TAG, "Timed out waiting for media to check");
+                }
+            }
+
+            if (state.equals(Environment.MEDIA_MOUNTED)) {
+                // because unmount will fail when emulated path is "storage/emulated/..."
+                // this will cause IPO power off fail, so just skip to do unmount when primary is emulated
+                //if (path.contains("/storage/emulated/") && SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && !SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+                //    mUnmountPrimary = false;
+                //    continue;
+                //}
+                StorageVolume volume;
+                synchronized (mVolumesLock) {
+                    volume = mVolumesByPath.get(path);
+                }
+                if (volume.isEmulated()) {
+                    if (volume.isPrimary()) {
+                        mUnmountPrimary = false;
                     }
+                    mountShutdownLatch.countDown();
+                    Slog.i(TAG, "path=" + path + " isEmulated, so countDown mountShutdownLatch");
+                    continue;
                 }
 
-                if (state.equals(Environment.MEDIA_MOUNTED)) {
-                    // Post a unmount message.
-                    ShutdownCallBack ucb = new ShutdownCallBack(path, mountShutdownLatch);
-                    mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
-                } else if (observer != null) {
+                mShutdownCount++;
+                // Post a unmount message.
+                ShutdownCallBack ucb = new ShutdownCallBack(path, mountShutdownLatch);
+                mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
+            } else if (observer != null) {
                     /*
                      * Count down, since nothing will be done. The observer will be
                      * notified when we are done so shutdown sequence can continue.
@@ -1627,8 +2968,21 @@ class MountService extends IMountService.Stub
                     mountShutdownLatch.countDown();
                     Slog.i(TAG, "Unmount completed: " + path +
                         ", result code: " + StorageResultCode.OperationSucceeded);
-                }
             }
+        }
+
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        Slog.d(TAG, "Notify VOLD IPO shutdown");
+                        mConnector.execute("volume", "ipo", "shutdown");
+                    } catch (NativeDaemonConnectorException e) {
+                        Slog.e(TAG, "Error to notify VOLD IPO shutdown", e);
+                    }
+                }
+            } .start();
         }
     }
 
@@ -1660,51 +3014,127 @@ class MountService extends IMountService.Stub
         validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
         validateUserRestriction(UserManager.DISALLOW_USB_FILE_TRANSFER);
 
-        final StorageVolume primary = getPrimaryPhysicalVolume();
-        if (primary == null) return;
+        // M: erternal sd card can also share to pc when the primary is emulated.
+        //final StorageVolume primary = getPrimaryPhysicalVolume();
+        //if (primary == null) return;
 
         // TODO: Add support for multiple share methods
 
         /*
          * If the volume is mounted and we're enabling then unmount it
          */
-        String path = primary.getPath();
-        String vs = getVolumeState(path);
-        String method = "ums";
-        if (enable && vs.equals(Environment.MEDIA_MOUNTED)) {
-            // Override for isUsbMassStorageEnabled()
-            setUmsEnabling(enable);
-            UmsEnableCallBack umscb = new UmsEnableCallBack(path, method, true);
-            mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, umscb));
-            // Clear override
-            setUmsEnabling(false);
+        String[] paths;
+        String[] states;
+        int count;
+        String mState = Environment.getExternalStorageState();
+        if (enable && mState.equals(Environment.MEDIA_MOUNTED) && !SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) {
+            mUnmountPrimary = true;
         }
-        /*
-         * If we disabled UMS then mount the volume
-         */
-        if (!enable) {
-            doShareUnshareVolume(path, method, enable);
-            if (doMountVolume(path) != StorageResultCode.OperationSucceeded) {
-                Slog.e(TAG, "Failed to remount " + path +
-                        " after disabling share method " + method);
-                /*
-                 * Even though the mount failed, the unshare didn't so don't indicate an error.
-                 * The mountVolume() call will have set the storage state and sent the necessary
-                 * broadcasts.
-                 */
+
+        synchronized (mVolumeStates) {
+            Set<String> keys = mVolumeStates.keySet();
+            count = keys.size();
+            paths = keys.toArray(new String[count]);
+            states = new String[count];
+            for (int i = 0; i < count; i++) {
+                states[i] = mVolumeStates.get(paths[i]);
             }
         }
+
+        mMountAll = true;
+        for (int i = count - 1; i >= 0; i--) {
+            String path = paths[i];
+            String state = states[i];
+            String method = "ums";
+
+            synchronized (mVolumesLock) {
+                StorageVolume volume = mVolumesByPath.get(path);
+                if (volume.isEmulated()) {
+                    Slog.d(TAG, "Emulated volume: " + path + ", no need share!");
+                    continue;
+                }
+                //ICUSB
+                if (volume.getPath().equals("/mnt/udisk/folder1")) {
+                    Slog.d(TAG, "ICUSB: " + path + ", no need share!");
+                    continue;
+                }
+            }
+
+            if (enable && state.equals(Environment.MEDIA_MOUNTED)) {
+                mIsTurnOnOffUsb = true;
+                mUMSCount++;
+                // Override for isUsbMassStorageEnabled()
+
+                // For share SD feature, emulated sd can't mount to pc
+                // so it will swap to storage/sdcard0 when turn on UMS
+                if (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") &&
+                        isExternalStorage(path) && path.equals(EXTERNAL_SD1)) {
+                    mUnmountSwap = true;
+                    updateDefaultPathForSwap(false, path);
+                    Slog.d(TAG, "MTK_SHARED_SDCARD is enabled, need to swap sd when UMS is enabled: mUnmountSwap: " + mUnmountSwap);
+                 }
+
+                setUmsEnabling(enable);
+                UmsEnableCallBack umscb = new UmsEnableCallBack(path, method, true);
+                mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, umscb));
+                // Clear override
+                setUmsEnabling(false);
+            } else if (enable && state.equals(Environment.MEDIA_UNMOUNTED)) {
+                doShareUnshareVolume(path, method, enable);
+            }
+            /*
+                     * If we disabled UMS then mount the volume
+                     */
+            if (!enable && !state.equals(Environment.MEDIA_REMOVED) && !state.equals(Environment.MEDIA_BAD_REMOVAL)
+                  && !state.equals(Environment.MEDIA_NOFS)) {
+                // wait all UMS callback has done..
+                int retry = 15;
+                while (mUMSCount > 0 && retry > 0) {
+                    SystemClock.sleep(1000);
+                    retry-- ;
+                    Slog.d(TAG, "Turn off UMS, wait for turn on UMS done!");
+                }
+                mIsTurnOnOffUsb = true;
+                doShareUnshareVolume(path, method, enable);
+                if (mountVolume(path) != StorageResultCode.OperationSucceeded) {
+                    Slog.e(TAG, "Failed to remount " + path +
+                           " after disabling share method " + method);
+                          /*
+                            * Even though the mount failed, the unshare didn't so don't indicate an error.
+                            * The mountVolume() call will have set the storage state and sent the necessary
+                            * broadcasts.
+                            */
+                }
+                mIsTurnOnOffUsb = false;
+            }
+        }
+        mMountAll = false;
     }
 
     public boolean isUsbMassStorageEnabled() {
         waitForReady();
-
-        final StorageVolume primary = getPrimaryPhysicalVolume();
-        if (primary != null) {
-            return doGetVolumeShared(primary.getPath(), "ums");
-        } else {
-            return false;
+        // M: Due to multi storage, we should check all of storage
+        // if there is any one storage in share status, return value should be true
+        // otherwise will return false.
+        String[] paths;
+        int count;
+        synchronized (mVolumes) {
+            count = mVolumes.size();
+            paths = new String[count];
+            for (int i = 0; i < count; i++) {
+                paths[i] = mVolumes.get(i).getPath();
+            }
         }
+
+        for (int i = 0; i < count; i++) {
+            if (doGetVolumeShared(paths[i], "ums")) {
+                Slog.i(TAG, "isUsbMassStorageEnabled: " + paths[i] + " true");
+                return true;
+            }
+        }
+
+        Slog.i(TAG, "isUsbMassStorageEnabled: false");
+        return false;
     }
 
     /**
@@ -1718,7 +3148,9 @@ class MountService extends IMountService.Stub
                 if (SystemProperties.get("vold.encrypt_progress").length() != 0) {
                     state = Environment.MEDIA_REMOVED;
                 } else {
-                    throw new IllegalArgumentException();
+                    //throw new IllegalArgumentException();
+                    Slog.e(TAG, "getVolumeState(" + mountPoint + "): ERROR!");
+                    state = Environment.MEDIA_UNKNOWN;
                 }
             }
 
@@ -1733,8 +3165,79 @@ class MountService extends IMountService.Stub
 
     public int mountVolume(String path) {
         validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+        boolean isExternal = isExternalStorage(path);
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && isExternal && !path.equals(EXTERNAL_SD1)) {
+            mMountSwap = true;
+            StorageVolume volume;
+            synchronized (mVolumesLock) {
+                volume = mVolumesByPath.get(EXTERNAL_SD1);
+            } 
+
+            if(SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") 
+               && (mOldUserId != mUserId)){
+                /*
+                 * we have to send the intent in another thread to avoid dead lock as
+                 * AMS will call #getVolumeList() to acquire the mVolumesLock.
+                 */
+                 final StorageVolume tempV = volume;
+                 new Thread() {
+                     public void run() {                        
+                          sendStorageIntent(Intent.ACTION_MEDIA_EJECT, tempV, UserHandle.ALL);
+                     }
+                 }.start();
+            } else {
+                sendStorageIntent(Intent.ACTION_MEDIA_EJECT, volume, UserHandle.ALL);
+            }           
+                        
+            SystemClock.sleep(MEDIA_EJECT_TIME);
+            updateDefaultPathForSwap(true, path);
+        }
+
         waitForReady();
-        return doMountVolume(path);
+        int ret = doMountVolume(path);
+
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            if (mMountSwap && StorageResultCode.OperationSucceeded == ret) {
+                //swap mount Succeed, do swap
+                mMountSwap = false;
+                doSDSwapVolumeUpdate();
+                updateDefaultpath();
+                if(SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") 
+                   && (mOldUserId != mUserId)){
+                    /*
+                     * we have to send the intent in another thread to avoid dead lock as
+                     * AMS will call #getVolumeList() to acquire the mVolumesLock.
+                     */
+                     new Thread() {
+                         public void run() {                        
+                              sendSDSwapIntent();
+                         }
+                     }.start();
+                } else {
+                    sendSDSwapIntent();
+                }   
+            } else if (StorageResultCode.OperationSucceeded != ret && isExternal) {
+                //normal mount external sd fail, do swap
+                doSDSwapVolumeUpdate();
+                updateDefaultpath();
+                if(SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1") 
+                   && (mOldUserId != mUserId)){
+                    /*
+                     * we have to send the intent in another thread to avoid dead lock as
+                     * AMS will call #getVolumeList() to acquire the mVolumesLock.
+                     */
+                     new Thread() {
+                         public void run() {                        
+                              sendSDSwapIntent();
+                         }
+                     }.start();
+                } else {
+                    sendSDSwapIntent();
+                }           
+            }
+        }
+
+        return ret;
     }
 
     public void unmountVolume(String path, boolean force, boolean removeEncryption) {
@@ -1747,6 +3250,17 @@ class MountService extends IMountService.Stub
                     + " force = " + force
                     + " removeEncryption = " + removeEncryption);
         }
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && isExternalStorage(path) &&
+                    path.equals(EXTERNAL_SD1)) {
+            mUnmountSwap = true;
+            updateDefaultPathForSwap(false, path);
+            try {
+                Slog.i(TAG, "set prop sys.sd.swapping=1");
+                SystemProperties.set(PROP_SWAPPING, "1");
+            } catch (IllegalArgumentException e) {
+                Slog.e(TAG, "IllegalArgumentException when set sys.sd.swapping:", e);
+            }
+        }
         if (Environment.MEDIA_UNMOUNTED.equals(volState) ||
                 Environment.MEDIA_REMOVED.equals(volState) ||
                 Environment.MEDIA_SHARED.equals(volState) ||
@@ -1755,7 +3269,72 @@ class MountService extends IMountService.Stub
             // TODO return valid return code when adding observer call back.
             return;
         }
+
+        // set prop unmounting
+        try {
+            Slog.i(TAG, "set prop sys.sd.unmounting = " + path);
+            SystemProperties.set(PROP_UNMOUNTING, path);
+        } catch (IllegalArgumentException e) {
+            Slog.e(TAG, "IllegalArgumentException when set sys.sd.unmounting:", e);
+        }
+
         UnmountCallBack ucb = new UnmountCallBack(path, force, removeEncryption);
+        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
+    }
+
+    public void unmountVolumeForUserSwitch(String path, boolean force, boolean removeEncryption) {
+        validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+        waitForReady();
+
+        String volState = getVolumeState(path);
+        if (DEBUG_UNMOUNT) {
+            Slog.i(TAG, "User Switch Unmounting " + path
+                    + " force = " + force
+                    + " removeEncryption = " + removeEncryption);
+        }
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && isExternalStorage(path) &&
+                    path.equals(EXTERNAL_SD1)) {
+            mUnmountSwap = true;
+            updateDefaultPathForSwap(false, path);
+        }
+        if (Environment.MEDIA_UNMOUNTED.equals(volState) ||
+                Environment.MEDIA_REMOVED.equals(volState) ||
+                Environment.MEDIA_SHARED.equals(volState)) {
+            // Media already unmounted or cannot be unmounted.
+            // TODO return valid return code when adding observer call back.
+            return;
+        }
+
+        StorageVolume volume;
+        synchronized (mVolumesLock) {
+            volume = mVolumesByPath.get(path);
+        }
+        updatePublicVolumeState(volume, Environment.MEDIA_UNMOUNTED);
+        if (mSetDefaultEnable && !mIsTurnOnOffUsb && !mMountSwap && !mUnmountSwap) {
+            Slog.i(TAG, "updateDefaultpath Environment.MEDIA_UNMOUNTED");
+            updateDefaultpath();
+        }
+
+        final StorageVolume tempV = volume;
+        /*
+         * we have to send the intent in another thread to avoid dead lock as
+         * AMS will call #getVolumeList() to acquire the mVolumesLock.
+         */
+        new Thread() {
+            public void run() {
+                sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED, tempV, UserHandle.ALL);
+            }
+        }.start();
+
+        // set prop unmounting
+        try {
+            Slog.i(TAG, "set prop sys.sd.unmounting = " + path);
+            SystemProperties.set(PROP_UNMOUNTING, path);
+        } catch (IllegalArgumentException e) {
+            Slog.e(TAG, "IllegalArgumentException when set sys.sd.unmounting:", e);
+        }
+
+        UnmountCallBack ucb = new UnmountCallBack(path, force, removeEncryption, true);
         mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
     }
 
@@ -1822,6 +3401,14 @@ class MountService extends IMountService.Stub
 
     public int createSecureContainer(String id, int sizeMb, String fstype, String key,
             int ownerUid, boolean external) {
+        if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") &&
+            getVolumeState(EXTERNAL_SD1).equals(Environment.MEDIA_MOUNTED)) {
+            if (external && !getSwapState()) {
+                Slog.e(TAG, "External SD not exist, and PMS want to create ASEC in SD (APP2SD). For SWAP feature, make createSecureContainer() fail!");
+                return StorageResultCode.OperationFailedInternalError;
+            }
+        }
+
         validatePermission(android.Manifest.permission.ASEC_CREATE);
         waitForReady();
         warnOnNotMounted();
@@ -1903,6 +3490,7 @@ class MountService extends IMountService.Stub
          * open on the external storage.
          */
         Runtime.getRuntime().gc();
+        System.runFinalization();
 
         int rc = StorageResultCode.OperationSucceeded;
         try {
@@ -1979,6 +3567,7 @@ class MountService extends IMountService.Stub
          * open on the external storage.
          */
         Runtime.getRuntime().gc();
+        System.runFinalization();
 
         int rc = StorageResultCode.OperationSucceeded;
         try {
@@ -2256,7 +3845,7 @@ class MountService extends IMountService.Stub
                             Slog.e(TAG, "problem executing in background", e);
                         }
                     }
-                }, 1000); // 1 second
+                }, 3000); // 1 second
             }
 
             return code;
@@ -2305,9 +3894,20 @@ class MountService extends IMountService.Stub
             Slog.i(TAG, "changing encryption password...");
         }
 
+        if (mOldEncryptionType == -1) {
+            mOldEncryptionType = getPasswordType();
+        }
+
         try {
             NativeDaemonEvent event = mConnector.execute("cryptfs", "changepw", CRYPTO_TYPES[type],
                         new SensitiveArg(toHex(password)));
+
+            if (type != mOldEncryptionType) {
+                Slog.i(TAG, "Encryption type changed from " + mOldEncryptionType + " to " + type);
+                mOldEncryptionType = type;
+                sendEncryptionTypeIntent();
+            }
+
             return Integer.parseInt(event.getMessage());
         } catch (NativeDaemonConnectorException e) {
             // Encryption failed
@@ -2555,6 +4155,7 @@ class MountService extends IMountService.Stub
                     filtered.add(volume);
                 }
             }
+
             return filtered.toArray(new StorageVolume[filtered.size()]);
         }
     }
@@ -3022,7 +4623,7 @@ class MountService extends IMountService.Stub
         // TODO: extend to support OBB mounts on secondary external storage
 
         // Only adjust paths when storage is emulated
-        if (!Environment.isExternalStorageEmulated()) {
+        if (!Environment.isExternalStorageEmulated() || (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && SystemProperties.get(PROP_2SDCARD_SWAP).equals("1"))) {
             return canonicalPath;
         }
 
@@ -3135,4 +4736,544 @@ class MountService extends IMountService.Stub
             mConnector.monitor();
         }
     }
+
+    /// M: New private APIs for new feature or bug fix @{
+    private void updateDefaultpath() {
+        String defaultPath = getDefaultPath();
+        String path = defaultPath;
+        boolean needChange = false;
+        if (!Environment.MEDIA_MOUNTED.equals(getVolumeState(defaultPath))) {
+            synchronized (mVolumes) {
+                int length = mVolumes.size();
+                for (int i = 0; i < length; i++) {
+                    path = mVolumes.get(i).getPath();
+                    if (Environment.MEDIA_MOUNTED.equals(getVolumeState(path))) {
+                        needChange = true;
+                        break;
+                    }
+                }
+            }
+            if (needChange && (!path.equals(defaultPath))) {
+                Slog.i(TAG, "setDefaultPath: " + path);
+                setDefaultPath(path);
+            }
+        }
+    }
+    /**
+     * OMA DM
+     */
+    private void enableUSBFuction(boolean enable) {
+        waitForReady();
+        try {
+            mConnector.execute("USB", enable ? "enable" : "disable");
+        } catch (NativeDaemonConnectorException e) {
+            Slog.e(TAG, "enableUSBFunction failed, ", e);
+        }
+    }
+
+    /**
+     * BICR
+     */
+    private void doShareUnshareCDRom(boolean share) {
+        Slog.d(TAG, "doShareUnshareCDRom" + share);
+        try {
+            mConnector.execute("cd-rom", share ? "share" : "unshare");
+        } catch (NativeDaemonConnectorException e) {
+            Slog.e(TAG, "Failed to share/unshare CD Rom", e);
+        }
+    }
+
+    /**
+     * BICR
+     */
+    private int doGetCDRomState() {
+        NativeDaemonEvent event;
+        try {
+            event = mConnector.execute("cd-rom", "status");
+        } catch (NativeDaemonConnectorException ex) {
+            Slog.e(TAG, "Failed to get CD rom ststus!");
+            return CDRomState.Unknown;
+        }
+
+        String rawEvent = event.getRawEvent();
+        String[] tok = rawEvent.split(" ");
+        if (tok.length < 2) {
+            Slog.e(TAG, "Malformed response get CD rom ststus");
+            return CDRomState.Unknown;
+        }
+
+        int code;
+        try {
+            code = Integer.parseInt(tok[0]);
+        } catch (NumberFormatException nfe) {
+            Slog.e(TAG, String.format("Error parsing code %s", tok[0]));
+            return CDRomState.Unknown;
+        }
+        if (code == VoldResponseCode.CdromStatusResult) {
+            if ("Shared".equals(tok[1])) {
+                return CDRomState.Shared;
+            } else if ("Unshared".equals(tok[1])) {
+                return CDRomState.Unshared;
+            } else if ("Sharing".equals(tok[1])) {
+                return CDRomState.Sharing;
+            } else if ("Unsharing".equals(tok[1])) {
+                return CDRomState.Unsharing;
+            } else if ("Not_Exist".equals(tok[1])) {
+                return CDRomState.Not_Exist;
+            }
+        } else {
+            Slog.e(TAG, String.format("Unexpected response code %d", code));
+            return CDRomState.Unknown;
+        }
+        Slog.e(TAG, "Got an empty response");
+        return CDRomState.Unknown;
+    }
+
+    /**
+     * Shared SD card
+     * update the Storage Volume info for Shared SD
+     * this should be done after
+     */
+    private void doShareSDVolumeUpdate() {
+        /*if (SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) {
+            mPrimaryVolume = new StorageVolume(
+                mPrimaryVolume.getPath(),
+                R.string.storage_internal,//descriptionId
+                //"internal",
+                mPrimaryVolume.isRemovable(),
+                true,//emulated
+                MTP_RESERVE_SPACE,
+                mPrimaryVolume.allowMassStorage(),
+                mPrimaryVolume.getMaxFileSize());
+
+            synchronized (mVolumes) {
+                int length = mVolumes.size();
+                if (length > 0) {
+                    mVolumes.set(0, mPrimaryVolume);
+                }
+            }
+            synchronized (mVolumeMap) {
+                mVolumeMap.put(mPrimaryVolume.getPath(), mPrimaryVolume);
+            }
+            // set the storage id
+            synchronized (mVolumes) {
+                int length = mVolumes.size();
+                for (int i = 0; i < length; i++) {
+                    mVolumes.get(i).setStorageId(i);
+                }
+            }
+        }*/
+    }
+
+    /**
+     * Shared SD card
+     * return the volume path that can be share to pc.
+     */
+    private String getUMSPath() {
+        if (SystemProperties.get(PROP_SHARED_SDCARD).equals("1") && !SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            return EXTERNAL_SD2;
+        } else {
+            return EXTERNAL_SD1;
+        }
+    }
+
+    /**
+     * SD swap
+     */
+    private void doSDSwapVolumeUpdate() {
+        Slog.i(TAG, "doSDSwapVolumeUpdate");
+        if (!SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            Slog.i(TAG, "MTK_2SDCARD_SWAP not enable!");
+            return;
+        }
+        //for sd swap featuer
+        //if SD exist, need to change info of primary volume, such as description, removable
+
+        // NOT just "swap" volumes in the volume list
+        // this can keep mVolumes always be updated
+        if (mVolumePrimary == null || mVolumeSecondary == null) {
+            Slog.e(TAG, "doSDSwapVolumeUpdate: mVolumePrimary == null || mVolumeSecondary == null, return!");
+            return;
+        }
+
+
+        boolean  sdSwapStatus = getSwapState();
+        //if(sdSwapStatus != mSwapStateForSDSwapMountPoint) {
+        if ((mFirstTime_SwapStateForSDSwapMountPoint) || (sdSwapStatus != mSwapStateForSDSwapMountPoint)) {
+            mSwapStateForSDSwapMountPoint = sdSwapStatus;
+            mFirstTime_SwapStateForSDSwapMountPoint = false ;
+        }
+        else {
+            Slog.i(TAG, "doSDSwapVolumeUpdate: already update the mount point path, Just skip this. status:" + sdSwapStatus);
+            return;
+        }
+
+        StorageVolume tVolume;
+        StorageVolume pVolume;
+        StorageVolume tempVolume;
+        if (sdSwapStatus) {
+            //SD swap
+            Slog.i(TAG, "doSDSwapVolumeUpdate: SD swap!");
+            synchronized (mVolumesLock) {
+                pVolume = new StorageVolume(
+                    mVolumePrimary.getPathFile(),
+                    mVolumeSecondary.getDescriptionId(), //volume.getDescription(mContext),
+                    true, //primary
+                    mVolumeSecondary.isRemovable(),
+                    mVolumeSecondary.isEmulated(),
+                    mVolumeSecondary.getMtpReserveSpace(),
+                    mVolumeSecondary.allowMassStorage(),
+                    mVolumeSecondary.getMaxFileSize(),
+                    mVolumeSecondary.getOwner());
+                // For KK.MR1 add item in StorageVolume, need set here
+                tempVolume = mVolumesByPath.get(mVolumePrimary.getPath());
+                if (tempVolume != null) {
+                    pVolume.setUuid(tempVolume.getUuid());
+                    pVolume.setUserLabel(tempVolume.getUserLabel());
+                    pVolume.setState(tempVolume.getState());
+                }
+
+                tVolume = new StorageVolume(
+                    mVolumeSecondary.getPathFile(),
+                    mVolumePrimary.getDescriptionId(), //mPrimaryVolume.getDescription(mContext),
+                    false, //primary
+                    mVolumePrimary.isRemovable(),
+                    mVolumePrimary.isEmulated(),
+                    mVolumePrimary.getMtpReserveSpace(),
+                    mVolumePrimary.allowMassStorage(),
+                    mVolumePrimary.getMaxFileSize(),
+                    mVolumePrimary.getOwner());
+                // For KK.MR1 add item in StorageVolume, need set here
+                tempVolume = mVolumesByPath.get(mVolumeSecondary.getPath());
+                if (tempVolume != null) {
+                    tVolume.setUuid(tempVolume.getUuid());
+                    tVolume.setUserLabel(tempVolume.getUserLabel());
+                    tVolume.setState(tempVolume.getState());
+                }
+
+                mVolumesByPath.put(EXTERNAL_SD1, pVolume);
+                mVolumesByPath.put(EXTERNAL_SD2, tVolume);
+
+                int length = mVolumes.size();
+                if (length > 0) {
+                    mVolumes.set(0, pVolume);
+                    for (int i = 0; i < length; i++) {
+                        if (mVolumes.get(i).getPath().equals(EXTERNAL_SD2)) {
+                            mVolumes.set(i, tVolume);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            //SD NOT swap
+            Slog.i(TAG, "doSDSwapVolumeUpdate: SD NOT swap!");
+            synchronized (mVolumesLock) {
+                // For KK.MR1 add item in StorageVolume, need set here
+                tempVolume = mVolumesByPath.get(mVolumePrimary.getPath());
+                if (tempVolume != null) {
+                    mVolumePrimary.setUuid(tempVolume.getUuid());
+                    mVolumePrimary.setUserLabel(tempVolume.getUserLabel());
+                    mVolumePrimary.setState(tempVolume.getState());
+                }
+                tempVolume = mVolumesByPath.get(mVolumeSecondary.getPath());
+                if (tempVolume != null) {
+                    mVolumeSecondary.setUuid(tempVolume.getUuid());
+                    mVolumeSecondary.setUserLabel(tempVolume.getUserLabel());
+                    mVolumeSecondary.setState(tempVolume.getState());
+                }
+                mVolumesByPath.put(EXTERNAL_SD1, mVolumePrimary);
+                mVolumesByPath.put(EXTERNAL_SD2, mVolumeSecondary);
+
+                int length = mVolumes.size();
+                if (length > 0) {
+                    mVolumes.set(0, mVolumePrimary);
+                    for (int i = 0; i < length; i++) {
+                        if (mVolumes.get(i).getPath().equals(EXTERNAL_SD2)) {
+                            mVolumes.set(i, mVolumeSecondary);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        //set the storage id
+        synchronized (mVolumesLock) {
+            int length = mVolumes.size();
+            StorageVolume volume = null;
+            for (int i = 0; i < length; i++) {
+                volume = mVolumes.get(i);
+                volume.setStorageId(i);
+                Slog.d(TAG, "doSDSwapVolumeUpdate " +
+                            " path: " + volume.getPath() +
+                            " description: " + volume.getDescription(mContext) +
+                            " removable: " + volume.isRemovable() +
+                            " emulated: " + volume.isEmulated() +
+                            " mtpReserve: " + volume.getMtpReserveSpace() +
+                            " allowMassStorage: " + volume.allowMassStorage() +
+                            " maxFileSize: " + volume.getMaxFileSize());
+            }
+        }
+    }
+
+    /**
+     * SD swap
+     */
+    private void sendSDSwapIntent() {
+        boolean  sdSwapStatus = getSwapState();
+        if (mFirstTimeSDSwapIntent || sdSwapStatus != mSwapStateForSDSwapIntent) {
+            mSwapStateForSDSwapIntent = sdSwapStatus;
+        }
+        else {
+            Slog.i(TAG, "sendSDSwapIntent: already sent INTENT_SD_SWAP, Just skip this. status:" + sdSwapStatus);
+            return;
+        }
+
+        Intent intent = new Intent(INTENT_SD_SWAP);
+        intent.putExtra(SD_EXIST, sdSwapStatus);
+        Slog.d(TAG, "sendSDSwapIntent " + intent);
+        mContext.sendBroadcast(intent);
+        mFirstTimeSDSwapIntent = false;
+    }
+
+    /**
+     * SD swap
+     */
+    private boolean isExternalStorage(String path) {
+        StorageVolume volume;
+        synchronized (mVolumesLock) {
+            volume = mVolumesByPath.get(path);
+        }
+        if (null == volume) {
+            Slog.e(TAG, "isExternalStorage error, invalid path!");
+            return false;
+        }
+        return volume.isRemovable();
+    }
+    /// @}
+
+    /// M: New public APIs for new feature or bug fix @{
+    /**
+     * BICR
+     */
+    public void shareCDRom(boolean share) {
+        Slog.i(TAG, "shareCDRom " + share);
+        final boolean doShare = share;
+        new Thread() {
+            public void run() {
+                if ("yes".equals(SystemProperties.get("sys.usb.mtk_bicr_support"))
+                    || "yes_hide".equals(SystemProperties.get("sys.usb.mtk_bicr_support"))) {
+                    waitForReady();
+                    int state = doGetCDRomState();
+                    Slog.i(TAG, "CDRom status=" + state);
+                    if ((state == CDRomState.Shared && doShare == false) ||
+                        (state == CDRomState.Unshared && doShare == true)) {
+                        doShareUnshareCDRom(doShare);
+                    }
+                } else {
+                    Slog.i(TAG, "CD rom feature not enable!");
+                }
+            }
+        } .start();
+    }
+
+    /**
+     * SD swap
+     */
+    public void unmountVolumeNotSwap(String path, boolean force, boolean removeEncryption) {
+        validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+        waitForReady();
+
+        String volState = getVolumeState(path);
+        if (DEBUG_UNMOUNT) {
+            Slog.i(TAG, "Unmounting " + path
+                    + " force = " + force
+                    + " removeEncryption = " + removeEncryption);
+        }
+
+        if (Environment.MEDIA_UNMOUNTED.equals(volState) ||
+                Environment.MEDIA_REMOVED.equals(volState) ||
+                Environment.MEDIA_SHARED.equals(volState) ||
+                Environment.MEDIA_UNMOUNTABLE.equals(volState)) {
+            // Media already unmounted or cannot be unmounted.
+            // TODO return valid return code when adding observer call back.
+            return;
+        }
+
+        // set prop unmounting
+        try {
+            Slog.i(TAG, "set prop sys.sd.unmounting = " + path);
+            SystemProperties.set(PROP_UNMOUNTING, path);
+        } catch (IllegalArgumentException e) {
+            Slog.e(TAG, "IllegalArgumentException when set sys.sd.unmounting:", e);
+        }
+
+        UnmountCallBack ucb = new UnmountCallBack(path, force, removeEncryption);
+        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
+    }
+
+    /**
+     * SD swap
+     */
+    public int mountVolumeNotSwap(String path) {
+        validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+
+        waitForReady();
+        return doMountVolume(path);
+    }
+
+    /**
+     * SD swap
+     * if sd swap happen, the real sd/EMMC may shift to other path
+     * to keep the real default path same, need to change default path here
+     */
+    private void updateDefaultPathForSwap(boolean mount, String path) {
+        if (!SystemProperties.get(PROP_2SDCARD_SWAP).equals("1")) {
+            return;
+        }
+
+        if (mount && EXTERNAL_SD2.equals(path)) {
+
+            //Only one case if swap enable when mount
+            //before mount:  sd1=phone storage; default=phone storage
+            //after mount:     sd1=sd card; sd2=phone storage; default=phone storage
+            //so we change default path to sd2 to make sure that phone storage is also default
+
+            setDefaultPath(EXTERNAL_SD2);
+        } else if (!mount) {
+            //Two case if swap enable when unmount
+            String defaultPath = getDefaultPath();
+            if (EXTERNAL_SD1.equals(defaultPath)) {
+                //case1
+                //before unmount:  sd1=sd card; sd2=phone storage; default=sd card
+                //after unmount:     sd1=phone storage; default=phone storage
+                //default path change from sd card to phone storage, but path not change
+                //So we do nothing here
+
+            } else if (EXTERNAL_SD2.equals(defaultPath)) {
+                //case2
+                //before unmount:  sd1=sd card; sd2=phone storage; default=phone storage
+                //after unmount:     sd1=phone storage; default=phone storage
+                //default path change from sd2 to sd1
+
+                setDefaultPath(EXTERNAL_SD1);
+            }
+        }
+    }
+
+    private String getDefaultPath() {
+        StorageManagerEx sm = new StorageManagerEx();
+        return sm.getDefaultPath();
+    }
+
+    /**
+     * set default path for APP to storage data.
+     */
+    public void setDefaultPath(String path) {
+        Slog.i(TAG, "setDefaultPath path=" + path);
+        if (path == null) {
+            Slog.e(TAG, "setDefaultPath error! path=null");
+            return;
+        }
+        try {
+            SystemProperties.set("persist.sys.sd.defaultpath", path);
+        } catch (IllegalArgumentException e) {
+            Slog.e(TAG, "IllegalArgumentException when set default path:", e);
+        }
+    }
+
+    private boolean getSwapState() {
+        StorageManagerEx sm = new StorageManagerEx();
+        return sm.getSdSwapState();
+    }
+
+    /**
+     * check all storage state
+     * if there is more than one storage in MOUNTED state
+     * we should show the dialog after insert and mount succeed
+     */
+    private boolean enableDefaultPathDialog() {
+        int mountCount = 0;
+        if(SystemProperties.get(PROP_VOLD_DECRYPT).equals("trigger_restart_min_framework"))
+            return false;
+        
+        synchronized (mVolumesLock) {
+            Iterator iter = mVolumeStates.entrySet().iterator();
+            while (iter.hasNext()) {
+                Map.Entry entry = (Map.Entry) iter.next();
+                String state = (String) entry.getValue();
+                Slog.i(TAG, "enableDefaultPathDialog state=" + state);
+                if (Environment.MEDIA_MOUNTED.equals(state)) {
+                    mountCount++;
+                }
+            }
+        }
+        return (mountCount > 1);
+    }
+
+    /**
+     * check all storage, if there is one internal storage
+     * we should show the toast when plug out sd card
+     */
+    private boolean enableDefaultToast() {
+        boolean internal = false;
+        synchronized (mVolumesLock) {
+            for (StorageVolume volume : mVolumes) {
+                if (!volume.isRemovable()) {
+                    internal = true;
+                    break;
+                }
+            }
+        }
+        return internal;
+    }
+    /// @}
+
+    /// M: multiple user @{
+    private void handleUserSwitch() {
+        /// M: sdcard&otg only for owner @{
+        if (SystemProperties.get(PROP_OWNER_SDCARD_SUPPORT).equals("1")) {
+            if (mOldUserId != UserHandle.USER_OWNER && mUserId != UserHandle.USER_OWNER) {
+                Slog.d(TAG, "Switch among normal users,do nothing!");
+                return;
+            }
+            Slog.d(TAG, "MTK_OWNER_SDCARD_ONLY_SUPPORT now handleUserSwitch.");
+            if (mUserId != UserHandle.USER_OWNER) {
+                synchronized (mVolumesLock) {
+                    for (StorageVolume volume : mVolumes) {
+                        Slog.d(TAG, "MTK_OWNER_SDCARD_ONLY_SUPPORT now unmountVolume: " + volume.getPath() + ": " + getVolumeState(volume.getPath()));
+                        if ((Environment.MEDIA_MOUNTED.equals(getVolumeState(volume.getPath())) ||
+                            Environment.MEDIA_NOFS.equals(getVolumeState(volume.getPath())) ||
+                            Environment.MEDIA_UNMOUNTABLE.equals(getVolumeState(volume.getPath()))) &&
+                            (volume.getPath().equals(EXTERNAL_SD2) ||
+                            volume.getPath().startsWith(EXTERNAL_OTG))) {
+
+                            Slog.d(TAG, "MTK_OWNER_SDCARD_ONLY_SUPPORT now unmountVolume");
+                            unmountVolumeForUserSwitch(volume.getPath(), true, false);
+                        }
+                    }
+                }
+
+           } else {
+               if (mOldUserId != -1) {
+                    synchronized (mVolumesLock) {
+                        for (StorageVolume volume : mVolumes) {
+                            Slog.d(TAG, "MTK_OWNER_SDCARD_ONLY_SUPPORT now mountVolume: " + volume.getPath() + ": " + getVolumeState(volume.getPath()));
+                            if (!Environment.MEDIA_MOUNTED.equals(getVolumeState(volume.getPath())) &&
+                                !Environment.MEDIA_REMOVED.equals(getVolumeState(volume.getPath())) &&
+                                (volume.getPath().equals(EXTERNAL_SD2) ||
+                                volume.getPath().startsWith(EXTERNAL_OTG))) {
+
+                                Slog.d(TAG, "MTK_OWNER_SDCARD_ONLY_SUPPORT now mountVolume"); 
+                                mountVolume(volume.getPath());
+                            }
+                        }
+                    }
+               }
+           }
+        }
+      /// @}
+    }
+    /// @}
 }
+

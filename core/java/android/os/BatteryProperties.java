@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* Copyright 2013, The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +28,17 @@ public class BatteryProperties implements Parcelable {
     public boolean chargerUsbOnline;
     public boolean chargerWirelessOnline;
     public int batteryStatus;
+    public int batteryStatus_smb;
     public int batteryHealth;
     public boolean batteryPresent;
+    public boolean batteryPresent_smb;
     public int batteryLevel;
+    public int batteryLevel_smb;
     public int batteryVoltage;
     public int batteryTemperature;
+    public int batteryCurrentNow;
+    public int batteryChargeCounter;
+    public int adjustPower;
     public String batteryTechnology;
 
     public BatteryProperties() {
@@ -43,6 +54,9 @@ public class BatteryProperties implements Parcelable {
         batteryLevel = other.batteryLevel;
         batteryVoltage = other.batteryVoltage;
         batteryTemperature = other.batteryTemperature;
+        batteryCurrentNow = other.batteryCurrentNow;
+        batteryChargeCounter = other.batteryChargeCounter;
+        adjustPower = other.adjustPower;
         batteryTechnology = other.batteryTechnology;
     }
 
@@ -56,11 +70,17 @@ public class BatteryProperties implements Parcelable {
         chargerUsbOnline = p.readInt() == 1 ? true : false;
         chargerWirelessOnline = p.readInt() == 1 ? true : false;
         batteryStatus = p.readInt();
+        batteryStatus_smb = p.readInt();
         batteryHealth = p.readInt();
         batteryPresent = p.readInt() == 1 ? true : false;
+        batteryPresent_smb = p.readInt() == 1 ? true : false;
         batteryLevel = p.readInt();
+        batteryLevel_smb = p.readInt();
         batteryVoltage = p.readInt();
+        batteryCurrentNow = p.readInt();
+        batteryChargeCounter = p.readInt();
         batteryTemperature = p.readInt();
+        adjustPower = p.readInt();
         batteryTechnology = p.readString();
     }
 
@@ -69,11 +89,17 @@ public class BatteryProperties implements Parcelable {
         p.writeInt(chargerUsbOnline ? 1 : 0);
         p.writeInt(chargerWirelessOnline ? 1 : 0);
         p.writeInt(batteryStatus);
+        p.writeInt(batteryStatus_smb);
         p.writeInt(batteryHealth);
         p.writeInt(batteryPresent ? 1 : 0);
+        p.writeInt(batteryPresent_smb ? 1 : 0);
         p.writeInt(batteryLevel);
+        p.writeInt(batteryLevel_smb);
         p.writeInt(batteryVoltage);
+        p.writeInt(batteryCurrentNow);
+        p.writeInt(batteryChargeCounter);
         p.writeInt(batteryTemperature);
+        p.writeInt(adjustPower);
         p.writeString(batteryTechnology);
     }
 

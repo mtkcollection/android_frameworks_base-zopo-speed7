@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,7 +85,7 @@ int LayerCache::LayerEntry::compare(const LayerCache::LayerEntry& lhs,
 
 void LayerCache::deleteLayer(Layer* layer) {
     if (layer) {
-        LAYER_LOGD("Destroying layer %dx%d, fbo %d", layer->getWidth(), layer->getHeight(),
+        LAYER_LOGD("Destroying layer %p, %dx%d, fbo %d", layer, layer->getWidth(), layer->getHeight(),
                 layer->getFbo());
         mSize -= layer->getWidth() * layer->getHeight() * 4;
         layer->state = Layer::kState_DeletedFromCache;
@@ -110,10 +115,9 @@ Layer* LayerCache::get(RenderState& renderState, const uint32_t width, const uin
         layer->state = Layer::kState_RemovedFromCache;
         mSize -= layer->getWidth() * layer->getHeight() * 4;
 
-        LAYER_LOGD("Reusing layer %dx%d", layer->getWidth(), layer->getHeight());
+        TT_UPDATE(layer->getTexture(), false, String8("Reused"));
+        LAYER_LOGD("Reusing layer %p, %dx%d, alpha %d", layer, layer->getWidth(), layer->getHeight(), layer->getAlpha());
     } else {
-        LAYER_LOGD("Creating new layer %dx%d", entry.mWidth, entry.mHeight);
-
         layer = new Layer(Layer::kType_DisplayList, renderState, entry.mWidth, entry.mHeight);
         layer->setBlend(true);
         layer->setEmpty(true);
@@ -125,8 +129,10 @@ Layer* LayerCache::get(RenderState& renderState, const uint32_t width, const uin
         layer->setWrap(GL_CLAMP_TO_EDGE, false);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
+        LAYER_LOGD("Creating new layer %p, %dx%d, alpha %d", layer, entry.mWidth, entry.mHeight, layer->getAlpha());
+
 #if DEBUG_LAYERS
-        dump();
+        if (g_HWUI_debug_layers) dump();
 #endif
     }
 
@@ -169,6 +175,7 @@ bool LayerCache::put(Layer* layer) {
         mSize += size;
 
         layer->state = Layer::kState_InCache;
+        TT_UPDATE(layer->getTexture(), true);
         return true;
     }
 

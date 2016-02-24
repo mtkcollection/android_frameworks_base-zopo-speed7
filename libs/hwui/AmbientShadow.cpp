@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -213,9 +218,7 @@ void AmbientShadow::createAmbientShadow(bool isCasterOpaque,
 
         float expansionDist = innerVertex.z * heightFactor * geomFactor;
         const int cornerSlicesNumber = extraVerticesNumber + 1; // Minimal as 1.
-#if DEBUG_SHADOW
-        ALOGD("cornerSlicesNumber is %d", cornerSlicesNumber);
-#endif
+        SHADOW_LOGD("cornerSlicesNumber is %d", cornerSlicesNumber);
 
         // Corner: fill the corner Vertex Buffer(VB) and Index Buffer(IB).
         // We fill the inner vertex first, such that we can fill the index buffer
@@ -271,9 +274,8 @@ void AmbientShadow::createAmbientShadow(bool isCasterOpaque,
             // Compute the angle and see how many extra points we need.
             int extraVerticesNumber = getEdgeExtraAndUpdateSpike(&currentSpike,
                     innerNext, centroid3d);
-#if DEBUG_SHADOW
-            ALOGD("extraVerticesNumber %d for edge %d", extraVerticesNumber, i);
-#endif
+            SHADOW_LOGD("extraVerticesNumber %d for edge %d", extraVerticesNumber, i);
+
             // Edge: fill the edge's VB and IB.
             // This will create vertices pair from [1, extraVerticesNumber - 1].
             // If there is no extra vertices created here, the edge will be drawn
@@ -332,12 +334,14 @@ void AmbientShadow::createAmbientShadow(bool isCasterOpaque,
     ShadowTessellator::checkOverflow(umbraIndex, totalUmbraCount, "Ambient Umbra Buffer");
 
 #if DEBUG_SHADOW
-    for (int i = 0; i < vertexBufferIndex; i++) {
-        ALOGD("vertexBuffer i %d, (%f, %f %f)", i, shadowVertices[i].x, shadowVertices[i].y,
-                shadowVertices[i].alpha);
-    }
-    for (int i = 0; i < indexBufferIndex; i++) {
-        ALOGD("indexBuffer i %d, indexBuffer[i] %d", i, indexBuffer[i]);
+    if (g_HWUI_debug_shadow) {
+        for (int i = 0; i < vertexBufferIndex; i++) {
+            ALOGD("vertexBuffer i %d, (%f, %f %f)", i, shadowVertices[i].x, shadowVertices[i].y,
+                    shadowVertices[i].alpha);
+        }
+        for (int i = 0; i < indexBufferIndex; i++) {
+            ALOGD("indexBuffer i %d, indexBuffer[i] %d", i, indexBuffer[i]);
+        }
     }
 #endif
 }

@@ -1,3 +1,8 @@
+#
+# Copyright (C) 2014 MediaTek Inc.
+# Modification based on code covered by the mentioned copyright
+# and/or permission notice(s).
+#
 # Copyright (C) 2011 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +31,8 @@ LOCAL_RESOURCE_DIR := $(LOCAL_PATH)/res \
     frameworks/base/packages/SystemUI/res \
     frameworks/base/packages/Keyguard/res
 
-LOCAL_JAVA_LIBRARIES := android.test.runner telephony-common
+LOCAL_JAVA_LIBRARIES := android.test.runner telephony-common\
+                        mediatek-framework
 
 LOCAL_PACKAGE_NAME := SystemUITests
 
@@ -35,5 +41,7 @@ LOCAL_STATIC_JAVA_LIBRARIES := mockito-target Keyguard
 # sign this with platform cert, so this test is allowed to inject key events into
 # UI it doesn't own. This is necessary to allow screenshots to be taken
 LOCAL_CERTIFICATE := platform
+
+LOCAL_INSTRUMENTATION_FOR := SystemUI
 
 include $(BUILD_PACKAGE)

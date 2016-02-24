@@ -47,6 +47,21 @@
         android:paddingEnd="8dp"
         android:orientation="horizontal"
         >
+<!-- Vanzo:yinjun on: Fri, 10 Apr 2015 10:25:49 +0800
+add statusbar carrier
+-->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:id="@+id/my_carrier_label"
+            android:singleLine="true"
+            android:maxEms="5"
+            android:ellipsize="end"
+            android:visibility="gone"
+            android:paddingStart="6dp"
+            android:paddingTop="2dp"
+        />
+<!-- End of Vanzo: yinjun -->
 
         <com.android.systemui.statusbar.AlphaOptimizedFrameLayout
             android:id="@+id/notification_icon_area"

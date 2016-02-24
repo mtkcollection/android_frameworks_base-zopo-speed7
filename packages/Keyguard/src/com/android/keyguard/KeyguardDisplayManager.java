@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +28,7 @@ import android.graphics.Point;
 import android.media.MediaRouter;
 import android.media.MediaRouter.RouteInfo;
 import android.os.Bundle;
+import android.util.Log;
 import android.util.Slog;
 import android.view.Display;
 import android.view.View;
@@ -31,6 +37,7 @@ import android.view.WindowManager;
 public class KeyguardDisplayManager {
     protected static final String TAG = "KeyguardDisplayManager";
     private static boolean DEBUG = KeyguardConstants.DEBUG;
+    private static final boolean DEBUG_DETAIL = false;
     Presentation mPresentation;
     private MediaRouter mMediaRouter;
     private Context mContext;
@@ -135,8 +142,19 @@ public class KeyguardDisplayManager {
             public void run() {
                 int x = mMarginLeft + (int) (Math.random() * (mUsableWidth - mClock.getWidth()));
                 int y = mMarginTop + (int) (Math.random() * (mUsableHeight - mClock.getHeight()));
-                mClock.setTranslationX(x);
-                mClock.setTranslationY(y);
+
+                if (DEBUG_DETAIL) {
+                    Log.d(TAG, "mMarginLeft = " + mMarginLeft + ", mUsableWidth = " + mUsableWidth
+                        + " , mClock.getWidth() = " + mClock.getWidth() + " and final X = " + x) ;
+                    Log.d(TAG, "mMarginTop = " + mMarginTop + ", mUsableHeight = " + mUsableHeight
+                        + " , mClock.getHeight() = " + mClock.getHeight() + " and final y = " + y) ;
+                }
+                /// M: Fix ALPS01762871
+                /// In RTL case, mClock.getLeft() sometimes becomes a large number.
+                /// mClock may be out of screen if use getLeft() + x(ie. relative cooridnate).
+                /// So we use "obsolute coordinates" to replace "relative coordinates".
+                mClock.setX((float)x) ;
+                mClock.setY((float)y) ;
                 mClock.postDelayed(mMoveTextRunnable, MOVE_CLOCK_TIMEOUT);
             }
         };
@@ -160,7 +178,6 @@ public class KeyguardDisplayManager {
             mUsableHeight = VIDEO_SAFE_REGION * p.y/100;
             mMarginLeft = (100 - VIDEO_SAFE_REGION) * p.x / 200;
             mMarginTop = (100 - VIDEO_SAFE_REGION) * p.y / 200;
-
             setContentView(R.layout.keyguard_presentation);
             mClock = findViewById(R.id.clock);
 

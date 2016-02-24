@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,8 +54,10 @@ public class KeyguardUpdateMonitorCallback {
 
     /**
      * Called when the carrier PLMN or SPN changes.
+     *
      */
     public void onRefreshCarrierInfo() { }
+    //public void onRefreshCarrierInfo(int phoneId, CharSequence plmn, CharSequence spn) { }
 
     /**
      * Called when the ringer mode changes.
@@ -116,11 +123,11 @@ public class KeyguardUpdateMonitorCallback {
     public void onUserSwitchComplete(int userId) { }
 
     /**
-     * Called when the SIM state changes.
-     * @param slotId
-     * @param simState
+     * Called when the SIM state of a subscription changes.
+     * @param phoneId The phone id which SIM state changed.
+     * @param simState simState
      */
-    public void onSimStateChanged(int subId, int slotId, IccCardConstants.State simState) { }
+    public void onSimStateChangedUsingPhoneId(int phoneId, IccCardConstants.State simState) { }
 
     /**
      * Called when a user is removed.
@@ -195,4 +202,25 @@ public class KeyguardUpdateMonitorCallback {
      * Called when the state of face unlock changed.
      */
     public void onFaceUnlockStateChanged(boolean running, int userId) { }
+
+    /**
+     * M: Called when dock state changes.
+     *
+     * @param dockState specify new dock state. 1 means dock to desk, 0 means not docked.
+     */
+    public void onDockStatusUpdate(int dockState) { }
+
+    /**
+     * Called when AirPlane mode changed.
+     * @param airPlaneModeEnabled flight mode is on or not.
+     */
+    public void onAirPlaneModeChanged(boolean airPlaneModeEnabled) { }
+
+    /**
+     * M: added for CDMA card type is locked.
+     * Called when CDMA card type changes.
+     *
+     * @param isLockedCard whether the card type is locked.
+     */
+    public void onCDMACardTypeChanges(boolean isLockedCard) { }
 }

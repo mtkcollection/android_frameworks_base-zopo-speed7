@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,9 @@
 
 #include "TimeLord.h"
 
+/// M: make RenderNode is able to dump
+#include "../RenderNode.h"
+
 namespace android {
 
 class DisplayEventReceiver;
@@ -49,11 +57,14 @@ class TaskQueue {
 public:
     TaskQueue();
 
-    RenderTask* next();
+    RenderTask* next(bool kill = false);
     void queue(RenderTask* task);
     void queueAtFront(RenderTask* task);
     RenderTask* peek();
     void remove(RenderTask* task);
+
+    /// M: dump unhandled tasks in the queue
+    void dump(String8& log, int timeoutNs);
 
 private:
     RenderTask* mHead;
@@ -89,6 +100,9 @@ public:
     RenderState& renderState() { return *mRenderState; }
     EglManager& eglManager() { return *mEglManager; }
 
+    /// M: dump unhandled tasks in the queue
+    void dumpTaskQueue(String8& log, int timeoutNs = 0);
+
 protected:
     virtual bool threadLoop();
 
@@ -96,6 +110,7 @@ private:
     friend class Singleton<RenderThread>;
     friend class DispatchFrameCallbacks;
     friend class RenderProxy;
+    friend class android::uirenderer::DisplayListLogBuffer;
 
     RenderThread();
     virtual ~RenderThread();

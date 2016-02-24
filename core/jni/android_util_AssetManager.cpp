@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* //device/libs/android_runtime/android_util_AssetManager.cpp
 **
 ** Copyright 2006, The Android Open Source Project
@@ -1735,6 +1740,7 @@ static jlong android_content_AssetManager_openXmlAssetNative(JNIEnv* env, jobjec
     delete a;
 
     if (err != NO_ERROR) {
+        ALOGW("XML load failed: cookie is %d , file is %s\n", cookie, fileName8.c_str());
         jniThrowException(env, "java/io/FileNotFoundException", "Corrupt XML binary file");
         return 0;
     }
@@ -2020,7 +2026,6 @@ static JNINativeMethod gAssetManagerMethods[] = {
         (void*) android_content_AssetManager_addOverlayPath },
     { "isUpToDate",     "()Z",
         (void*) android_content_AssetManager_isUpToDate },
-
     // Resources.
     { "setLocale",      "(Ljava/lang/String;)V",
         (void*) android_content_AssetManager_setLocale },

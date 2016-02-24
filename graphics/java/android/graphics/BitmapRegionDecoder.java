@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -180,7 +185,8 @@ public final class BitmapRegionDecoder {
      *         decoded.
      */
     public Bitmap decodeRegion(Rect rect, BitmapFactory.Options options) {
-        synchronized (mNativeLock) {
+        //synchronized (mNativeLock)  
+        {
             checkRecycled("decodeRegion called on recycled region decoder");
             if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= getWidth()
                     || rect.top >= getHeight())

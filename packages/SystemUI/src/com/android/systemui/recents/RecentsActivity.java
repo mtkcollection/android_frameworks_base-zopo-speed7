@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,17 +57,33 @@ import com.android.systemui.recents.views.SystemBarScrimViews;
 import com.android.systemui.recents.views.ViewAnimation;
 import com.android.systemui.statusbar.phone.PhoneStatusBar;
 import com.android.systemui.SystemUIApplication;
+import com.mediatek.xlog.Xlog;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+///M:For Multi window 
+import com.mediatek.multiwindow.MultiWindowProxy;
+///@}
 
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 14:59:48 +0800
+ * recent task clear
+ */
+import android.widget.ImageView;
+import android.widget.FrameLayout;
+import android.os.SystemProperties;
+import android.content.ComponentName;
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
 /**
  * The main Recents activity that is started from AlternateRecentsComponent.
  */
 public class RecentsActivity extends Activity implements RecentsView.RecentsViewCallbacks,
         RecentsAppWidgetHost.RecentsAppWidgetHostCallbacks,
         DebugOverlayView.DebugOverlayViewCallbacks {
+    /// M: For Debug
+    static final String TAG = "recents.RecentsActivity";
+    static final boolean DEBUG = true;
 
     RecentsConfiguration mConfig;
     long mLastTabKeyEventTime;
@@ -71,6 +92,12 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
     RecentsView mRecentsView;
     SystemBarScrimViews mScrimViews;
     ViewStub mEmptyViewStub;
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 14:59:19 +0800
+ * rencent task clear
+ */
+    ImageView mTaskClear;
+    ImageView mRunningApps;
+// End of Vanzo: yinjun
     ViewStub mDebugOverlayStub;
     View mEmptyView;
     DebugOverlayView mDebugOverlay;
@@ -84,6 +111,10 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
     FinishRecentsRunnable mFinishLaunchHomeRunnable;
 
     private PhoneStatusBar mStatusBar;
+
+    /// M: add for multi window @{
+    public static final boolean FLOAT_WINDOW_SUPPORT = MultiWindowProxy.isFeatureSupport();
+    /// @}
 
     /**
      * A common Runnable to finish Recents either by calling finish() (with a custom animation) or
@@ -109,12 +140,26 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
         public void run() {
             // Finish Recents
             if (mLaunchIntent != null) {
+                if (DEBUG) {
+                    Xlog.d(TAG, "FinishRecentsRunnable: Start Activity by LaunchIntent : "
+                           + mLaunchIntent);
+                }
                 if (mLaunchOpts != null) {
                     startActivityAsUser(mLaunchIntent, mLaunchOpts.toBundle(), UserHandle.CURRENT);
                 } else {
                     startActivityAsUser(mLaunchIntent, UserHandle.CURRENT);
                 }
+				/// M: add for multi window @{
+				if(FLOAT_WINDOW_SUPPORT){						
+				    finish();
+				    overridePendingTransition(R.anim.recents_to_launcher_enter,
+				        R.anim.recents_to_launcher_exit);		
+				}
+						/// @}
             } else {
+                if (DEBUG) {
+                    Xlog.d(TAG, "FinishRecentsRunnable: Finish myself");
+                }
                 finish();
                 overridePendingTransition(R.anim.recents_to_launcher_enter,
                         R.anim.recents_to_launcher_exit);
@@ -221,11 +266,18 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
 
         // Mark the task that is the launch target
         int taskStackCount = stacks.size();
+        if (DEBUG) {
+            Xlog.d(TAG, "updateRecentsTasks:stacks size = " + taskStackCount);
+        }
         if (mConfig.launchedToTaskId != -1) {
             for (int i = 0; i < taskStackCount; i++) {
                 TaskStack stack = stacks.get(i);
                 ArrayList<Task> tasks = stack.getTasks();
                 int taskCount = tasks.size();
+                if (DEBUG) {
+                    Xlog.d(TAG, "updateRecentsTasks:task size = " + taskCount);
+                }
+
                 for (int j = 0; j < taskCount; j++) {
                     Task t = tasks.get(j);
                     if (t.key.id == mConfig.launchedToTaskId) {
@@ -243,6 +295,16 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
             }
             mEmptyView.setVisibility(View.VISIBLE);
             mRecentsView.setSearchBarVisibility(View.GONE);
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 14:57:52 +0800
+ * recent task clear
+ */
+            if (mTaskClear != null && FeatureOption.VANZO_FEATURE_REMOVE_RECENT_TASK_BUTTON) {
+                mTaskClear.setVisibility(View.GONE);
+            }
+            if (mRunningApps != null && FeatureOption.VANZO_FEATURE_GO_RUNNING_APPS_BUTTON) {
+                mRunningApps.setVisibility(View.GONE);
+            }
+// End of Vanzo: yinjun
         } else {
             if (mEmptyView != null) {
                 mEmptyView.setVisibility(View.GONE);
@@ -252,6 +314,16 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
             } else {
                 addSearchBarAppWidgetView();
             }
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 14:57:52 +0800
+ * recent task clear
+ */
+            if (mTaskClear != null && FeatureOption.VANZO_FEATURE_REMOVE_RECENT_TASK_BUTTON) {
+                mTaskClear.setVisibility(View.VISIBLE);
+            }
+            if (mRunningApps != null && FeatureOption.VANZO_FEATURE_GO_RUNNING_APPS_BUTTON) {
+                mRunningApps.setVisibility(View.VISIBLE);
+            }
+// End of Vanzo: yinjun
         }
 
         // Animate the SystemUI scrims into view
@@ -332,6 +404,9 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
             dismissRecentsToHomeRaw(true);
             return true;
         }
+        else {
+            Xlog.d(TAG, "dismissRecentsToFocusedTaskOrHome : invisible");
+        }
         return false;
     }
 
@@ -361,6 +436,10 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
     /** Called with the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        if (DEBUG) {
+            Xlog.d(TAG, "RecentsActivity: onCreate");
+        }
+
         super.onCreate(savedInstanceState);
         // For the non-primary user, ensure that the SystemServicesProxy and configuration is
         // initialized
@@ -402,6 +481,55 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
         } catch (InvocationTargetException e) {
             e.printStackTrace();
         }
+/* Vanzo:yinjun on: Fri, 13 Mar 2015 11:31:32 +0800
+ * rencent task clear
+ */
+        mTaskClear = (ImageView) findViewById(R.id.funui_clear_task);
+        if ("0".equals(SystemProperties.get("qemu.hw.mainkeys"))) {
+            FrameLayout.LayoutParams layoutParams = (FrameLayout.LayoutParams) mTaskClear.getLayoutParams();
+            int mNavBarHeight = getResources().getDimensionPixelSize(com.android.internal.R.dimen.navigation_bar_height);
+            layoutParams.bottomMargin = mNavBarHeight;
+            mTaskClear.setLayoutParams(layoutParams);
+        }
+        mTaskClear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                mRecentsView.clearAllTasks();
+                mRecentsView.onRecentsHidden();
+                onAllTaskViewsDismissed();
+            }
+        });
+        if (FeatureOption.VANZO_FEATURE_REMOVE_RECENT_TASK_BUTTON) {
+            mTaskClear.setVisibility(View.VISIBLE);
+        } else {
+            mTaskClear.setVisibility(View.GONE);
+        }
+
+        mRunningApps = (ImageView) findViewById(R.id.funui_running_apps);
+        if ("0".equals(SystemProperties.get("qemu.hw.mainkeys"))) {
+            FrameLayout.LayoutParams layoutParams = (FrameLayout.LayoutParams) mRunningApps.getLayoutParams();
+            int mNavBarHeight = getResources().getDimensionPixelSize(com.android.internal.R.dimen.navigation_bar_height);
+            layoutParams.bottomMargin = mNavBarHeight;
+            mRunningApps.setLayoutParams(layoutParams);
+        }
+        mRunningApps.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    Intent intent = new Intent();
+                    intent.setComponent(new ComponentName("com.android.settings","com.android.settings.RunningServices"));
+                    RecentsActivity.this.startActivity(intent);
+                } catch (Exception e) {
+                    android.util.Log.e("yinjun","Exception==="+e);
+                }
+            }
+        });
+        if (FeatureOption.VANZO_FEATURE_GO_RUNNING_APPS_BUTTON) {
+            mRunningApps.setVisibility(View.VISIBLE);
+        } else {
+            mRunningApps.setVisibility(View.GONE);
+        }
+// End of Vanzo: yinjun
     }
 
     /** Inflates the debug overlay if debug mode is enabled. */
@@ -429,6 +557,10 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
 
     @Override
     protected void onStart() {
+        if (DEBUG) {
+            Xlog.d(TAG, "RecentsActivity: onStart");
+        }
+
         super.onStart();
         RecentsTaskLoader loader = RecentsTaskLoader.getInstance();
         SystemServicesProxy ssp = loader.getSystemServicesProxy();
@@ -456,6 +588,10 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
 
     @Override
     protected void onStop() {
+        if (DEBUG) {
+            Xlog.d(TAG, "RecentsActivity: onStop");
+        }
+
         super.onStop();
         RecentsTaskLoader loader = RecentsTaskLoader.getInstance();
         SystemServicesProxy ssp = loader.getSystemServicesProxy();
@@ -474,6 +610,9 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (DEBUG) {
+            Xlog.d(TAG, "RecentsActivity: onDestroy");
+        }
 
         // Unregister the system broadcast receivers
         unregisterReceiver(mSystemBroadcastReceiver);
@@ -601,17 +740,51 @@ public class RecentsActivity extends Activity implements RecentsView.RecentsView
 
     @Override
     public void onTaskViewClicked() {
+		/// M: add for multi window @{
+	    if(FLOAT_WINDOW_SUPPORT){
+		    if (mFinishLaunchHomeRunnable != null) {
+	            mFinishLaunchHomeRunnable.run();
+	         } else {
+		        Intent homeIntent = new Intent(Intent.ACTION_MAIN, null);
+		        homeIntent.addCategory(Intent.CATEGORY_HOME);
+		        homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+		                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+		        startActivityAsUser(homeIntent, new UserHandle(UserHandle.USER_CURRENT));
+			    finish();
+                overridePendingTransition(R.anim.recents_to_launcher_enter,
+                        R.anim.recents_to_launcher_exit);
+	         }
+	     }
+        /// @}
     }
 
     @Override
     public void onTaskLaunchFailed() {
+        if (DEBUG) {
+            Xlog.d(TAG, "RecentsActivity: onTaskLaunchFailed");
+        }
+
         // Return to Home
         dismissRecentsToHomeRaw(true);
     }
 
     @Override
     public void onAllTaskViewsDismissed() {
-        mFinishLaunchHomeRunnable.run();
+        /// M : Check if there is runnable or start Activity to Home directly @{
+        if (mFinishLaunchHomeRunnable != null) {
+            mFinishLaunchHomeRunnable.run();
+       } else {
+            Intent homeIntent = new Intent(Intent.ACTION_MAIN, null);
+            homeIntent.addCategory(Intent.CATEGORY_HOME);
+            homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            if (DEBUG) {
+                Xlog.d(TAG, "onAllTaskViewsDismissed : " +
+                       "start Activity to Home by intent if there is no runnable");
+            }
+            startActivityAsUser(homeIntent, new UserHandle(UserHandle.USER_CURRENT));
+        }
+        /// M : Check if there is runnable or start Activity to Home directly @}
     }
 
     @Override

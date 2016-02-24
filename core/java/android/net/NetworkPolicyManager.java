@@ -55,6 +55,10 @@ public class NetworkPolicyManager {
 
     private static final boolean ALLOW_PLATFORM_APP_POLICY = true;
 
+    ///M:  MTK add  @{
+    public static final String ACTION_POLICY_CREATED =
+            "com.mediatek.server.action.ACTION_POLICY_CREATED";
+
     /**
      * {@link Intent} extra that indicates which {@link NetworkTemplate} rule it
      * applies to.

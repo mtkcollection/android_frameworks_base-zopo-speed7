@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +28,15 @@ import android.text.style.URLSpan;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.Spanned;
+import android.util.Log;
 import android.util.Patterns;
 import android.webkit.WebView;
 import android.widget.TextView;
 
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.util.IPatterns;
+import com.mediatek.common.util.IPatterns.UrlData;
+import com.mediatek.common.util.IWebProtocolNames;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -41,6 +51,11 @@ import com.android.i18n.phonenumbers.PhoneNumberMatch;
 import com.android.i18n.phonenumbers.PhoneNumberUtil;
 import com.android.i18n.phonenumbers.PhoneNumberUtil.Leniency;
 
+/* Vanzo:qiukai on: Thu, 05 Mar 2015 10:02:26 +0800
+ * modify intexzone identify all countires tel
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:qiukai
 /**
  *  Linkify take a piece of text and a regular expression and turns all of the
  *  regex matches in the text into clickable links.  This is particularly
@@ -93,6 +108,9 @@ public class Linkify {
      * phone number.
      */
     private static final int PHONE_NUMBER_MINIMUM_DIGITS = 5;
+
+    ///M: For gatherLink(), to identify what kind of link it's dealing with
+    private static int sAddLinkMask;
 
     /**
      *  Filters out web URL matches that occur after an at-sign (@).  This is
@@ -214,20 +232,42 @@ public class Linkify {
 
         ArrayList<LinkSpec> links = new ArrayList<LinkSpec>();
 
+        /// M: Put the protocol names to plugin for the new added protocol of operators. @{
         if ((mask & WEB_URLS) != 0) {
-            gatherLinks(links, text, Patterns.WEB_URL,
-                new String[] { "http://", "https://", "rtsp://" },
-                sUrlMatchFilter, null);
+            IWebProtocolNames plugin = (IWebProtocolNames) MPlugin.createInstance(
+                IWebProtocolNames.class.getName());
+            if (plugin != null) {
+                String[] webProtocolNames = plugin.getWebProtocolNames();
+                Pattern webUrlPattern = Patterns.getWebUrlPattern();
+                /// M: Restore the mask mode, we will need it in gatherLink()
+                sAddLinkMask = WEB_URLS;
+                gatherLinks(links, text, webUrlPattern, webProtocolNames,
+                    sUrlMatchFilter, null);
+            } else {
+                Log.d("Linkify", "addLinks(), IWebProtocolNames fail to create plugin instance");
+            }
         }
+        /// @}
 
         if ((mask & EMAIL_ADDRESSES) != 0) {
+            /// M: Restore the mask mode, we will need it in gatherLink()
+            sAddLinkMask = EMAIL_ADDRESSES;
             gatherLinks(links, text, Patterns.EMAIL_ADDRESS,
                 new String[] { "mailto:" },
                 null, null);
         }
 
         if ((mask & PHONE_NUMBERS) != 0) {
+/* Vanzo:qiukai on: Thu, 05 Mar 2015 09:51:42 +0800
+ * modify intexzone identify all countries tel
             gatherTelLinks(links, text);
+ */
+            if (FeatureOption.VANZO_FEATURE_INTEXZONE_IDENTIFY_ALL_COUNTRY_TEL) {
+                gatherLinks(links, text, Patterns.PHONE, new String[] { "tel:" }, sPhoneNumberMatchFilter, sPhoneNumberTransformFilter);
+            } else {
+                gatherTelLinks(links, text);
+            }
+// End of Vanzo:qiukai
         }
 
         if ((mask & MAP_ADDRESSES) != 0) {
@@ -434,9 +474,23 @@ public class Linkify {
             int start = m.start();
             int end = m.end();
 
+            /// M: Post process matched urls by plugin, default plugin return original url
+            String urlstr = m.group(0);
+            if ((sAddLinkMask & WEB_URLS) != 0) {
+                IPatterns plugin = (IPatterns) MPlugin.createInstance(IPatterns.class.getName());
+                if (plugin != null) {
+                    UrlData urlData = plugin.getWebUrl(m.group(0), start, end);
+                    urlstr = urlData.urlStr;
+                    start = Math.max(urlData.start, 0);
+                    end = Math.min(urlData.end, s.length());
+                } else {
+                    Log.d("Linkify", "gatherLinks(), IPatterns fail to create plugin instance");
+                }
+            }
+
             if (matchFilter == null || matchFilter.acceptMatch(s, start, end)) {
                 LinkSpec spec = new LinkSpec();
-                String url = makeUrl(m.group(0), schemes, m, transformFilter);
+                String url = makeUrl(urlstr, schemes, m, transformFilter);
 
                 spec.url = url;
                 spec.start = start;

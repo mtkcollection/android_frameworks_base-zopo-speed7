@@ -38,6 +38,10 @@ interface ITelephonyRegistry {
     void listenForSubscriber(in int subId, String pkg, IPhoneStateListener callback, int events,
             boolean notifyNow);
     void notifyCallState(int state, String incomingNumber);
+    /// M: CC055: Notify Call state with phoneType @{
+    void notifyCallStateForPhoneInfo(in int phoneId, in int phoneType, 
+            in int subId, int state, String incomingNumber);
+    /// @}
     void notifyCallStateForSubscriber(in int subId, int state, String incomingNumber);
     void notifyServiceStateForPhoneId(in int phoneId, in int subId, in ServiceState state);
     void notifySignalStrength(in SignalStrength signalStrength);

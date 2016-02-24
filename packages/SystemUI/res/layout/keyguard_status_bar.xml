@@ -75,5 +75,4 @@
         android:textAppearance="?android:attr/textAppearanceSmall"
         android:textColor="#ffffff"
         android:singleLine="true" />
-
 </com.android.systemui.statusbar.phone.KeyguardStatusBarView>

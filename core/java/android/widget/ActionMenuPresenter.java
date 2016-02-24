@@ -686,7 +686,10 @@ public class ActionMenuPresenter extends BaseMenuPresenter
         @Override
         public void onDismiss() {
             super.onDismiss();
-            mMenu.close();
+            /// M: Add NULL pointer check
+            if (mMenu != null) {
+                mMenu.close();
+            }
             mOverflowPopup = null;
         }
     }
@@ -758,7 +761,10 @@ public class ActionMenuPresenter extends BaseMenuPresenter
         }
 
         public void run() {
-            mMenu.changeMenuMode();
+            /// M: Add NULL pointer check
+            if (mMenu != null) {
+                mMenu.changeMenuMode();
+            }
             final View menuView = (View) mMenuView;
             if (menuView != null && menuView.getWindowToken() != null && mPopup.tryShow()) {
                 mOverflowPopup = mPopup;

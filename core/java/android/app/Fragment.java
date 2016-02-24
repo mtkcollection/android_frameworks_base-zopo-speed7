@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -373,6 +378,12 @@ public class Fragment implements ComponentCallbacks2, OnCreateContextMenuListene
     // If mAnimatingAway != null, this is the state we should move to once the
     // animation is done.
     int mStateAfterAnimating;
+
+    // Non-null if the fragment's view hierarchy is currently animating for
+    // showing or hidding, meaning that we need to immediately terminate the
+    // animation if we want to start a new animation. Refer to ALPS01661834
+    // for details.
+    Animator mAnimatingShowHide;
 
     // When instantiated from saved state, this is the saved state.
     Bundle mSavedFragmentState;
@@ -1984,6 +1995,11 @@ public class Fragment implements ComponentCallbacks2, OnCreateContextMenuListene
             writer.print(prefix); writer.print("mAnimatingAway="); writer.println(mAnimatingAway);
             writer.print(prefix); writer.print("mStateAfterAnimating=");
             writer.println(mStateAfterAnimating);
+        }
+        if (mAnimatingShowHide != null) {
+            writer.print(prefix);
+            writer.print("mAnimatingShowHide=");
+            writer.println(mAnimatingShowHide);
         }
         if (mLoaderManager != null) {
             writer.print(prefix); writer.println("Loader Manager:");

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +18,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#define ATRACE_TAG ATRACE_TAG_VIEW
-#define LOG_TAG "OpenGLRenderer"
 
 #include "RenderNode.h"
 
@@ -59,6 +61,10 @@ void RenderNode::outputLogBuffer(int fd) {
     }
 
     fflush(file);
+
+    /// M: Reload properties here, so we can dynamically switch log on/off by
+    /// adb shell dumpsys gfxinfo PID
+    setDebugLog();
 }
 
 void RenderNode::debugDumpLayers(const char* prefix) {
@@ -133,6 +139,11 @@ int RenderNode::getDebugSize() {
     if (mDisplayListData && mDisplayListData != mStagingDisplayListData) {
         size += mDisplayListData->getUsedSize();
     }
+
+#ifdef MTK_HWUI_RAM_OPTIMIZE
+    size += mProperties.getDebugSize() + mStagingProperties.getDebugSize();
+#endif
+
     return size;
 }
 
@@ -188,7 +199,11 @@ void RenderNode::pushLayerUpdate(TreeInfo& info) {
 
     bool transformUpdateNeeded = false;
     if (!mLayer) {
+        char str[200];
+        sprintf(str, "%s createRenderLayer %dx%d", getName(), getWidth(), getHeight());
+        ATRACE_BEGIN_L2(str);
         mLayer = LayerRenderer::createRenderLayer(info.renderState, getWidth(), getHeight());
+        ATRACE_END_L2();
         applyLayerPropertiesToLayer(info);
         damageSelf(info);
         transformUpdateNeeded = true;
@@ -240,6 +255,7 @@ void RenderNode::pushLayerUpdate(TreeInfo& info) {
 }
 
 void RenderNode::prepareTreeImpl(TreeInfo& info) {
+    TT_START_MARK(getName());
     info.damageAccumulator->pushTransform(this);
 
     if (info.mode == TreeInfo::MODE_FULL) {
@@ -257,6 +273,7 @@ void RenderNode::prepareTreeImpl(TreeInfo& info) {
     pushLayerUpdate(info);
 
     info.damageAccumulator->popTransform();
+    TT_END_MARK();
 }
 
 void RenderNode::pushStagingPropertiesChanges(TreeInfo& info) {
@@ -270,6 +287,9 @@ void RenderNode::pushStagingPropertiesChanges(TreeInfo& info) {
         mDirtyPropertyFields = 0;
         damageSelf(info);
         info.damageAccumulator->popTransform();
+#ifdef MTK_HWUI_RAM_OPTIMIZE
+        RENDER_PROPERTIES_LOGD("[RP] %s push %p to %p <%p>", getName(), &mStagingProperties, &mProperties, this);
+#endif
         mProperties = mStagingProperties;
         applyLayerPropertiesToLayer(info);
         // We could try to be clever and only re-damage if the matrix changed.
@@ -329,6 +349,9 @@ void RenderNode::deleteDisplayListData() {
             Caches::getInstance().unregisterFunctors(mDisplayListData->functors.size());
         }
     }
+    /// M: [ALPS01899428] add lock to protect mDisplayListData race condition,
+    /// lock from this point to avoid children lock themselves too long as well
+    Mutex::Autolock _l(mLock);
     delete mDisplayListData;
     mDisplayListData = NULL;
 }
@@ -393,22 +416,33 @@ void RenderNode::decParentRefCount() {
 
 template <class T>
 void RenderNode::setViewProperties(OpenGLRenderer& renderer, T& handler) {
-#if DEBUG_DISPLAY_LIST
-    properties().debugOutputProperties(handler.level() + 1);
-#endif
     if (properties().getLeft() != 0 || properties().getTop() != 0) {
         renderer.translate(properties().getLeft(), properties().getTop());
+        DISPLAY_LIST_LOGD("%*sTranslate (left, top) to (%.0f, %.0f) by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", properties().getLeft(), properties().getTop(), MATRIX_4_ARGS(renderer.currentTransform()));
     }
     if (properties().getStaticMatrix()) {
         renderer.concatMatrix(*properties().getStaticMatrix());
+        DISPLAY_LIST_LOGD("%*sConcatMatrix (static) %p: " SK_MATRIX_STRING " by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", properties().getStaticMatrix(), SK_MATRIX_ARGS(properties().getStaticMatrix()),
+            MATRIX_4_ARGS(renderer.currentTransform()));
     } else if (properties().getAnimationMatrix()) {
         renderer.concatMatrix(*properties().getAnimationMatrix());
+        DISPLAY_LIST_LOGD("%*sConcatMatrix (animation) %p: " SK_MATRIX_STRING " by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", properties().getAnimationMatrix(), SK_MATRIX_ARGS(properties().getAnimationMatrix()),
+            MATRIX_4_ARGS(renderer.currentTransform()));
     }
     if (properties().hasTransformMatrix()) {
         if (properties().isTransformTranslateOnly()) {
             renderer.translate(properties().getTranslationX(), properties().getTranslationY());
+            DISPLAY_LIST_LOGD("%*sTranslate (%.2f, %.2f, %.2f) by property ===> currTrans" MATRIX_4_STRING,
+                (handler.level() + 1) * 2, "", properties().getTranslationX(), properties().getTranslationY(), properties().getZ(),
+                MATRIX_4_ARGS(renderer.currentTransform()));
         } else {
             renderer.concatMatrix(*properties().getTransformMatrix());
+            DISPLAY_LIST_LOGD("%*sConcatMatrix %p: " SK_MATRIX_STRING " by property ===> currTrans" MATRIX_4_STRING,
+                (handler.level() + 1) * 2, "", properties().getTransformMatrix(), SK_MATRIX_ARGS(properties().getTransformMatrix()),
+                MATRIX_4_ARGS(renderer.currentTransform()));
         }
     }
     const bool isLayer = properties().layerProperties().type() != kLayerTypeNone;
@@ -418,8 +452,10 @@ void RenderNode::setViewProperties(OpenGLRenderer& renderer, T& handler) {
             clipFlags &= ~CLIP_TO_BOUNDS; // bounds clipping done by layer
 
             renderer.setOverrideLayerAlpha(properties().getAlpha());
+            DISPLAY_LIST_LOGD("%*sSetOverrideLayerAlpha %.2f by property", (handler.level() + 1) * 2, "", properties().getAlpha());
         } else if (!properties().getHasOverlappingRendering()) {
             renderer.scaleAlpha(properties().getAlpha());
+            DISPLAY_LIST_LOGD("%*sScaleAlpha %.2f by property", (handler.level() + 1) * 2, "", properties().getAlpha());
         } else {
             Rect layerBounds(0, 0, getWidth(), getHeight());
             int saveFlags = SkCanvas::kHasAlphaLayer_SaveFlag;
@@ -453,8 +489,20 @@ void RenderNode::setViewProperties(OpenGLRenderer& renderer, T& handler) {
         Rect bounds;
         mProperties.getRevealClip().getBounds(&bounds);
         renderer.setClippingRoundRect(handler.allocator(), bounds, mProperties.getRevealClip().getRadius());
+        DISPLAY_LIST_LOGD("%*sSetClippingRoundRect " RECT_STRING ", radius %f by property",
+            (handler.level() + 1) * 2, "", RECT_ARGS(bounds), mProperties.getRevealClip().getRadius());
     } else if (mProperties.getOutline().willClip()) {
         renderer.setClippingOutline(handler.allocator(), &(mProperties.getOutline()));
+#if DEBUG_DISPLAY_LIST
+        if (g_HWUI_debug_display_list) {
+            Rect bounds;
+            float radius;
+            if (mProperties.getOutline().getAsRoundRect(&bounds, &radius)) {
+                DISPLAY_LIST_LOGD("%*sSetClippingOutline " RECT_STRING ", radius %f by property",
+                    (handler.level() + 1) * 2, "", RECT_ARGS(bounds), radius);
+            }
+        }
+#endif
     }
 }
 
@@ -587,10 +635,18 @@ public:
         : mDeferStruct(deferStruct), mLevel(level) {}
     inline void operator()(DisplayListOp* operation, int saveCount, bool clipToBounds) {
         operation->defer(mDeferStruct, saveCount, mLevel, clipToBounds);
+#if DEBUG_DISPLAY_LIST
+        if (g_HWUI_debug_display_list) {
+            uint32_t flag = saveCount != PROPERTY_SAVECOUNT
+                ? DisplayListOp::kOpLogFlag_MTK
+                : DisplayListOp::kOpLogFlag_MTK | DisplayListOp::kOpLogFlag_MTK_PROPERTY;
+            operation->output(mLevel + 1, flag);
+        }
+#endif
     }
     inline LinearAllocator& allocator() { return *(mDeferStruct.mAllocator); }
-    inline void startMark(const char* name) {} // do nothing
-    inline void endMark() {}
+    inline void startMark(const char* name) { TT_START_MARK(name); }
+    inline void endMark() { TT_END_MARK(); }
     inline int level() { return mLevel; }
     inline int replayFlags() { return mDeferStruct.mReplayFlags; }
     inline SkPath* allocPathForFrame() { return mDeferStruct.allocPathForFrame(); }
@@ -601,6 +657,7 @@ private:
 };
 
 void RenderNode::defer(DeferStateStruct& deferStruct, const int level) {
+    ATRACE_NAME_L3(getName());
     DeferOperationHandler handler(deferStruct, level);
     issueOperations<DeferOperationHandler>(deferStruct.mRenderer, handler);
 }
@@ -611,7 +668,7 @@ public:
         : mReplayStruct(replayStruct), mLevel(level) {}
     inline void operator()(DisplayListOp* operation, int saveCount, bool clipToBounds) {
 #if DEBUG_DISPLAY_LIST_OPS_AS_EVENTS
-        mReplayStruct.mRenderer.eventMark(operation->name());
+        if (g_HWUI_debug_display_ops_as_events) mReplayStruct.mRenderer.eventMark(operation->name());
 #endif
         operation->replay(mReplayStruct, saveCount, mLevel, clipToBounds);
     }
@@ -731,7 +788,11 @@ void RenderNode::issueOperationsOf3dChildren(ChildrenSelectMode mode,
     // Apply the base transform of the parent of the 3d children. This isolates
     // 3d children of the current chunk from transformations made in previous chunks.
     int rootRestoreTo = renderer.save(SkCanvas::kMatrix_SaveFlag);
+    DISPLAY_LIST_LOGD("%*sSave flags 0x%x, count %d <%p> by property",
+            (handler.level() + 1) * 2, "", SkCanvas::kMatrix_SaveFlag, renderer.getSaveCount() - 1, this);
     renderer.setMatrix(initialTransform);
+    DISPLAY_LIST_LOGD("SetMatrix " MATRIX_4_STRING " by property ===> currTrans"
+        MATRIX_4_STRING, MATRIX_4_ARGS(&initialTransform), MATRIX_4_ARGS(renderer.currentTransform()));
 
     /**
      * Draw shadows and (potential) casters mostly in order, but allow the shadows of casters
@@ -752,8 +813,8 @@ void RenderNode::issueOperationsOf3dChildren(ChildrenSelectMode mode,
         shadowIndex = drawIndex; // potentially draw shadow for each pos Z child
     }
 
-    DISPLAY_LIST_LOGD("%*s%d %s 3d children:", (handler.level() + 1) * 2, "",
-            endIndex - drawIndex, mode == kNegativeZChildren ? "negative" : "positive");
+    DISPLAY_LIST_LOGD("%*s--issue %s 3d children start %d <%p>", (handler.level() + 1) * 2, "",
+            mode == kNegativeZChildren ? "negative" : "positive", endIndex - drawIndex, this);
 
     float lastCasterZ = 0.0f;
     while (shadowIndex < endIndex || drawIndex < endIndex) {
@@ -775,24 +836,36 @@ void RenderNode::issueOperationsOf3dChildren(ChildrenSelectMode mode,
         // only the actual child DL draw needs to be in save/restore,
         // since it modifies the renderer's matrix
         int restoreTo = renderer.save(SkCanvas::kMatrix_SaveFlag);
+        DISPLAY_LIST_LOGD("%*sSave flags 0x%x, count %d <%p> by property",
+            (handler.level() + 1) * 2, "", SkCanvas::kMatrix_SaveFlag, renderer.getSaveCount() - 1, this);
 
         DrawRenderNodeOp* childOp = zTranslatedNodes[drawIndex].value;
         RenderNode* child = childOp->mRenderNode;
 
         renderer.concatMatrix(childOp->mTransformFromParent);
+        DISPLAY_LIST_LOGD("%*sConcatMatrix (3d) %p: " MATRIX_4_STRING " by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", &(childOp->mTransformFromParent), MATRIX_4_ARGS(&(childOp->mTransformFromParent)),
+            MATRIX_4_ARGS(renderer.currentTransform()));
         childOp->mSkipInOrderDraw = false; // this is horrible, I'm so sorry everyone
         handler(childOp, renderer.getSaveCount() - 1, properties().getClipToBounds());
         childOp->mSkipInOrderDraw = true;
 
         renderer.restoreToCount(restoreTo);
+        DISPLAY_LIST_LOGD("%*sRestore to count %d <%p> by property", (handler.level() + 1) * 2, "", restoreTo, this);
+
         drawIndex++;
     }
     renderer.restoreToCount(rootRestoreTo);
+    DISPLAY_LIST_LOGD("%*sRestore to count %d <%p> by property", (handler.level() + 1) * 2, "", rootRestoreTo, this);
+
+    DISPLAY_LIST_LOGD("%*s--issue %s 3d children end <%p>", (handler.level() + 1) * 2, "",
+            mode == kNegativeZChildren ? "negative" : "positive", this);
 }
 
 template <class T>
 void RenderNode::issueOperationsOfProjectedChildren(OpenGLRenderer& renderer, T& handler) {
-    DISPLAY_LIST_LOGD("%*s%d projected children:", (handler.level() + 1) * 2, "", mProjectedNodes.size());
+    DISPLAY_LIST_LOGD("%*s--issue projected children start %d <%p>", (handler.level() + 1) * 2, "", mProjectedNodes.size(), this);
+
     const SkPath* projectionReceiverOutline = properties().getOutline().getPath();
     int restoreTo = renderer.getSaveCount();
 
@@ -807,6 +880,9 @@ void RenderNode::issueOperationsOfProjectedChildren(OpenGLRenderer& renderer, T&
     const DrawRenderNodeOp* backgroundOp = reinterpret_cast<const DrawRenderNodeOp*>(op);
     const RenderProperties& backgroundProps = backgroundOp->mRenderNode->properties();
     renderer.translate(backgroundProps.getTranslationX(), backgroundProps.getTranslationY());
+    DISPLAY_LIST_LOGD("%*sTranslate to (%.0f, %.0f) by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", backgroundProps.getTranslationX(), backgroundProps.getTranslationY(),
+            MATRIX_4_ARGS(renderer.currentTransform()));
 
     // If the projection reciever has an outline, we mask each of the projected rendernodes to it
     // Either with clipRect, or special saveLayer masking
@@ -814,6 +890,7 @@ void RenderNode::issueOperationsOfProjectedChildren(OpenGLRenderer& renderer, T&
         const SkRect& outlineBounds = projectionReceiverOutline->getBounds();
         if (projectionReceiverOutline->isRect(NULL)) {
             // mask to the rect outline simply with clipRect
+
             ClipRectOp* clipOp = new (alloc) ClipRectOp(
                     outlineBounds.left(), outlineBounds.top(),
                     outlineBounds.right(), outlineBounds.bottom(), SkRegion::kIntersect_Op);
@@ -837,20 +914,26 @@ void RenderNode::issueOperationsOfProjectedChildren(OpenGLRenderer& renderer, T&
     // draw projected nodes
     for (size_t i = 0; i < mProjectedNodes.size(); i++) {
         DrawRenderNodeOp* childOp = mProjectedNodes[i];
-
         // matrix save, concat, and restore can be done safely without allocating operations
         int restoreTo = renderer.save(SkCanvas::kMatrix_SaveFlag);
+        DISPLAY_LIST_LOGD("%*sSave flags 0x%x, count %d <%p> by property",
+            (handler.level() + 1) * 2, "", SkCanvas::kMatrix_SaveFlag, renderer.getSaveCount() - 1, this);
         renderer.concatMatrix(childOp->mTransformFromCompositingAncestor);
+        DISPLAY_LIST_LOGD("%*sConcatMatrix (projected) %p: " MATRIX_4_STRING " by property ===> currTrans" MATRIX_4_STRING,
+            (handler.level() + 1) * 2, "", &(childOp->mTransformFromCompositingAncestor), MATRIX_4_ARGS(&(childOp->mTransformFromCompositingAncestor)),
+            MATRIX_4_ARGS(renderer.currentTransform()));
         childOp->mSkipInOrderDraw = false; // this is horrible, I'm so sorry everyone
         handler(childOp, renderer.getSaveCount() - 1, properties().getClipToBounds());
         childOp->mSkipInOrderDraw = true;
         renderer.restoreToCount(restoreTo);
+        DISPLAY_LIST_LOGD("%*sRestore to count %d <%p> by property", (handler.level() + 1) * 2, "", restoreTo, this);
     }
 
     if (projectionReceiverOutline != NULL) {
         handler(new (alloc) RestoreToCountOp(restoreTo),
                 PROPERTY_SAVECOUNT, properties().getClipToBounds());
     }
+    DISPLAY_LIST_LOGD("%*s--issue projected children end <%p>", (handler.level() + 1) * 2, "", this);
 }
 
 /**
@@ -867,6 +950,7 @@ void RenderNode::issueOperations(OpenGLRenderer& renderer, T& handler) {
     const int level = handler.level();
     if (mDisplayListData->isEmpty()) {
         DISPLAY_LIST_LOGD("%*sEmpty display list (%p, %s)", level * 2, "", this, getName());
+        DISPLAY_LIST_LOGD("%*sDone (%p, %s)", level * 2, "", this, getName());
         return;
     }
 
@@ -879,6 +963,7 @@ void RenderNode::issueOperations(OpenGLRenderer& renderer, T& handler) {
         const Outline& outline = properties().getOutline();
         if (properties().getAlpha() <= 0 || (outline.getShouldClip() && outline.isEmpty())) {
             DISPLAY_LIST_LOGD("%*sRejected display list (%p, %s)", level * 2, "", this, getName());
+            DISPLAY_LIST_LOGD("%*sDone (%p, %s)", level * 2, "", this, getName());
             return;
         }
     }
@@ -886,19 +971,19 @@ void RenderNode::issueOperations(OpenGLRenderer& renderer, T& handler) {
     handler.startMark(getName());
 
 #if DEBUG_DISPLAY_LIST
-    const Rect& clipRect = renderer.getLocalClipBounds();
-    DISPLAY_LIST_LOGD("%*sStart display list (%p, %s), localClipBounds: %.0f, %.0f, %.0f, %.0f",
-            level * 2, "", this, getName(),
-            clipRect.left, clipRect.top, clipRect.right, clipRect.bottom);
+    if (g_HWUI_debug_display_list) {
+        const Rect* clipRect = renderer.currentClipRect();
+        DISPLAY_LIST_LOGD("%*sStart display list (%p, %s) ===> currClip"RECT_STRING,
+                level * 2, "", this, getName(), clipRect->left, clipRect->top,
+                clipRect->right, clipRect->bottom);
+        renderer.outputClipRegion();
+    }
 #endif
 
     LinearAllocator& alloc = handler.allocator();
     int restoreTo = renderer.getSaveCount();
     handler(new (alloc) SaveOp(SkCanvas::kMatrix_SaveFlag | SkCanvas::kClip_SaveFlag),
             PROPERTY_SAVECOUNT, properties().getClipToBounds());
-
-    DISPLAY_LIST_LOGD("%*sSave %d %d", (level + 1) * 2, "",
-            SkCanvas::kMatrix_SaveFlag | SkCanvas::kClip_SaveFlag, restoreTo);
 
     if (useViewProperties) {
         setViewProperties<T>(renderer, handler);
@@ -928,10 +1013,8 @@ void RenderNode::issueOperations(OpenGLRenderer& renderer, T& handler) {
 
                 for (int opIndex = chunk.beginOpIndex; opIndex < chunk.endOpIndex; opIndex++) {
                     DisplayListOp *op = mDisplayListData->displayListOps[opIndex];
-#if DEBUG_DISPLAY_LIST
-                    op->output(level + 1);
-#endif
-                    logBuffer.writeCommand(level, op->name());
+
+                    logBuffer.writeCommandStart(level, op->name());
                     handler(op, saveCountOffset, properties().getClipToBounds());
 
                     if (CC_UNLIKELY(!mProjectedNodes.isEmpty() && opIndex == projectionReceiveIndex)) {
@@ -943,9 +1026,11 @@ void RenderNode::issueOperations(OpenGLRenderer& renderer, T& handler) {
                         initialTransform, zTranslatedNodes, renderer, handler);
             }
         }
+    } else {
+        DISPLAY_LIST_LOGD("%*sDraw Display List (%p, %s) at (0, 0, %d, %d) but rejected",
+            (level + 1) * 2, "", this, getName(), properties().getWidth(), properties().getHeight());
     }
 
-    DISPLAY_LIST_LOGD("%*sRestoreToCount %d", (level + 1) * 2, "", restoreTo);
     handler(new (alloc) RestoreToCountOp(restoreTo),
             PROPERTY_SAVECOUNT, properties().getClipToBounds());
     renderer.setOverrideLayerAlpha(1.0f);

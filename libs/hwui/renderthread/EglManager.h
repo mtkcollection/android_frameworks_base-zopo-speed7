@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +59,7 @@ public:
     bool setPreserveBuffer(EGLSurface surface, bool preserve);
 
     void setTextureAtlas(const sp<GraphicBuffer>& buffer, int64_t* map, size_t mapSize);
-
+    
 private:
     friend class RenderThread;
 
@@ -65,7 +70,7 @@ private:
     void loadConfig();
     void createContext();
     void initAtlas();
-
+    
     RenderThread& mRenderThread;
 
     EGLDisplay mEglDisplay;

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +33,8 @@ import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Log;
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.mom.SubPermissions;
 
 /**
  * The AudioRecord class manages the audio resources for Java applications
@@ -236,6 +243,7 @@ public class AudioRecord
                 AudioManager.AUDIO_SESSION_ID_GENERATE);
     }
 
+
     /**
      * @hide
      * CANDIDATE FOR PUBLIC API
@@ -259,6 +267,18 @@ public class AudioRecord
      */
     public AudioRecord(AudioAttributes attributes, AudioFormat format, int bufferSizeInBytes,
             int sessionId) throws IllegalArgumentException {
+        /// M: Check record permission to user for CTA. {@
+        if (MobileManagerUtils.isSupported()) {
+            logd("AudioRecord>>>");
+            int uid = Binder.getCallingUid();
+            String permission = SubPermissions.RECORD_MIC;
+            if (!MobileManagerUtils.checkPermission(permission, uid)) {
+                logd("AudioRecord<<<: user denied permission " + permission + " for uid " + uid);
+                throw new IllegalArgumentException();
+            }
+            logd("AudioRecord<<<: user granted permission " + permission + " for uid " + uid);
+        }
+        /// @}
         mRecordingState = RECORDSTATE_STOPPED;
 
         if (attributes == null) {

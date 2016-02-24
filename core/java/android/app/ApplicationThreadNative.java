@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -670,6 +675,51 @@ public abstract class ApplicationThreadNative extends Binder
             reply.writeNoException();
             return true;
         }
+        /// M: ALPS00270724 message history mechanism @{
+        case DUMP_MESSAGE_HISTORY_TRANSACTION:
+        {
+            /// M: Add message history/queue to _exp_main.txt @{
+            dumpMessageHistory();
+            /// Add message history/queue to _exp_main.txt @}
+            return true;
+        }
+        /// @}
+        /// M: MSG HISTORY mechanism for SystemServer @{
+        case DUMP_ALL_MESSAGE_HISTORY_TRANSACTION:
+        {
+            /// M: Add message history/queue to _exp_main.txt @{
+            dumpAllMessageHistory();
+            /// Add message history/queue to _exp_main.txt @}
+            return true;
+        }
+        /// @}
+
+        /// M: ActivityThread looper log enhancement @{
+        case ENABLE_LOOPER_LOG:
+        {
+            enableLooperLog();
+            return true;
+        }
+        /// @}
+
+        /// M: BMW. @{
+        case SCHEDULE_RESTORE_ACTIVITY_TRANSACTION:
+        {
+            data.enforceInterface(IApplicationThread.descriptor);
+            IBinder b = data.readStrongBinder();
+            List<ResultInfo> ri = data.createTypedArrayList(ResultInfo.CREATOR);
+            List<ReferrerIntent> pi = data.createTypedArrayList(ReferrerIntent.CREATOR);
+            int configChanges = data.readInt();
+            boolean notResumed = data.readInt() != 0;
+            Configuration config = null;
+            if (data.readInt() != 0) {
+                config = Configuration.CREATOR.createFromParcel(data);
+            }
+            boolean toMax = data.readInt() != 0;
+            scheduleRestoreActivity(b, ri, pi, configChanges, notResumed, config, toMax);
+            return true;
+        }
+        /// @}
         }
 
         return super.onTransact(code, data, reply, flags);
@@ -1350,4 +1400,57 @@ class ApplicationThreadProxy implements IApplicationThread {
         mRemote.transact(ENTER_ANIMATION_COMPLETE_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
         data.recycle();
     }
+    /// M: ALPS00270724 message history mechanism
+    /// M: Add message history/queue to _exp_main.txt
+    public void dumpMessageHistory() throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        mRemote.transact(DUMP_MESSAGE_HISTORY_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
+    /// M: MSG HISTORY mechanism for SystemServer @{
+    public void dumpAllMessageHistory() throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        mRemote.transact(DUMP_ALL_MESSAGE_HISTORY_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+    /// @}
+
+    /// M: ActivityThread looper log enhancement
+    public void enableLooperLog() throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        mRemote.transact(ENABLE_LOOPER_LOG, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
+    /// M: BMW. New Intentface to max/mini the activity @{
+    public final void scheduleRestoreActivity(IBinder token,
+            List<ResultInfo> pendingResults, List<ReferrerIntent> pendingNewIntents,
+            int configChanges, boolean notResumed, Configuration config, boolean toMax)
+            throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeStrongBinder(token);
+        data.writeTypedList(pendingResults);
+        data.writeTypedList(pendingNewIntents);
+        data.writeInt(configChanges);
+        data.writeInt(notResumed ? 1 : 0);
+        if (config != null) {
+            data.writeInt(1);
+            config.writeToParcel(data, 0);
+        } else {
+            data.writeInt(0);
+        }
+        data.writeInt(toMax ? 1 : 0);
+        mRemote.transact(SCHEDULE_RESTORE_ACTIVITY_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+    /// @}
+
 }

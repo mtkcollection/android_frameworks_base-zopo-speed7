@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,7 @@
 
 package android.text.style;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -59,6 +65,11 @@ public class URLSpan extends ClickableSpan implements ParcelableSpan {
         Context context = widget.getContext();
         Intent intent = new Intent(Intent.ACTION_VIEW, uri);
         intent.putExtra(Browser.EXTRA_APPLICATION_ID, context.getPackageName());
+        try {
         context.startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            Intent chooserIntent = Intent.createChooser(intent, null);
+            context.startActivity(chooserIntent);
+        }
     }
 }

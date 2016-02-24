@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +73,10 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+/* Vanzo:tanglei on: Sat, 14 Mar 2015 13:11:07 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:tanglei
 
 /**
  * System implementation of MediaSessionManager
@@ -492,7 +501,8 @@ public class MediaSessionService extends SystemService implements Monitor {
                 MediaSessionRecord record = mPriorityStack.getDefaultRemoteSession(userId);
                 mRvc.updateRemoteController(record == null ? null : record.getControllerBinder());
             } catch (RemoteException e) {
-                Log.wtf(TAG, "Error sending default remote volume to sys ui.", e);
+                /// M: use Log.e instead Log.wtf to avoid cause reboot when systemui error
+                Log.e(TAG, "Error sending default remote volume to sys ui.", e);
             }
         }
     }
@@ -736,7 +746,12 @@ public class MediaSessionService extends SystemService implements Monitor {
                             ActivityManager.getCurrentUser()).mLastMediaButtonReceiver == null;
                     MediaSessionRecord session = mPriorityStack
                             .getDefaultMediaButtonSession(mCurrentUserId, useNotPlayingSessions);
+/* Vanzo:tanglei on: Fri, 13 Mar 2015 18:26:54 +0800
+ * earphone key action
                     if (isVoiceKey(keyEvent.getKeyCode())) {
+ */
+                    if (!FeatureOption.VANZO_FEATURE_EARPHONE_KEY_ACTION && isVoiceKey(keyEvent.getKeyCode())) {
+// End of Vanzo:tanglei
                         handleVoiceKeyEventLocked(keyEvent, needWakeLock, session);
                     } else {
                         dispatchMediaKeyEventLocked(keyEvent, needWakeLock, session);
@@ -1093,8 +1108,17 @@ public class MediaSessionService extends SystemService implements Monitor {
             @Override
             public void onSendFinished(PendingIntent pendingIntent, Intent intent, int resultCode,
                     String resultData, Bundle resultExtras) {
-                onReceiveResult(resultCode, null);
-            }
+                /// M: Avoid dead lock ALPS01998036, ActivityManagerService and MediaSessionService
+                /// 1. MediaSessionService will hold local lock and call AMS method getCurrentuser
+                /// which will request AMS class lock in dispatchMediaKeyEventLocked method.
+                /// 2. AMS dispatch pending intent to MediaSerssionService will hold lock AMS class
+                /// lock and callback to onSendFinished will request MediaSessionService local lock
+                /// in onReceiveResult.
+                ///
+                /// TO avoid the dead lock, we use ResultReceiver public method 'send' to delevier
+                /// result async.
+                // onReceiveResult(resultCode, null);
+                send(resultCode, null);}
         };
 
         BroadcastReceiver mKeyEventDone = new BroadcastReceiver() {

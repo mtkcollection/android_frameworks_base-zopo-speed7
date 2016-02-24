@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +35,7 @@ import android.graphics.drawable.StateListDrawable;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -42,6 +48,9 @@ import android.view.WindowManager;
 
 import java.lang.ref.WeakReference;
 
+/// M: BMW 
+import com.mediatek.multiwindow.MultiWindowProxy;
+
 /**
  * <p>A popup window that can be used to display an arbitrary view. The popup
  * window is a floating container that appears on top of the current
@@ -51,6 +60,8 @@ import java.lang.ref.WeakReference;
  * @see android.widget.Spinner
  */
 public class PopupWindow {
+    private static final String TAG = "PopupWindow";
+
     /**
      * Mode for {@link #setInputMethodMode(int)}: the requirements for the
      * input method should be based on the focusability of the popup.  That is
@@ -1101,6 +1112,10 @@ public class PopupWindow {
         }
         mPopupView.setFitsSystemWindows(mLayoutInsetDecor);
         setLayoutDirectionFromAnchor();
+
+        Log.d(TAG, "invokePopup: mPopupView = " + mPopupView +
+                   ", WindowManager.LayoutParams = " + p);
+
         mWindowManager.addView(mPopupView, p);
     }
 
@@ -1287,24 +1302,33 @@ public class PopupWindow {
         }
 
         if (mClipToScreen) {
+            /// M: BMW. @{
+            int leftOffset = 0;
+            int topOffset = 0;
+            MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance(); 
+            if (MultiWindowProxy.isFeatureSupport()) {
+                leftOffset = displayFrame.left;
+                topOffset = displayFrame.top;
+            }
+            /// @}
             final int displayFrameWidth = displayFrame.right - displayFrame.left;
             final int right = p.x + p.width;
             if (right > displayFrameWidth) {
                 p.x -= right - displayFrameWidth;
             }
 
-            if (p.x < displayFrame.left) {
-                p.x = displayFrame.left;
+            if (p.x < displayFrame.left - leftOffset) {
+                p.x = displayFrame.left - leftOffset;
                 p.width = Math.min(p.width, displayFrameWidth);
             }
 
             if (onTop) {
-                final int popupTop = mScreenLocation[1] + yoff - mPopupHeight;
+                final int popupTop = mScreenLocation[1] + yoff - mPopupHeight - topOffset;
                 if (popupTop < 0) {
                     p.y += popupTop;
                 }
             } else {
-                p.y = Math.max(p.y, displayFrame.top);
+                p.y = Math.max(p.y, displayFrame.top - topOffset);
             }
         }
 
@@ -1371,21 +1395,48 @@ public class PopupWindow {
         anchor.getLocationOnScreen(anchorPos);
         
         int bottomEdge = displayFrame.bottom;
+
+        Log.d(TAG, "getMaxAvailableHeight1: anchor = " + anchor +
+                   ", yOffset = " + yOffset + ", displayFrame = " +
+                   displayFrame + ", anchorPos[0] = " + anchorPos[0] +
+                   ", anchorPos[1] = " + anchorPos[1] + ", ignoreBottomDecorations = " +
+                   ignoreBottomDecorations + ", bottomEdge = " + bottomEdge +
+                   ", anchor.getHeight() = " + anchor.getHeight() +
+                   ", displayFrame.top = " + displayFrame.top);
+        /// M: BMW. If application is floating window, ignore button decoration. @{
+        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();            
+        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null
+                && mMultiWindowProxy.getFloatingState()) {
+           Log.w(TAG, "getMaxAvailableHeight: floating window ignore button decoration!");               
+           ignoreBottomDecorations = false;  
+        }
+        /// @}
         if (ignoreBottomDecorations) {
             Resources res = anchor.getContext().getResources();
             bottomEdge = res.getDisplayMetrics().heightPixels;
+
+            Log.d(TAG, "getMaxAvailableHeight2: ignoreBottomDecorations = " +
+                       ignoreBottomDecorations + ", bottomEdge = " + bottomEdge);
         }
         final int distanceToBottom = bottomEdge - (anchorPos[1] + anchor.getHeight()) - yOffset;
         final int distanceToTop = anchorPos[1] - displayFrame.top + yOffset;
 
         // anchorPos[1] is distance from anchor to top of screen
         int returnedHeight = Math.max(distanceToBottom, distanceToTop);
+
+        Log.d(TAG, "getMaxAvailableHeight3: distanceToBottom = " + distanceToBottom +
+            ", distanceToTop = " + distanceToTop + ", returnedHeight = " + returnedHeight);
+
         if (mBackground != null) {
             mBackground.getPadding(mTempRect);
             returnedHeight -= mTempRect.top + mTempRect.bottom; 
+
+            Log.d(TAG, "getMaxAvailableHeight4: returnedHeight = " + returnedHeight +
+                ", mTempRect.top = " + mTempRect.top + ", mTempRect.bottom = " + mTempRect.bottom);
         }
-        
-        return returnedHeight;
+
+        /// M: [ALPS01263615] Should not return negative value.
+        return returnedHeight > 0 ? returnedHeight : 0;
     }
     
     /**
@@ -1456,6 +1507,10 @@ public class PopupWindow {
 
         if (update) {
             setLayoutDirectionFromAnchor();
+
+            Log.d(TAG, "update1: mPopupView = " + mPopupView +
+                       ", WindowManager.LayoutParams = " + p);
+
             mWindowManager.updateViewLayout(mPopupView, p);
         }
     }
@@ -1557,6 +1612,10 @@ public class PopupWindow {
 
         if (update) {
             setLayoutDirectionFromAnchor();
+
+            Log.d(TAG, "update2: mPopupView = " + mPopupView +
+                       ", WindowManager.LayoutParams = " + p);
+
             mWindowManager.updateViewLayout(mPopupView, p);
         }
     }
@@ -1630,6 +1689,14 @@ public class PopupWindow {
         int x = p.x;
         int y = p.y;
 
+        /// M: [ALPS01268905] Set layout parameter width before findDropDownPosition()
+        boolean forceUpdate = false;
+        final int finalWidth = mWidthMode < 0 ? mWidthMode : width;
+        if (width != -1 && p.width != finalWidth) {
+            p.width = finalWidth;
+            forceUpdate = true;
+        }
+
         if (updateLocation) {
             updateAboveAnchor(findDropDownPosition(anchor, p, xoff, yoff, gravity));
         } else {
@@ -1637,7 +1704,8 @@ public class PopupWindow {
                     mAnchoredGravity));
         }
 
-        update(p.x, p.y, width, height, x != p.x || y != p.y);
+        /// M: [ALPS01268905] Set layout parameter width before findDropDownPosition()
+        update(p.x, p.y, width, height, x != p.x || y != p.y || forceUpdate);
     }
 
     /**

@@ -26,6 +26,11 @@ import android.system.StructStatVfs;
  */
 public class StatFs {
     private StructStatVfs mStat;
+/* Vanzo:yucheng on: Wed, 04 Dec 2013 22:08:05 +0800
+ * Modify for ROM size customization
+ */
+    private String mBlockPath;
+// End of Vanzo: yucheng
 
     /**
      * Construct a new StatFs for looking at the stats of the filesystem at
@@ -36,6 +41,11 @@ public class StatFs {
      * @param path path in the desired file system to stat.
      */
     public StatFs(String path) {
+/* Vanzo:yucheng on: Wed, 04 Dec 2013 22:18:35 +0800
+ * Modify for ROM size customization
+ */
+        mBlockPath = path;
+// End of Vanzo: yucheng
         mStat = doStat(path);
     }
 
@@ -53,6 +63,11 @@ public class StatFs {
      * and the new stat values are available upon return.
      */
     public void restat(String path) {
+/* Vanzo:yucheng on: Wed, 04 Dec 2013 22:18:35 +0800
+ * Modify for ROM size customization
+ */
+        mBlockPath = path;
+// End of Vanzo: yucheng
         mStat = doStat(path);
     }
 
@@ -77,7 +92,19 @@ public class StatFs {
      */
     @Deprecated
     public int getBlockCount() {
+/* Vanzo:yucheng on: Wed, 04 Dec 2013 22:11:01 +0800
+ * Modify for ROM size customization
         return (int) mStat.f_blocks;
+ */
+        //Customized disk size, unit: M byte
+        int customizedSize = android.os.SystemProperties.getInt("ro.init.data_size", -1);
+        int customizeBlocks = 0;
+        if (customizedSize > 0 && android.os.Environment.getDataDirectory().getAbsolutePath().equals(mBlockPath)) {
+            customizeBlocks = (int) (customizedSize * 1024L * 1024L / mStat.f_bsize);
+        }
+
+        return (int) ((customizeBlocks > mStat.f_blocks) ? customizeBlocks : mStat.f_blocks);
+// End of Vanzo: yucheng
     }
 
     /**

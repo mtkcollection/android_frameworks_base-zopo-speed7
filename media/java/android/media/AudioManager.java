@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +46,7 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.ServiceManager;
 import android.provider.Settings;
 import android.util.Log;
@@ -49,6 +55,8 @@ import android.view.KeyEvent;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+
+import com.mediatek.common.audioprofile.AudioProfileListener;
 
 /**
  * AudioManager provides access to volume and ringer mode control.
@@ -66,6 +74,11 @@ public class AudioManager {
     private final Binder mToken = new Binder();
     private static String TAG = "AudioManager";
     private static final AudioPortEventHandler sAudioPortEventHandler = new AudioPortEventHandler();
+
+   /// M: Add for feature option @{
+    private static final boolean IS_DOLBY_DAP_SUPPORT =
+            SystemProperties.getBoolean("ro.mtk_dolby_dap_support", false);
+    /// @}
 
     /**
      * Broadcast intent, a hint for applications that audio is about to become
@@ -821,6 +834,7 @@ public class AudioManager {
      */
     public void adjustStreamVolume(int streamType, int direction, int flags) {
         IAudioService service = getService();
+        Log.d(TAG, "adjustStreamVolume: StreamType = " + streamType + ", direction = " + direction);
         try {
             if (mUseMasterVolume) {
                 service.adjustMasterVolume(direction, flags, mContext.getOpPackageName());
@@ -854,6 +868,7 @@ public class AudioManager {
      */
     public void adjustVolume(int direction, int flags) {
         IAudioService service = getService();
+        Log.d(TAG, "adjustVolume: Flags = " + flags + ", direction = " + direction);
         try {
             if (mUseMasterVolume) {
                 service.adjustMasterVolume(direction, flags, mContext.getOpPackageName());
@@ -888,6 +903,8 @@ public class AudioManager {
      */
     public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags) {
         IAudioService service = getService();
+        Log.d(TAG, "adjustSuggestedStreamVolume: Direction = " + direction
+                    + ", streamType = " + suggestedStreamType);
         try {
             if (mUseMasterVolume) {
                 service.adjustMasterVolume(direction, flags, mContext.getOpPackageName());
@@ -1073,6 +1090,7 @@ public class AudioManager {
      */
     public void setStreamVolume(int streamType, int index, int flags) {
         IAudioService service = getService();
+        Log.d(TAG, "setStreamVolume: StreamType = " + streamType + ", index = " + index);
         try {
             if (mUseMasterVolume) {
                 service.setMasterVolume(index, flags, mContext.getOpPackageName());
@@ -1378,6 +1396,7 @@ public class AudioManager {
      */
     public void setSpeakerphoneOn(boolean on){
         IAudioService service = getService();
+        Log.d(TAG, "setSpeakerphoneOn(" + on + ")");
         try {
             service.setSpeakerphoneOn(on);
         } catch (RemoteException e) {
@@ -1766,6 +1785,22 @@ public class AudioManager {
      * In communication audio mode. An audio/video chat or VoIP call is established.
      */
     public static final int MODE_IN_COMMUNICATION   = AudioSystem.MODE_IN_COMMUNICATION;
+    /**
+     * M: In call 2 audio mode for modem 2. A telephony call is established.
+     *
+     * @hide
+     */
+    public static final int MODE_IN_CALL_2          = AudioSystem.MODE_IN_CALL_2;
+
+    /// M: add MODE_IN_CALL_EXTERNAL for T+C @{
+    /**
+     * In call external audio mode for external modem. A telephony call is
+     * established.
+     *
+     * @hide
+     */
+    public static final int MODE_IN_CALL_EXTERNAL = AudioSystem.MODE_IN_CALL_EXTERNAL;
+    /// @}
 
     /* Routing bits for setRouting/getRouting API */
     /**
@@ -2288,6 +2323,30 @@ public class AudioManager {
         public void dispatchAudioFocusChange(int focusChange, String id) {
             Message m = mAudioFocusEventHandlerDelegate.getHandler().obtainMessage(focusChange, id);
             mAudioFocusEventHandlerDelegate.getHandler().sendMessage(m);
+            // DOLBY_DAP
+            // Send an intent to DsService, keeping it informed of the audio focus change
+            if (IS_DOLBY_DAP_SUPPORT) {
+            Intent intent = new Intent("DS_AUDIO_FOCUS_CHANGE_ACTION");
+            intent.setPackage("com.dolby");
+            intent.putExtra("packageName", mContext.getOpPackageName());
+            switch (focusChange) {
+                case AUDIOFOCUS_LOSS:
+                case AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                case AUDIOFOCUS_LOSS_TRANSIENT:
+                    intent.putExtra("focusChange", "loss");
+                    mContext.sendBroadcast(intent);
+                    break;
+                case AUDIOFOCUS_GAIN:
+                case AUDIOFOCUS_GAIN_TRANSIENT:
+                case AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK:
+                    intent.putExtra("focusChange", "gain");
+                    mContext.sendBroadcast(intent);
+                    break;
+                default:
+                    break;
+            }
+            }
+            // DOLBY_END
         }
 
     };
@@ -2565,10 +2624,23 @@ public class AudioManager {
      * Should match one or more calls to {@link #requestAudioFocusForCall(int, int)}.
      */
     public void abandonAudioFocusForCall() {
+        int status = AUDIOFOCUS_REQUEST_FAILED;
         IAudioService service = getService();
         try {
-            service.abandonAudioFocus(null, MediaFocusControl.IN_VOICE_COMM_FOCUS_ID,
+            status = service.abandonAudioFocus(null, MediaFocusControl.IN_VOICE_COMM_FOCUS_ID,
                     null /*AudioAttributes, legacy behavior*/);
+            // DOLBY_DAP
+            // Send an intent to DsService, keeping it informed of the audio focus change
+            if (IS_DOLBY_DAP_SUPPORT) {
+            if (status == AUDIOFOCUS_REQUEST_GRANTED) {
+                Intent intent = new Intent("DS_AUDIO_FOCUS_CHANGE_ACTION");
+                intent.setPackage("com.dolby");
+                intent.putExtra("packageName", mContext.getOpPackageName());
+                intent.putExtra("focusChange", "abandon");
+                mContext.sendBroadcast(intent);
+            }
+            }
+            // DOLBY_END
         } catch (RemoteException e) {
             Log.e(TAG, "Can't call abandonAudioFocusForCall() on AudioService:", e);
         }
@@ -2603,6 +2675,25 @@ public class AudioManager {
         }
         return status;
     }
+
+    // DOLBY_DAP
+    /**
+     *  @hide
+     *  Check if the specified App obtains the focus.
+     *  @param packageName the package name of the App.
+     *  @return ture if the App obtains the focus.
+     */
+    public boolean isAppInFocus(String packageName) {
+        boolean isFocus = false;
+        IAudioService service = getService();
+        try {
+            isFocus = service.isAppInFocus(packageName);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Can't call isAppInFocus() on AudioService due to " + e);
+        }
+        return isFocus;
+    }
+    // DOLBY_END
 
     //====================================================================
     // Remote Control
@@ -3253,6 +3344,7 @@ public class AudioManager {
      */
     public void setWiredDeviceConnectionState(int device, int state, String name) {
         IAudioService service = getService();
+        Log.d(TAG, "setWiredDeviceConnectionState: device = " + device + ", state = " + state);
         try {
             service.setWiredDeviceConnectionState(device, state, name);
         } catch (RemoteException e) {
@@ -3274,6 +3366,7 @@ public class AudioManager {
     public int setBluetoothA2dpDeviceConnectionState(BluetoothDevice device, int state,
             int profile) {
         IAudioService service = getService();
+        Log.d(TAG, "setBluetoothA2dpDeviceConnectionState: state = " + state);
         int delay = 0;
         try {
             delay = service.setBluetoothA2dpDeviceConnectionState(device, state, profile);
@@ -3327,6 +3420,40 @@ public class AudioManager {
             return null;
         }
     }
+
+    /**
+      * M: Add to set audio to FMTX.
+      *
+      *  @return If success or not.
+      *  {@hide}
+      *
+      */
+     public boolean setAudioPathToFMTx() {
+         IAudioService service = getService();
+         try {
+             return service.setAudioPathToFMTx(mICallBack);
+         } catch (RemoteException e) {
+             Log.e(TAG, "Dead object in setAudioPathToFMTx" + e);
+             return false;
+         }
+     }
+
+     /**
+      * M: Add to set audio outof  FMTX.
+      *
+      *  @return If success or not.
+      *  {@hide}
+      *
+      */
+     public boolean setAudioPathOutofFMTx() {
+         IAudioService service = getService();
+         try {
+             return service.setAudioPathOutofFMTx();
+         } catch (RemoteException e) {
+             Log.e(TAG, "Dead object in setAudioPathOutofFMTx" + e);
+             return false;
+         }
+     }
 
     /**
      * Returns the estimated latency for the given stream type in milliseconds.
@@ -3740,4 +3867,43 @@ public class AudioManager {
                                                  portCfg.format(),
                                                  gainCfg);
     }
+
+    /**
+     * Add for AudioProfile not change ringermode when adjust the volume.
+     *
+     * @param streamType The stream whose volume index should be set.
+     * @param index The volume index to set.
+     * @param flags One or more flags.
+     * @hide
+     */
+     public void setAudioProfileStreamVolume(int streamType, int index, int flags) {
+           IAudioService service = getService();
+           try {
+                Log.d(TAG, "setAudioProfileStreamVolume: StreamType = " + streamType + ", index = " + index);
+                service.setAudioProfileStreamVolume(streamType, index, flags);
+           } catch (RemoteException e) {
+               Log.e(TAG, "Dead object in setStreamVolume", e);
+           }
+     }
+
+     ///////////////////////////////////////////////////////////////////////////////////////////////
+     // Register a RingerMode or volume listener to AudioService
+     ///////////////////////////////////////////////////////////////////////////////////////////////
+
+     /**
+      * M: Register the AudioProfileListener to AudioService to listen RingerMode
+      * and volume changed.
+      *
+      * @param listener AudioProfileListener.
+      * @param event The event for listener.
+      * @hide
+      * */
+     public void listenRingerModeAndVolume(AudioProfileListener listener, int event) {
+         IAudioService service = getService();
+         try {
+             service.listenRingerModeAndVolume(listener.getCallback(), event);
+         } catch (RemoteException e) {
+             Log.e(TAG, "Dead object in listenRingerModeAndVolume", e);
+         }
+     }
 }

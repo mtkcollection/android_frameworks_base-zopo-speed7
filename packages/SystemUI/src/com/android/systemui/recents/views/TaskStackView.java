@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,7 @@ import com.android.systemui.recents.model.RecentsPackageMonitor;
 import com.android.systemui.recents.model.RecentsTaskLoader;
 import com.android.systemui.recents.model.Task;
 import com.android.systemui.recents.model.TaskStack;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -47,6 +53,9 @@ import java.util.Iterator;
 public class TaskStackView extends FrameLayout implements TaskStack.TaskStackCallbacks,
         TaskView.TaskViewCallbacks, TaskStackViewScroller.TaskStackViewScrollerCallbacks,
         ViewPool.ViewPoolConsumer<TaskView, Task>, RecentsPackageMonitor.PackageCallbacks {
+    /// M: For Debug
+    static final String TAG = "views.TaskStackView";
+    static final boolean DEBUG = true;
 
     /** The TaskView callbacks */
     interface TaskStackViewCallbacks {
@@ -851,11 +860,25 @@ public class TaskStackView extends FrameLayout implements TaskStack.TaskStackCal
 
     @Override
     public void onStackTaskAdded(TaskStack stack, Task t) {
+        if (DEBUG) {
+            if (t != null && t.key != null) {
+                Xlog.d(TAG, "onStackTaskAdded:" + t.key.toString());
+            } else {
+                Xlog.d(TAG, "onStackTaskAdded: Task null or key null!!");
+            }
+        }
         requestSynchronizeStackViewsWithModel();
     }
 
     @Override
     public void onStackTaskRemoved(TaskStack stack, Task removedTask, Task newFrontMostTask) {
+        if (DEBUG) {
+            if (removedTask != null && removedTask.key != null) {
+                Xlog.d(TAG, "onStackTaskRemoved:" + removedTask.key.toString());
+            } else {
+                Xlog.d(TAG, "onStackTaskRemoved: removedTask null or key null!!");
+            }
+        }
         // Remove the view associated with this task, we can't rely on updateTransforms
         // to work here because the task is no longer in the list
         TaskView tv = getChildViewForTask(removedTask);

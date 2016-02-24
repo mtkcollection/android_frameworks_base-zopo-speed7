@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1200,6 +1205,18 @@ public class UserManager {
         } catch (RemoteException re) {
             Log.w(TAG, "Could not set application restrictions for user " + user.getIdentifier());
         }
+    }
+
+    /**
+     * @hide
+     */
+    public int getSwitchedUserId() {
+        try {
+            return mService.getSwitchedUserId();
+        } catch (RemoteException re) {
+            Log.w(TAG, "Could not getSwitchedUserId for user ");
+        }
+        return 0;
     }
 
     /**

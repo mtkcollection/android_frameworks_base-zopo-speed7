@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,8 @@ package android.webkit;
 
 import android.annotation.SystemApi;
 import android.annotation.Widget;
+import android.app.AppGlobals;
+import android.app.Application;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -38,6 +45,8 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+/// M: import DisplayList
+import android.view.RenderNode;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
@@ -51,6 +60,7 @@ import android.widget.AbsoluteLayout;
 
 import java.io.BufferedWriter;
 import java.io.File;
+import java.lang.reflect.Method;
 import java.util.Map;
 
 /**
@@ -262,7 +272,7 @@ public class WebView extends AbsoluteLayout
             "android.webkit.DATA_REDUCTION_PROXY_SETTING_CHANGED";
 
     private static final String LOGTAG = "WebView";
-    private static final boolean TRACE = false;
+    private static final boolean TRACE = true;
 
     // Throwing an exception for incorrect thread usage if the
     // build target is JB MR2 or newer. Defaults to false, and is
@@ -393,7 +403,9 @@ public class WebView extends AbsoluteLayout
 
         private int mType;
         private String mExtra;
-
+        /// M: add for site navigation @{
+        private String mImageAnchorUrlExtra;
+        /// @}
         /**
          * @hide Only for use by WebViewProvider implementations
          */
@@ -409,7 +421,18 @@ public class WebView extends AbsoluteLayout
         public void setType(int type) {
             mType = type;
         }
-
+        /// M: add for site navigation @{
+        /**
+         * Handle site navigation image anchor click.
+         *
+         * @param imageAnchorUrl the URL of the image anchor
+         * @hide Only for use by WebViewProvider implementations
+         * @internal
+         */
+        public void setImageAnchorUrlExtra(String imageAnchorUrl) {
+            mImageAnchorUrlExtra = imageAnchorUrl;
+        }
+        /// @}
         /**
          * @hide Only for use by WebViewProvider implementations
          */
@@ -438,6 +461,19 @@ public class WebView extends AbsoluteLayout
         public String getExtra() {
             return mExtra;
         }
+        /// M: add for site navitation @{
+        /**
+         * Gets the href of the hit test result. add this for site navigation.
+         * could be null.
+         *
+         * @return the href of the hit test result
+         * @hide for only used by bowser app
+         * @internal
+         */
+        public String getImageAnchorUrlExtra() {
+            return mImageAnchorUrlExtra;
+        }
+        /// @}
     }
 
     /**
@@ -705,6 +741,11 @@ public class WebView extends AbsoluteLayout
         checkThread();
         if (TRACE) Log.d(LOGTAG, "destroy");
         mProvider.destroy();
+        /// M: Reset the display list.
+        RenderNode displayList = getDisplayList();
+        if (displayList != null) {
+            displayList.destroyDisplayListData();
+        }
     }
 
     /**
@@ -973,6 +1014,66 @@ public class WebView extends AbsoluteLayout
         if (TRACE) Log.d(LOGTAG, "saveWebArchive=" + filename);
         mProvider.saveWebArchive(filename);
     }
+
+    /// M: add interface for save page @{
+    /**
+     * The interface of save page.
+     *
+     * @return true if it can be saved, false otherwise
+     * @hide
+     * @internal
+     */
+    public boolean savePage() {
+        checkThread();
+        if (TRACE) {
+            Log.d(LOGTAG, "savePage");
+        }
+        initChromiumClassIfNeccessary();
+        if (mCls == null) {
+            Log.e(LOGTAG, "Can't get WebViewChromium Save Page Interface");
+            return false;
+        }
+        try {
+            Method savePageMethod = mCls.getDeclaredMethod("savePage");
+            if (savePageMethod == null) {
+                Log.e(LOGTAG, "Get Null from webviewchromium savePage method");
+                return false;
+            }
+            return (Boolean) savePageMethod.invoke(mProvider);
+        } catch (ReflectiveOperationException ex) {
+            Log.e(LOGTAG, "get Save Page Interface Exception->" + ex);
+            return false;
+        }
+    }
+
+    private Class<?> mCls;
+
+    private void initChromiumClassIfNeccessary() {
+        if (mCls != null) {
+            return;
+        }
+        try {
+            Application initialApplication = AppGlobals.getInitialApplication();
+            if (initialApplication == null) {
+                throw new ReflectiveOperationException("Applicatin not found");
+            }
+            String packageName = initialApplication.getString(
+                    com.android.internal.R.string.config_webViewPackageName);
+            Context webViewContext = initialApplication.createPackageContext(packageName,
+                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+            initialApplication.getAssets().addAssetPath(
+                    webViewContext.getApplicationInfo().sourceDir);
+            ClassLoader clazzLoader = webViewContext.getClassLoader();
+
+            String className = "com.android.webview.chromium.WebViewChromium";
+            mCls = Class.forName(className, true, clazzLoader);
+        } catch (android.content.pm.PackageManager.NameNotFoundException ex) {
+            Log.e(LOGTAG, "get Webview Class Exception->" + ex);
+        } catch (ReflectiveOperationException ex) {
+            Log.e(LOGTAG, "get Webview Class Exception->" + ex);
+        }
+    }
+    /// @}
 
     /**
      * Saves the current view as a web archive.
@@ -1679,6 +1780,36 @@ public class WebView extends AbsoluteLayout
         checkThread();
         mProvider.setWebViewClient(client);
     }
+
+    /// M: add save page client @{
+    /**
+     * Set save page client.
+     *
+     * @param client the object of the client
+     * @hide
+     * @internal
+     */
+    public void setSavePageClient(SavePageClient client) {
+        checkThread();
+        initChromiumClassIfNeccessary();
+        if (mCls == null) {
+            Log.e(LOGTAG, "Can't get WebViewChromium Save Page Interface");
+            return;
+        }
+        try {
+            Class[] p = new Class[1];
+            p[0] = SavePageClient.class;
+            Method setSavePageClientMethod = mCls.getDeclaredMethod("setSavePageClient", p);
+            if (setSavePageClientMethod == null) {
+                Log.e(LOGTAG, "Get Null from the webviewchromium setSavePageClient method");
+                return;
+            }
+            setSavePageClientMethod.invoke(mProvider, client);
+        } catch (ReflectiveOperationException ex) {
+            Log.e(LOGTAG, "get set Save Page Client Interface Exception->" + ex);
+        }
+    }
+    /// @}
 
     /**
      * Registers the interface to be used when content can not be handled by
@@ -2476,7 +2607,12 @@ public class WebView extends AbsoluteLayout
     @Override
     public void setLayerType(int layerType, Paint paint) {
         super.setLayerType(layerType, paint);
-        mProvider.getViewDelegate().setLayerType(layerType, paint);
+        /// M: This method may be called in the constructor chain. @{
+        Log.w(LOGTAG, "setLayerType()");
+        if (mProvider != null) {
+            mProvider.getViewDelegate().setLayerType(layerType, paint);
+        }
+        /// @}
     }
 
     @Override

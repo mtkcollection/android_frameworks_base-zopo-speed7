@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,7 @@ package com.android.server.wm;
 
 import android.graphics.Matrix;
 import android.os.RemoteException;
+import android.os.Trace;
 import android.util.Slog;
 import android.util.TimeUtils;
 import android.view.Display;
@@ -301,11 +307,13 @@ public class AppWindowAnimator {
                 && mService.mInputMethodTarget.mAppToken == mAppToken) {
             mService.moveInputMethodWindowsIfNeededLocked(true);
         }
-
+        /// M: add systrace for animation start and end @{
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER | Trace.TRACE_TAG_PERF, "app animation done : " + mAppToken.toString());
         if (WindowManagerService.DEBUG_ANIM) Slog.v(
                 TAG, "Animation done in " + mAppToken
                 + ": reportedVisible=" + mAppToken.reportedVisible);
-
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER | Trace.TRACE_TAG_PERF);
+        /// @}
         transformation.clear();
 
         final int numAllAppWinAnimators = mAllAppWinAnimators.size();

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -194,6 +199,17 @@ public class DrmStore {
          */
         public static final int DISPLAY = 0x07;
 
+        /// M: these 2 types are added for OMA DRM v1.0 implementation. @{
+        /**
+         * @hide
+         */
+        public static final int PRINT     = 0x08;
+        /**
+         * @hide
+         */
+        public static final int WALLPAPER = 0x09; // for FL only
+        /// @}
+
         /* package */ static boolean isValid(int action) {
             boolean isValid = false;
 
@@ -206,6 +222,8 @@ public class DrmStore {
                 case PREVIEW:
                 case EXECUTE:
                 case DISPLAY:
+                case PRINT:
+                case WALLPAPER:
                     isValid = true;
             }
             return isValid;
@@ -245,6 +263,31 @@ public class DrmStore {
          */
         public RightsStatus() {}
     }
+
+    // M: @{ ALPS00809601 sercure time issue patch back (ALPS00420454)
+    /**
+     * defines extra info type telling drm service to finish coresponding job.
+     * will be checked in DrmInfoRequest.java using isValidType()
+     * @hide
+     */
+    public static class DrmInfoType {
+        public static final String KEY_DRM_UPDATE_CLOCK = "updateClock";
+        public static final String KEY_DRM_CHECK_CLOCK = "checkClock";
+        public static final String KEY_DRM_SAVE_DEVICE_ID = "saveDeviceId";
+        public static final String KEY_DRM_INSTALL_DRM_MSG = "installDrmMsg";
+
+        public static final int TYPE_DRM_UPDATE_CLOCK = 2001;
+        public static final int TYPE_DRM_UPDATE_TIME_BASE = 2002;
+        public static final int TYPE_DRM_UPDATE_OFFSET = 2003;
+        public static final int TYPE_DRM_LOAD_CLOCK = 2004;
+        public static final int TYPE_DRM_SAVE_CLOCK = 2005;
+        public static final int TYPE_DRM_CHECK_CLOCK = 2006;
+        public static final int TYPE_DRM_LOAD_DEVICE_ID = 2007;
+        public static final int TYPE_DRM_SAVE_DEVICE_ID = 2008;
+        public static final int TYPE_DRM_LOAD_SECURE_TIME = 2009;
+        public static final int TYPE_DRM_INSTALL_DRM_MSG = 2010;
+    }
+    //M: @}
 
     /**
      * @deprecated This class should have been an interface instead.

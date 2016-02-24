@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +21,7 @@
 
 package com.android.server.am;
 
+import static com.android.server.am.ActivityManagerService.DEBUG_TASK_RETURNTO;
 import static com.android.server.am.ActivityManagerService.TAG;
 import static com.android.server.am.ActivityRecord.HOME_ACTIVITY_TYPE;
 import static com.android.server.am.ActivityRecord.APPLICATION_ACTIVITY_TYPE;
@@ -41,6 +47,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.service.voice.IVoiceInteractionSession;
+import android.util.Log;
 import android.util.Slog;
 import com.android.internal.app.IVoiceInteractor;
 import com.android.internal.util.XmlUtils;
@@ -164,6 +171,9 @@ final class TaskRecord {
     String mCallingPackage;
 
     final ActivityManagerService mService;
+
+    /// M: Fix ALPS01276300, at this case, avoid move home to top when resume top
+    boolean mMovingToFront = false;
 
     TaskRecord(ActivityManagerService service, int _taskId, ActivityInfo info, Intent _intent,
             IVoiceInteractionSession _voiceSession, IVoiceInteractor _voiceInteractor) {
@@ -359,6 +369,14 @@ final class TaskRecord {
             taskToReturnTo = HOME_ACTIVITY_TYPE;
         }
         mTaskToReturnTo = taskToReturnTo;
+
+        // M: ALPS01902110 Debug task return to @{
+        if (ActivityManagerService.DEBUG_TASK_RETURNTO) {
+            Slog.d(ActivityManagerService.TAG,
+                        "setTaskToReturnTo " + taskToReturnTo + " to " + this);
+            Slog.d(ActivityManagerService.TAG, Log.getStackTraceString(new Throwable()));
+        }
+        /// @}
     }
 
     int getTaskToReturnTo() {
@@ -645,7 +663,8 @@ final class TaskRecord {
             if (r.finishing) {
                 continue;
             }
-            if (r.realActivity.equals(newR.realActivity)) {
+            /// M: ALPS01920238 To find base activity under same user.
+            if (r.realActivity.equals(newR.realActivity) && r.userId == newR.userId) {
                 // Here it is!  Now finish everything in front...
                 final ActivityRecord ret = r;
 
@@ -1158,4 +1177,7 @@ final class TaskRecord {
         stringName = sb.toString();
         return toString();
     }
+    
+    /// M: BMW, Check this floating task background whether is HomeStack.
+    boolean mFloatingBackIsHome = false;
 }

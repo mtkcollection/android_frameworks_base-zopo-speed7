@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +27,7 @@ import android.content.Intent;
 import android.os.UserManager;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.Slog;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -50,6 +56,8 @@ import org.apache.harmony.security.pkcs7.SignedData;
 import org.apache.harmony.security.pkcs7.SignerInfo;
 import org.apache.harmony.security.x509.Certificate;
 
+import java.io.FileReader;
+import java.io.FileOutputStream;
 /**
  * RecoverySystem contains methods for interacting with the Android
  * recovery system (the separate partition that can be used to install
@@ -152,6 +160,7 @@ public class RecoverySystem {
         long fileLen = packageFile.length();
 
         RandomAccessFile raf = new RandomAccessFile(packageFile, "r");
+        Log.d(TAG, "Entering verifyPackage method");
         try {
             int lastPercent = 0;
             long lastPublishTime = System.currentTimeMillis();
@@ -394,7 +403,17 @@ public class RecoverySystem {
         }
         final ConditionVariable condition = new ConditionVariable();
 
+        Log.d(TAG, "Ready to send broadcast: android.intent.action.MASTER_CLEAR_NOTIFICATION");
         Intent intent = new Intent("android.intent.action.MASTER_CLEAR_NOTIFICATION");
+        /* In JB:
+        context.sendOrderedBroadcast(intent, android.Manifest.permission.MASTER_CLEAR,
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        condition.open();
+                    }
+                }, null, 0, null, null);
+         */
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
         context.sendOrderedBroadcastAsUser(intent, UserHandle.OWNER,
                 android.Manifest.permission.MASTER_CLEAR,
@@ -407,6 +426,7 @@ public class RecoverySystem {
 
         // Block until the ordered broadcast has completed.
         condition.block();
+        Log.d(TAG, "Finish to send broadcast: android.intent.action.MASTER_CLEAR_NOTIFICATION");
 
         String shutdownArg = null;
         if (shutdown) {
@@ -446,27 +466,62 @@ public class RecoverySystem {
      * @param args to pass to the recovery utility.
      * @throws IOException if something goes wrong.
      */
+    private static String ReadInAndPrint(File fhandle) throws FileNotFoundException, IOException {
+        FileReader command_read = new FileReader(fhandle);
+        //CharBuffer data = CharBuffer.allocate(256);
+        char[] data = new char[256];
+        int read_cnt = 0;
+        String Content = "";
+        try {
+            read_cnt = command_read.read(data);
+            if (fhandle.exists()) {
+                Log.d(TAG, String.format(">>>Ready to Read from File:%s exists <<<\n", fhandle.getAbsolutePath()));
+            }
+            for (int i = 0; read_cnt > 0 && i < read_cnt ; i++) {
+                Content = Content + String.valueOf(data[i]);
+            }
+            Slog.d(TAG, String.format(">>> %d chars,content:%s from Content <<<", read_cnt, Content));
+
+            Slog.d(TAG, String.format("Checking actions are done from %s\n", fhandle.getName()));
+        }
+        finally {
+            command_read.close();
+        }
+        return Content;
+//        MoveFile(fhandle);
+    }
+
+    private static void WriteByFdSync(File fhandle, String... args) throws FileNotFoundException, IOException {
+        FileOutputStream command = new FileOutputStream(fhandle);
+        try {
+            for (String arg : args) {
+                if (!TextUtils.isEmpty(arg)) {
+                    Slog.d(TAG, "Write command: " + arg + "\n");
+                    command.write(arg.getBytes());
+                    command.write("\n".getBytes());
+                }
+            }
+            command.getFD().sync();
+        }
+        finally {
+            command.close();
+        }
+        return ;
+    }
     private static void bootCommand(Context context, String... args) throws IOException {
         RECOVERY_DIR.mkdirs();  // In case we need it
         COMMAND_FILE.delete();  // In case it's not writable
         LOG_FILE.delete();
 
-        FileWriter command = new FileWriter(COMMAND_FILE);
-        try {
-            for (String arg : args) {
-                if (!TextUtils.isEmpty(arg)) {
-                    command.write(arg);
-                    command.write("\n");
-                }
-            }
-        } finally {
-            command.close();
-        }
+        WriteByFdSync(COMMAND_FILE, args);
+
+        Slog.d(TAG, "Current build type is: " + Build.TYPE + "\n");
+        ReadInAndPrint(COMMAND_FILE);
 
         // Having written the command file, go ahead and reboot
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         pm.reboot(PowerManager.REBOOT_RECOVERY);
-
+        Slog.d(TAG, "!!! pm.reboot failed !!!\n");
         throw new IOException("Reboot failed (no permissions?)");
     }
 
@@ -478,13 +533,14 @@ public class RecoverySystem {
      */
     public static String handleAftermath() {
         // Record the tail of the LOG_FILE
+        Log.d(TAG, "Entering the handleAftermath method");
         String log = null;
         try {
             log = FileUtils.readTextFile(LOG_FILE, -LOG_FILE_MAX_LENGTH, "...\n");
         } catch (FileNotFoundException e) {
-            Log.i(TAG, "No recovery log file");
+            Slog.w(TAG, "No recovery log file");
         } catch (IOException e) {
-            Log.e(TAG, "Error reading recovery log", e);
+            Slog.e(TAG, "Error reading recovery log", e);
         }
 
         // Delete everything in RECOVERY_DIR except those beginning
@@ -494,9 +550,9 @@ public class RecoverySystem {
             if (names[i].startsWith(LAST_PREFIX)) continue;
             File f = new File(RECOVERY_DIR, names[i]);
             if (!f.delete()) {
-                Log.e(TAG, "Can't delete: " + f);
+                Slog.e(TAG, "Can't delete: " + f);
             } else {
-                Log.i(TAG, "Deleted: " + f);
+                Slog.i(TAG, "Deleted: " + f);
             }
         }
 

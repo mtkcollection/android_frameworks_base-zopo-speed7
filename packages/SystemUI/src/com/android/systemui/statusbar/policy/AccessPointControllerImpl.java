@@ -270,6 +270,13 @@ public class AccessPointControllerImpl implements NetworkController.AccessPointC
             if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())) {
                 updateAccessPoints();
                 mScanning = false;
+            // /M: Start scan need wifi is enabled
+            } else if (WifiManager.WIFI_STATE_CHANGED_ACTION.equals(intent.getAction())) {
+                int state = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN);
+                if (state == WifiManager.WIFI_STATE_ENABLED) {
+                    if (DEBUG) Log.d(TAG, "WIFI_STATE_ENABLED scan");
+                    mScanning = mWifiManager.startScan();
+                }
             }
         }
     }

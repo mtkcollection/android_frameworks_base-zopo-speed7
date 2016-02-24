@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -180,6 +185,41 @@ public class UsbManager {
     public static final String USB_FUNCTION_PTP = "ptp";
 
     /**
+     * Name of the ACM USB function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * @internal
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_ACM = "acm";
+
+    /**
+     * Name of the ACM USB function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_DUAL_ACM = "dual_acm";
+
+    /**
+     * Name of the USB Charging function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * @internal
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_CHARGING_ONLY = "charging";
+
+    /**
+     * Name of the USB BICR function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * @internal
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_BICR = "bicr";
+
+    /**
      * Name of the audio source USB function.
      * Used in extras for the {@link #ACTION_USB_STATE} broadcast
      *
@@ -194,6 +234,24 @@ public class UsbManager {
      * {@hide}
      */
     public static final String USB_FUNCTION_ACCESSORY = "accessory";
+
+    /**
+     * Name of the EEM ethernet USB function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * @internal
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_EEM = "eem";
+    //VIA-START VIA USB
+    /**
+     * Name of the VIA_CDROM USB function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_VIA_CDROM = "via_cdrom_storage";
+    //VIA-END VIA USB
 
     /**
      * Name of extra for {@link #ACTION_USB_DEVICE_ATTACHED} and
@@ -454,6 +512,27 @@ public class UsbManager {
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in setCurrentFunction", e);
         }
+    }
+
+    /**
+     * Returns the current USB state.
+     *
+     * @return current USB state.
+     *
+     * @internal
+     * {@hide}
+     */
+    public int getCurrentState() {
+        try {
+            boolean isEmulator = SystemProperties.get("ro.kernel.qemu").equals("1");
+            if (!isEmulator)
+                return mService.getCurrentState();
+            else
+                return 0;
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException in getCurrentState", e);
+        }
+        return 0;
     }
 
     /**

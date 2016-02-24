@@ -50,6 +50,23 @@
         android:layout_height="4dp"
         android:visibility="gone"
         />
+    <!-- M: Support "SystemUI - VoLTE icon". @{ -->
+    <ImageView
+        android:id="@+id/volte_icon"
+        android:layout_height="wrap_content"
+        android:layout_width="wrap_content"
+        android:visibility="gone"
+        />
+    <!-- M: Support "SystemUI - VoLTE icon". }@ -->
+    <!-- M: Support "Default SIM Indicator". @{ -->
+    <ImageView
+        android:id="@+id/sim_indicator_internet_or_alwaysask"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:layout_marginEnd="3dip"
+        />
+    <!-- M: Support "Default SIM Indicator". }@ -->
     <LinearLayout
         android:id="@+id/mobile_signal_group"
         android:layout_height="wrap_content"

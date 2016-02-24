@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,6 +126,7 @@ void GradientCache::operator()(GradientCacheEntry&, Texture*& texture) {
         mSize -= size;
 
         texture->deleteTexture();
+        TT_REMOVE(texture->id, "[GradientCache.cpp] operator -");
         delete texture;
     }
 }
@@ -292,9 +298,11 @@ void GradientCache::generateTexture(uint32_t* colors, float* positions, Texture*
         // We have to use GL_RGBA16F because GL_RGBA32F does not support filtering
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, texture->height, 0,
                 GL_RGBA, GL_FLOAT, pixels);
+        TT_ADD(texture->id, width, texture->height, GL_RGBA, GL_FLOAT, String8("gradient"), "[GradientCache.cpp] generateTexture +");
     } else {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, texture->height, 0,
                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        TT_ADD(texture->id, width, texture->height, GL_RGBA, GL_UNSIGNED_BYTE, String8("gradient"), "[GradientCache.cpp] generateTexture +");
     }
 
     texture->setFilter(GL_LINEAR);

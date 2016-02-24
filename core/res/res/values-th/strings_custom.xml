@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!-- For Power Reboot -->
+    <string name="global_action_reboot">รีบูต</string>
+    <string name="reboot_confirm">โทรศัพท์ของคุณจะเริ่มต้นใหม่.</string>
+</resources>

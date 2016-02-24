@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -383,6 +388,15 @@ android_mtp_MtpDevice_get_storage_id(JNIEnv *env, jobject thiz, jint object_id)
         return -1;
 }
 
+static jlong
+android_mtp_MtpDevice_createMtp_file(JNIEnv *env, jobject thiz, jint object_id)
+{
+    MtpDevice* device = get_device_from_object(env, thiz);
+    if (device)
+        return device->copyObject(object_id);
+    else
+        return -1;
+}
 static jboolean
 android_mtp_MtpDevice_import_file(JNIEnv *env, jobject thiz, jint object_id, jstring dest_path)
 {
@@ -399,6 +413,52 @@ android_mtp_MtpDevice_import_file(JNIEnv *env, jobject thiz, jint object_id, jst
     }
 
     return JNI_FALSE;
+}
+static jboolean
+android_mtp_MtpDevice_export_file(JNIEnv *env, jobject thiz, jint object_id, jstring dest_path)
+{
+	char tmpname[256];
+	MtpDevice* device = get_device_from_object(env, thiz);
+		if (!device)
+			return NULL;
+		MtpObjectInfo* objectInfo = device->getObjectInfo(object_id);
+		if(objectInfo==NULL)
+			{
+		 	ALOGE("android_mtp_MtpDevice_export_file get  getObjectInfo failed : object id(0x%x).",object_id );
+			return false;
+			}
+		memset(tmpname,0,256);
+		strcpy(tmpname,"Copy of ");
+		strcat(tmpname,objectInfo->mName);
+		objectInfo->mName=strdup(tmpname);
+		ALOGE("android_mtp_MtpDevice_export_file '%s' ori handle:0x%x.parent:0x%x",objectInfo->mName ,objectInfo->mHandle,objectInfo->mParent);
+   		 MtpObjectHandle objHandle=device->sendObjectInfo(objectInfo);
+		if(objHandle==0xFFFFFFFF)
+			{
+		 	ALOGE("android_mtp_MtpDevice_export_file get new handle failed :0x%x.objectInfo->mName %s",objHandle,objectInfo->mName );
+			return false;
+			}
+	    if (device) {
+	        const char *destPathStr = env->GetStringUTFChars(dest_path, NULL);
+	        if (destPathStr == NULL) {
+	            return false;
+	        }
+				int fd = ::open(destPathStr, O_RDWR , S_IRUSR );
+		    if (fd < 0) {
+		        ALOGE("open failed for %s", destPathStr);
+		        return false;
+		    }
+		    fchown(fd, getuid(), AID_SDCARD_RW);
+		    int mask = umask(0);
+		    fchmod(fd, 0664);
+		    umask(mask);
+		        bool result = device->sendObject(objectInfo, fd);
+				ALOGE("android_mtp_MtpDevice_export_file reselt 0x%x.",result );
+		        env->ReleaseStringUTFChars(dest_path, destPathStr);
+				 ::close(fd);
+		        return result;
+		    }
+    return false;
 }
 
 // ----------------------------------------------------------------------------
@@ -421,8 +481,11 @@ static JNINativeMethod gMethods[] = {
     {"native_delete_object",    "(I)Z", (void *)android_mtp_MtpDevice_delete_object},
     {"native_get_parent",       "(I)J", (void *)android_mtp_MtpDevice_get_parent},
     {"native_get_storage_id",   "(I)J", (void *)android_mtp_MtpDevice_get_storage_id},
+    {"native_createMtp_file",   "(I)Z", (void *)android_mtp_MtpDevice_createMtp_file},
     {"native_import_file",     "(ILjava/lang/String;)Z",
                                         (void *)android_mtp_MtpDevice_import_file},
+    {"native_export_file",     "(ILjava/lang/String;)Z",
+                                        (void *)android_mtp_MtpDevice_export_file},
 };
 
 static const char* const kClassPathName = "android/mtp/MtpDevice";

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1134,6 +1139,8 @@ final class ApplicationPackageManager extends PackageManager {
     public CharSequence getText(String packageName, int resid,
                                 ApplicationInfo appInfo) {
         ResourceName name = new ResourceName(packageName, resid);
+        if (false) Log.d("PackageManager","Query text for package: " + packageName
+                        + "resid: " + resid);
         CharSequence text = getCachedString(name);
         if (text != null) {
             return text;
@@ -1142,6 +1149,8 @@ final class ApplicationPackageManager extends PackageManager {
             try {
                 appInfo = getApplicationInfo(packageName, sDefaultFlags);
             } catch (NameNotFoundException e) {
+                if (false) Log.w("PackageManager","Cannot find application info for package " + packageName
+                    + "return null text");
                 return null;
             }
         }
@@ -1149,6 +1158,7 @@ final class ApplicationPackageManager extends PackageManager {
             Resources r = getResourcesForApplication(appInfo);
             text = r.getText(resid);
             putCachedString(name, text);
+            if (false) Log.d("PackageManager","return text:  " + text + "for package: " + packageName);
             return text;
         } catch (NameNotFoundException e) {
             Log.w("PackageManager", "Failure retrieving resources for "
@@ -1160,6 +1170,7 @@ final class ApplicationPackageManager extends PackageManager {
                   + Integer.toHexString(resid) + " in package "
                   + packageName, e);
         }
+        if (false) Log.w("PackageManager","return null text for package: " + packageName);
         return null;
     }
 
@@ -1521,6 +1532,21 @@ final class ApplicationPackageManager extends PackageManager {
             // Should never happen!
         }
         return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+    }
+
+    /**
+     * M: Add api for check apk signature
+     *
+     * @hide
+     */
+    @Override
+    public int checkAPKSignatures(String pkg) {
+        try {
+            return mPM.checkAPKSignatures(pkg);
+        } catch (RemoteException e) {
+            return PackageInfo.KEY_ERROR;
+              // Should never happen!
+        }
     }
 
     @Override

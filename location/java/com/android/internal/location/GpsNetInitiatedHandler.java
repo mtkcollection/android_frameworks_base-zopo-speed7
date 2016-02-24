@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -367,12 +372,21 @@ public class GpsNetInitiatedHandler {
                 ", title: " + title +
                 ", message: " + message);
 
+        //mtk add start the message will be cut due to no more space for single line, use BigTextStyle instead
         // Construct Notification
-        if (mNiNotification == null) {
-            mNiNotification = new Notification();
-            mNiNotification.icon = com.android.internal.R.drawable.stat_sys_gps_on; /* Change notification icon here */
-            mNiNotification.when = 0;
-        }
+        //if (mNiNotification == null) {
+            //mNiNotification = new Notification();
+            //mNiNotification.icon = com.android.internal.R.drawable.stat_sys_gps_on; /* Change notification icon here */
+            //mNiNotification.when = 0;
+        //}
+        Notification.Builder builder = new Notification.Builder(mContext)
+            .setContentTitle(title)
+            .setTicker(getNotifTicker(notif, mContext))
+            .setSmallIcon(com.android.internal.R.drawable.stat_sys_gps_on)
+            .setWhen(0);
+        mNiNotification = new Notification.BigTextStyle(builder)
+            .bigText(message).build();
+        //mtk add end the message will be cut due to no more space for single line, use BigTextStyle instead
 
         if (mPlaySounds) {
             mNiNotification.defaults |= Notification.DEFAULT_SOUND;

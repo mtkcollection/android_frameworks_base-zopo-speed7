@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -156,9 +161,15 @@ public class Vpn {
                     if (userHandle == UserHandle.USER_NULL) return;
 
                     if (Intent.ACTION_USER_ADDED.equals(action)) {
-                        onUserAdded(userHandle);
+                        if (mVpnUsers != null) {
+                            Log.i(TAG, "VPN not connected, do not add user for vpn");
+                            onUserAdded(userHandle);
+                            }
                     } else if (Intent.ACTION_USER_REMOVED.equals(action)) {
-                        onUserRemoved(userHandle);
+                        if (mVpnUsers != null) {
+                            Log.i(TAG, "VPN not connected, do not remove user for vpn");
+                            onUserRemoved(userHandle);
+                            }
                     }
                 }
             };
@@ -216,6 +227,7 @@ public class Vpn {
      * @return true if the operation is succeeded.
      */
     public synchronized boolean prepare(String oldPackage, String newPackage) {
+        Log.i(TAG, "prepare old:" + oldPackage + ",new:" + newPackage);
         if (oldPackage != null && getAppUid(oldPackage, mUserHandle) != mOwnerUID) {
             // The package doesn't match. We return false (to obtain user consent) unless the user
             // has already consented to that VPN package.
@@ -1028,6 +1040,12 @@ public class Vpn {
         }
     }
 
+    ///M:  To handle keystore reset
+    public synchronized boolean forceDisconnect() {
+        Log.i(TAG, "forceDisconnect");
+        return prepare(mPackage, VpnConfig.LEGACY_VPN);
+    }
+
     /**
      * Bringing up a VPN connection takes time, and that is all this thread
      * does. Here we have plenty of time. The only thing we need to take
@@ -1184,6 +1202,7 @@ public class Vpn {
 
                     // Start the daemon.
                     String daemon = mDaemons[i];
+                    Log.d(TAG, "systemservice start " + daemon);
                     SystemService.start(daemon);
 
                     // Wait for the daemon to start.

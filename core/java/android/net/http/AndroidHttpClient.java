@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +61,8 @@ import android.net.SSLSessionCache;
 import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
+
+import org.apache.http.impl.client.DefaultHttpRequestRetryHandler;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -131,6 +138,9 @@ public final class AndroidHttpClient implements HttpClient {
         HttpConnectionParams.setConnectionTimeout(params, SOCKET_OPERATION_TIMEOUT);
         HttpConnectionParams.setSoTimeout(params, SOCKET_OPERATION_TIMEOUT);
         HttpConnectionParams.setSocketBufferSize(params, 8192);
+
+        /// M: enhance MMS connection behavior
+        HttpConnectionParams.setSoSndTimeout(params, SOCKET_OPERATION_TIMEOUT);
 
         // Don't handle redirects -- return them to the caller.  Our code
         // often wants to re-POST after a redirect, which we must do ourselves.
@@ -523,5 +533,18 @@ public final class AndroidHttpClient implements HttpClient {
      */
     public static long parseDate(String dateString) {
         return HttpDateTime.parse(dateString);
+    }
+
+    /// M: enhance MMS retry in AndroidHttpClient module
+    /**
+     * Set a handler for determining if an HttpRequest
+     * should be retried after a recoverable exception during execution.
+     * @param retryHandler used by request executors
+     * @hide
+     * @internal
+     */
+    public void setHttpRequestRetryHandler(
+            final DefaultHttpRequestRetryHandler retryHandler) {
+       ((DefaultHttpClient) delegate).setHttpRequestRetryHandler(retryHandler);
     }
 }

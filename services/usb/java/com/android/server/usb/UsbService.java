@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -262,6 +267,16 @@ public class UsbService extends IUsbManager.Stub {
             mDeviceManager.setCurrentFunctions(function, makeDefault);
         } else {
             throw new IllegalStateException("USB device mode not supported");
+        }
+    }
+
+    @Override
+    public int getCurrentState() {
+        mContext.enforceCallingOrSelfPermission(android.Manifest.permission.MANAGE_USB, null);
+        if (mDeviceManager != null) {
+            return mDeviceManager.getCurrentState();
+        } else {
+            return 0;
         }
     }
 

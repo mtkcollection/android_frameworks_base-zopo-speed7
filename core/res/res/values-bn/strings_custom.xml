@@ -1,0 +1,32 @@
+﻿<!--
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- For Power Reboot -->
+  <string name="global_action_reboot">রিবুট</string>
+  <string name="reboot_confirm_question">আপনি রিবুট করতে চান?</string>
+  <string name="reboot_confirm">আপনার ফোন রিবুট হবে.</string>
+  <string name="global_action_shotscreen">স্ক্রিনশট</string>
+  <string name="global_actions_toggle_dataconnection_mode">ডেটা নেটওয়ার্ক মোড</string>
+  <string name="global_actions_dataconnection_mode_on_status">ডেটা সংযোগ চালু</string>
+  <string name="global_actions_dataconnection_mode_off_status">ডেটা কানেকশন বন্ধ করা আছে</string>
+  <string name="global_actions_toggle_wifi_mode">Wifi মোড</string>
+  <string name="global_actions_wifi_mode_on_status">Wifi অন</string>
+  <string name="global_actions_wifi_mode_off_status">Wifi অফ</string>
+  <string name="global_actions_toggle_longclick_notice">প্রম্পট：\n জোর করে শাটডাউন করা: যতক্ষণ না ফোনের স্ক্রিন বন্ধ হচ্ছে পাওয়ার বোতাম 6 সেকেন্ড চেপে ধরে থাকুন.</string>
+</resources>

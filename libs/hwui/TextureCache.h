@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +40,11 @@ namespace uirenderer {
 
 // Debug
 #if DEBUG_TEXTURES
-    #define TEXTURE_LOGD(...) ALOGD(__VA_ARGS__)
+    #define TEXTURE_LOGD(...) \
+    {                              \
+        if (g_HWUI_debug_textures) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define TEXTURE_LOGD(...)
 #endif
@@ -141,8 +150,9 @@ private:
      */
     void generateTexture(const SkBitmap* bitmap, Texture* texture, bool regenerate = false);
 
-    void uploadLoFiTexture(bool resize, const SkBitmap* bitmap, uint32_t width, uint32_t height);
-    void uploadToTexture(bool resize, GLenum format, GLsizei stride, GLsizei bpp,
+    /// M: texture id for log
+    void uploadLoFiTexture(GLint id, bool resize, const SkBitmap* bitmap, uint32_t width, uint32_t height);
+    void uploadToTexture(GLint id, bool resize, GLenum format, GLsizei stride, GLsizei bpp,
             GLsizei width, GLsizei height, GLenum type, const GLvoid * data);
 
     void init();

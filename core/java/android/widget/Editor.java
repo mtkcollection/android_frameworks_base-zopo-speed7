@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,11 +110,15 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.TextView.Drawables;
 import android.widget.TextView.OnEditorActionListener;
+import com.android.internal.view.StandaloneActionMode;
 
 import java.text.BreakIterator;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 /**
  * Helper class used by TextView to handle editable text views.
@@ -255,6 +264,11 @@ public class Editor {
             startSelectionActionMode();
         }
 
+        /// M: Here needs to set mCancelled = false befor blinking
+        if (mBlink != null) {
+            mBlink.uncancel();
+        }
+
         getPositionListener().addSubscriber(mCursorAnchorInfoNotifier, true);
     }
 
@@ -266,7 +280,8 @@ public class Editor {
         }
 
         if (mBlink != null) {
-            mBlink.removeCallbacks(mBlink);
+            /// M: Here is not only removeCallbacks() but also set mCancelled = true
+            mBlink.cancel();
         }
 
         if (mInsertionPointCursorController != null) {
@@ -490,6 +505,8 @@ public class Editor {
             stopSelectionActionMode();
             if (mSelectionModifierCursorController != null) {
                 mSelectionModifierCursorController.onDetached();
+                /// M: need to hide first if no action bar in the window
+                mSelectionModifierCursorController.hide();
                 mSelectionModifierCursorController = null;
             }
         }
@@ -516,7 +533,7 @@ public class Editor {
     }
 
     private void hideCursorControllers() {
-        if (mSuggestionsPopupWindow != null && !mSuggestionsPopupWindow.isShowingUp()) {
+        if (mSuggestionsPopupWindow != null && (!mSuggestionsPopupWindow.isShowingUp())) {
             // Should be done before hide insertion point controller since it triggers a show of it
             mSuggestionsPopupWindow.hide();
         }
@@ -696,18 +713,26 @@ public class Editor {
             selectionStart = ((Spanned) mTextView.getText()).getSpanStart(urlSpan);
             selectionEnd = ((Spanned) mTextView.getText()).getSpanEnd(urlSpan);
         } else {
+            final int textLength = mTextView.getText().length();
+            /// M: wordIterator will recognize some emoji as word boundaries so it should not used if string has emoji
+            if (TextUtils.hasReplacement(mTextView.getText().subSequence(minOffset, textLength))) {
+               long range = getCharRange(minOffset);
+               selectionStart = TextUtils.unpackRangeStartFromLong(range);
+               selectionEnd = TextUtils.unpackRangeEndFromLong(range);
+               Log.v(TextView.LOG_TAG, "here1-" + Integer.toString(selectionStart) + "," + Integer.toString(selectionEnd)) ;
+            } else {
             final WordIterator wordIterator = getWordIterator();
             wordIterator.setCharSequence(mTextView.getText(), minOffset, maxOffset);
-
             selectionStart = wordIterator.getBeginning(minOffset);
             selectionEnd = wordIterator.getEnd(maxOffset);
-
             if (selectionStart == BreakIterator.DONE || selectionEnd == BreakIterator.DONE ||
                     selectionStart == selectionEnd) {
                 // Possible when the word iterator does not properly handle the text's language
                 long range = getCharRange(minOffset);
                 selectionStart = TextUtils.unpackRangeStartFromLong(range);
                 selectionEnd = TextUtils.unpackRangeEndFromLong(range);
+            }
+               Log.v(TextView.LOG_TAG, "here2-" + Integer.toString(selectionStart) + "," + Integer.toString(selectionEnd)) ;
             }
         }
 
@@ -740,7 +765,12 @@ public class Editor {
             }
         }
         if (offset < textLength) {
+            /// M: offset should not only added 1 if selection include emoji
+            if (TextUtils.hasReplacement(mTextView.getText().subSequence(offset, textLength))) {
+                return TextUtils.packRangeInLong(offset, offset + TextUtils.getNextTransition(mTextView.getText().subSequence(offset, textLength)));
+            } else {
             return TextUtils.packRangeInLong(offset,  offset + 1);
+        }
         }
         if (offset - 2 >= 0) {
             final char previousChar = mTextView.getText().charAt(offset - 1);
@@ -1038,6 +1068,16 @@ public class Editor {
         return -1;
     }
 
+    /**
+      *  M: support overflow menu in text view for Browser.
+      */
+    private boolean isSelectionActionModeOverflowMenuShowing() {
+        if (mSelectionActionMode != null && mSelectionActionMode instanceof StandaloneActionMode) {
+            return ((StandaloneActionMode) mSelectionActionMode).isOverflowMenuShowing();
+        }
+        return false;
+    }
+
     void onWindowFocusChanged(boolean hasWindowFocus) {
         if (hasWindowFocus) {
             if (mBlink != null) {
@@ -1052,7 +1092,11 @@ public class Editor {
                 mInputContentType.enterDown = false;
             }
             // Order matters! Must be done before onParentLostFocus to rely on isShowingUp
+            /// M: support overflow menu in text view for Browser. @{
+            if (!isSelectionActionModeOverflowMenuShowing()) {
             hideControllers();
+            }
+            /// M: support overflow menu in text view for Browser. }@
             if (mSuggestionsPopupWindow != null) {
                 mSuggestionsPopupWindow.onParentLostFocus();
             }
@@ -1530,6 +1574,7 @@ public class Editor {
      * @return true if the selection mode was actually started.
      */
     boolean startSelectionActionMode() {
+        Log.v(TextView.LOG_TAG, "startSelectionActionMode()");
         if (mSelectionActionMode != null) {
             // Selection action mode is already started
             return false;
@@ -1636,6 +1681,7 @@ public class Editor {
     }
 
     protected void stopSelectionActionMode() {
+        Log.v(TextView.LOG_TAG, "stopSelectionActionMode()");
         if (mSelectionActionMode != null) {
             // This will hide the mSelectionModifierCursorController
             mSelectionActionMode.finish();
@@ -1879,6 +1925,13 @@ public class Editor {
             mTextView.deleteText_internal(dragSourceStart, dragSourceEnd);
 
             // Make sure we do not leave two adjacent spaces.
+            /// M: Google Issue. When dragSourceStart is 0 or text length,always JE. @{
+            if (dragSourceStart == 0) {
+                dragSourceStart++;
+            } else if (dragSourceStart == mTextView.length()) {
+                dragSourceStart--;
+            }
+            /// M: Google Issue. When dragSourceStart is 0 or text length,always JE. }@
             final int prevCharIdx = Math.max(0,  dragSourceStart - 1);
             final int nextCharIdx = Math.min(mTextView.getText().length(), dragSourceStart + 1);
             if (nextCharIdx > prevCharIdx + 1) {
@@ -1992,6 +2045,13 @@ public class Editor {
         @Override
         public void onSpanChanged(Spannable text, Object span, int previousStart, int previousEnd,
                 int newStart, int newEnd) {
+            /// M: After screen rotation, sometimes the selection start/end have the same value
+            ///    To handle such a case, stop the selection action mode
+            if (Selection.SELECTION_START == span || Selection.SELECTION_END == span) {
+                if (mTextView.getSelectionStart() == mTextView.getSelectionEnd()) {
+                    stopSelectionActionMode();
+                }
+            }
             if (isNonIntermediateSelectionSpan(text, span)) {
                 sendUpdateSelection();
             } else if (mPopupWindow != null && span instanceof EasyEditSpan) {
@@ -2246,6 +2306,22 @@ public class Editor {
 
             final PositionListener positionListener = getPositionListener();
             updatePosition(positionListener.getPositionX(), positionListener.getPositionY());
+            /// M: hide popwindow when WindowFocus is false
+            final ViewTreeObserver observer = mContentView.getViewTreeObserver();
+            observer.addOnWindowFocusChangeListener(new ViewTreeObserver.OnWindowFocusChangeListener() {
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  if (!hasFocus) {
+                      if (isShowing()) {
+                          /// M: handling ParentLostFocus here directly because ExtractEditText does not receive onWindowFocusChange
+                          if (mSuggestionsPopupWindow != null) {
+                             mSuggestionsPopupWindow.onParentLostFocus() ;
+                          }
+                          hideControllers() ;
+                      }
+                  }
+              }
+            }) ;
         }
 
         protected void measureContent() {
@@ -2577,7 +2653,10 @@ public class Editor {
                 int nbSuggestions = suggestions.length;
                 for (int suggestionIndex = 0; suggestionIndex < nbSuggestions; suggestionIndex++) {
                     String suggestion = suggestions[suggestionIndex];
-
+                    /// M: only add suggestions whose length is smaller than mTextView.mMaxLength
+                    if ((mTextView.mMaxLength >= 0) && (suggestion.length() + mTextView.length() - (spanEnd - spanStart) > mTextView.mMaxLength)) {
+                       continue ;
+                    }
                     boolean suggestionIsDuplicate = false;
                     for (int i = 0; i < mNumberOfSuggestions; i++) {
                         if (mSuggestionInfos[i].text.toString().equals(suggestion)) {
@@ -2694,6 +2773,13 @@ public class Editor {
                     }
                     mTextView.deleteText_internal(spanUnionStart, spanUnionEnd);
                 }
+
+                /// M: Resrtart input because IME is not aware of this content change
+                InputMethodManager imm = InputMethodManager.peekInstance();
+                if (imm != null) {
+                    imm.restartInput(mTextView);
+                }
+
                 hide();
                 return;
             }
@@ -2791,6 +2877,8 @@ public class Editor {
 
         @Override
         public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+            Log.v(TextView.LOG_TAG, "SelectionActionModeCallback.onCreateActionMode() mode:"
+                    + mode);
             final boolean legacy = mTextView.getContext().getApplicationInfo().targetSdkVersion <
                     Build.VERSION_CODES.LOLLIPOP;
             final Context context = !legacy && menu instanceof MenuBuilder ?
@@ -2866,6 +2954,8 @@ public class Editor {
 
         @Override
         public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+            Log.v(TextView.LOG_TAG, "SelectionActionModeCallback.onActionItemClicked() mode:"
+                    + mode + ", item:" + item);
             if (mCustomSelectionActionModeCallback != null &&
                  mCustomSelectionActionModeCallback.onActionItemClicked(mode, item)) {
                 return true;
@@ -2875,6 +2965,8 @@ public class Editor {
 
         @Override
         public void onDestroyActionMode(ActionMode mode) {
+            Log.v(TextView.LOG_TAG, "SelectionActionModeCallback.onDestroyActionMode() mode:"
+                    + mode);
             if (mCustomSelectionActionModeCallback != null) {
                 mCustomSelectionActionModeCallback.onDestroyActionMode(mode);
             }
@@ -2906,6 +2998,7 @@ public class Editor {
 
         @Override
         protected void createPopupWindow() {
+            Log.v(TextView.LOG_TAG, "ActionPopupWindow.createPopupWindow()");
             mPopupWindow = new PopupWindow(mTextView.getContext(), null,
                     com.android.internal.R.attr.textSelectHandleWindowStyle);
             mPopupWindow.setClippingEnabled(true);
@@ -2940,6 +3033,7 @@ public class Editor {
 
         @Override
         public void show() {
+            Log.v(TextView.LOG_TAG, "ActionPopupWindow.show()");
             boolean canPaste = mTextView.canPaste();
             boolean canSuggest = mTextView.isSuggestionsEnabled() && isCursorInsideSuggestionSpan();
             mPasteTextView.setVisibility(canPaste ? View.VISIBLE : View.GONE);
@@ -3397,8 +3491,19 @@ public class Editor {
                     if (isShowing()) {
                         mContainer.update(positionX, positionY, -1, -1);
                     } else {
-                        mContainer.showAtLocation(mTextView, Gravity.NO_GRAVITY,
+                        /// M: BMW. [ALPS01564422]. Add DISPLAY_CLIP_VERTICAL to enable
+                        /// clipping to an overall display along the vertical dimension @{
+                        MultiWindowProxy mMultiWindowProxy = MultiWindowProxy.getInstance();                         
+                        if (MultiWindowProxy.isFeatureSupport() && mMultiWindowProxy != null
+								&& mMultiWindowProxy.getFloatingState()) {
+                            int gravity = Gravity.TOP | Gravity.START | Gravity.DISPLAY_CLIP_VERTICAL;
+                            mContainer.showAtLocation(mTextView, gravity,
                                 positionX, positionY);
+                        } else {
+                            mContainer.showAtLocation(mTextView, Gravity.NO_GRAVITY,
+                                positionX, positionY);
+                        }
+                        /// @}
                     }
                 } else {
                     if (isShowing()) {
@@ -3682,12 +3787,20 @@ public class Editor {
         @Override
         public void updatePosition(float x, float y) {
             int offset = mTextView.getOffsetForPosition(x, y);
+            int textLength = mTextView.getText().length();
 
             // Handles can not cross and selection is at least one character
+            final int selectionStart = mTextView.getSelectionStart() ;
             final int selectionEnd = mTextView.getSelectionEnd();
-            if (offset >= selectionEnd) offset = Math.max(0, selectionEnd - 1);
-
-            positionAtCursorOffset(offset, false);
+            if (offset >= selectionEnd) {
+               /// M: adjust selectionStart if it is bigger than selectionEnd
+               if (TextUtils.hasReplacement(mTextView.getText().subSequence(selectionStart, textLength))) {
+                  offset = selectionEnd - TextUtils.getNextTransition(mTextView.getText().subSequence(selectionStart, textLength));
+               } else {
+                  offset = selectionEnd - 1;
+               }
+            }
+            positionAtCursorOffset(Math.max(0, offset), false);
         }
 
         public ActionPopupWindow getActionPopupWindow() {
@@ -3730,14 +3843,19 @@ public class Editor {
         @Override
         public void updatePosition(float x, float y) {
             int offset = mTextView.getOffsetForPosition(x, y);
+            int textLength = mTextView.getText().length();
 
             // Handles can not cross and selection is at least one character
             final int selectionStart = mTextView.getSelectionStart();
             if (offset <= selectionStart) {
-                offset = Math.min(selectionStart + 1, mTextView.getText().length());
+               /// M: adjust selectionEnd if it is smaller than selectionStart
+               if (TextUtils.hasReplacement(mTextView.getText().subSequence(selectionStart, textLength))) {
+                  offset = selectionStart + TextUtils.getNextTransition(mTextView.getText().subSequence(selectionStart, textLength));
+               } else {
+                  offset = selectionStart + 1;
             }
-
-            positionAtCursorOffset(offset, false);
+            }
+            positionAtCursorOffset(Math.min(offset, textLength), false);
         }
 
         public void setActionPopupWindow(ActionPopupWindow actionPopupWindow) {

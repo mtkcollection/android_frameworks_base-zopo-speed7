@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +24,12 @@ package android.os;
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
 import android.os.storage.IMountService;
+import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.text.TextUtils;
 import android.util.Log;
 
+import com.android.internal.annotations.GuardedBy;
 import com.google.android.collect.Lists;
 
 import java.io.File;
@@ -35,7 +42,13 @@ import java.util.ArrayList;
 public class Environment {
     private static final String TAG = "Environment";
 
+    /// M: javaopt_removal @{
+    private static final String PROP_SHARED_SDCARD = "ro.mtk_shared_sdcard";
+    private static final String PROP_2SDCARD_SWAP = "ro.mtk_2sdcard_swap";
+    /// @}
+
     private static final String ENV_EXTERNAL_STORAGE = "EXTERNAL_STORAGE";
+    private static final String ENV_USBOTG_STORAGE = "USBOTG_STORAGE";
     private static final String ENV_EMULATED_STORAGE_SOURCE = "EMULATED_STORAGE_SOURCE";
     private static final String ENV_EMULATED_STORAGE_TARGET = "EMULATED_STORAGE_TARGET";
     private static final String ENV_MEDIA_STORAGE = "MEDIA_STORAGE";
@@ -56,6 +69,12 @@ public class Environment {
     @Deprecated
     public static final String DIRECTORY_ANDROID = DIR_ANDROID;
 
+    /** 
+     * @hide
+     * @internal
+     */
+    public static final String DIRECTORY_USBOTG = System.getenv(ENV_USBOTG_STORAGE);
+
     private static final File DIR_ANDROID_ROOT = getDirectory(ENV_ANDROID_ROOT, "/system");
     private static final File DIR_OEM_ROOT = getDirectory(ENV_OEM_ROOT, "/oem");
     private static final File DIR_VENDOR_ROOT = getDirectory(ENV_VENDOR_ROOT, "/vendor");
@@ -69,6 +88,9 @@ public class Environment {
     private static UserEnvironment sCurrentUser;
     private static boolean sUserRequired;
 
+    ///usbotg:
+    private static final String USBOTG_PATH_ZONE = "usbotg-sd";
+   
     static {
         initForCurrentUser();
     }
@@ -757,7 +779,11 @@ public class Environment {
         if (volume != null) {
             return volume.isRemovable();
         } else {
-            throw new IllegalArgumentException("Failed to find storage device at " + path);
+            // just workround solution, return false instead throw exception
+            Log.d(TAG, "isExternalStorageRemovable, Failed to find storage device at " + path);
+            return false;
+            //throw new IllegalArgumentException("Failed to find storage device at " + path);
+            // end
         }
     }
 
@@ -788,7 +814,11 @@ public class Environment {
         if (volume != null) {
             return volume.isEmulated();
         } else {
-            throw new IllegalArgumentException("Failed to find storage device at " + path);
+            // just workround solution, return false instead throw exception
+            Log.d(TAG, "isExternalStorageEmulated, Failed to find storage device at " + path);
+            return false;
+            //throw new IllegalArgumentException("Failed to find storage device at " + path);
+            // end
         }
     }
 
@@ -798,6 +828,13 @@ public class Environment {
     }
 
     private static String getCanonicalPathOrNull(String variableName) {
+        if (variableName.equals(ENV_EMULATED_STORAGE_TARGET)) {
+            if (SystemProperties.get(PROP_2SDCARD_SWAP).equals("1") && SystemProperties.get(PROP_SHARED_SDCARD).equals("1")) {
+                Log.w(TAG, "getCanonicalPathOrNull: variableName transfer to ENV_EXTERNAL_STORAGE");
+                variableName = ENV_EXTERNAL_STORAGE;
+            }
+        }
+
         String path = System.getenv(variableName);
         if (path == null) {
             return null;
@@ -852,6 +889,38 @@ public class Environment {
         return cur;
     }
 
+    ///usbotg:
+    /**
+     * Judge if the storagevolume with the specified path is a usbotg storagevolume.
+     *
+     * @param path :the path of the specified StorageVolume.
+     * @return true if is a usbotg storagevolume ,otherwise false .
+     * @hide
+     * @internal
+     */
+    public static boolean isUsbotg(String path) {
+        if (path.length() <= USBOTG_PATH_ZONE.length()) {
+            return false;
+        } else {
+            return path.contains(USBOTG_PATH_ZONE);
+        }
+    }
+
+    ///usbotg:
+    /**
+     * @param path :the path of the specified StorageVolume.
+     * @return the otg storage name.
+     * @hide
+     */
+    public static String getOtgDescription(String path) {
+        if (path.length() <= USBOTG_PATH_ZONE.length()) {
+            return null;
+        } else {
+            String[] splited = path.split("/");
+            return splited[splited.length - 1];
+        }
+    }
+
     private static boolean isStorageDisabled() {
         return SystemProperties.getBoolean("config.disable_storage", false);
     }
@@ -867,6 +936,9 @@ public class Environment {
             final IMountService mountService = IMountService.Stub.asInterface(
                     ServiceManager.getService("mount"));
             final StorageVolume[] volumes = mountService.getVolumeList();
+            for (StorageVolume volume : volumes) {
+                 Log.d(TAG, "getStorageVolume,  volume:" + volume);
+            }
             for (StorageVolume volume : volumes) {
                 if (FileUtils.contains(volume.getPathFile(), path)) {
                     return volume;

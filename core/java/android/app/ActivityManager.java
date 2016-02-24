@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,6 +89,13 @@ public class ActivityManager {
      * signed with the same certificate as the one declaring the {@code &lt;meta-data>}.
      */
     public static final String META_HOME_ALTERNATE = "android.app.home.alternate";
+
+    /**
+     * Result for IActivityManager.startActivity: an error where the
+     * user denied this operation.
+     * @hide
+     */
+    public static final int START_PERMISSION_USER_DENIED = -8;
 
     /**
      * Result for IActivityManager.startActivity: trying to start an activity under voice
@@ -1392,6 +1404,35 @@ public class ActivityManager {
         }
     }
 
+
+    /// M: Return the moving result for error handling in RecentApp.
+    /**
+     * Ask that the task associated with a given task ID be moved to the
+     * front of the stack, so it is now visible to the user.  Requires that
+     * the caller hold permission {@link android.Manifest.permission#REORDER_TASKS}
+     * or a SecurityException will be thrown.
+     *
+     * @param taskId The identifier of the task to be moved, as found in
+     * {@link RunningTaskInfo} or {@link RecentTaskInfo}.
+     * @param flags Additional operational flags, 0 or more of
+     * {@link #MOVE_TASK_WITH_HOME}, {@link #MOVE_TASK_NO_USER_ACTION}.
+     * @param options Additional options for the operation, either null or
+     * as per {@link Context#startActivity(Intent, android.os.Bundle)
+     * Context.startActivity(Intent, Bundle)}.
+     * @return The moving result.
+     *
+     * @hide
+     */
+    public boolean moveTaskToFrontWithResult(int taskId, int flags, Bundle options) {
+        try {
+            return ActivityManagerNative.getDefault().
+                    moveTaskToFrontWithResult(taskId, flags, options);
+        } catch (RemoteException e) {
+            // System dead, we will be dead too soon!
+        }
+        return false;
+    }
+
     /**
      * Information you can retrieve about a particular Service that is
      * currently running in the system.
@@ -2469,9 +2510,13 @@ public class ActivityManager {
     public static int checkComponentPermission(String permission, int uid,
             int owningUid, boolean exported) {
         // Root, system server get to do everything.
-        if (uid == 0 || uid == Process.SYSTEM_UID) {
+        /// M: ALPS01884640 compare app id directly for multi-user @{
+        int appId = UserHandle.getAppId(uid);
+        if (appId == 0 || appId == Process.SYSTEM_UID) {
             return PackageManager.PERMISSION_GRANTED;
         }
+        /// @}
+
         // Isolated processes don't get any permissions.
         if (UserHandle.isIsolated(uid)) {
             return PackageManager.PERMISSION_DENIED;

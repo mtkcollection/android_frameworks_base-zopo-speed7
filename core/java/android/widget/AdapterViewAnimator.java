@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +38,8 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.OnClickHandler;
 
+import com.mediatek.xlog.Xlog;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -47,7 +54,9 @@ import java.util.HashMap;
  */
 public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         implements RemoteViewsAdapter.RemoteAdapterConnectionCallback, Advanceable {
-    private static final String TAG = "RemoteViewAnimator";
+    private static final String TAG = "AdapterViewAnimator";
+    private static final boolean DBG = true;
+    private static final boolean DBG_SHOW = false;
 
     /**
      * The index of the current child, which appears anywhere from the beginning
@@ -164,6 +173,15 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
 
     private static final int DEFAULT_ANIMATION_DURATION = 200;
 
+    /// M: Add this member to record whether data has changed,
+    /// don't use the original mDataChanged because AdapterViewAnimator process the real data
+    /// changing action in a runnable and change mDataChanged quickly.
+    private boolean mDataHasChanged = false;
+
+    /// M: Record item count of adapter, changed when handling data change,
+    /// don't use mOldItemCount for the same reason as mDataHasChanged.
+    private int mPreviousItemCount;
+
     public AdapterViewAnimator(Context context) {
         this(context, null);
     }
@@ -227,6 +245,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
             this.relativeIndex = relativeIndex;
             this.adapterPosition = adapterPosition;
             this.itemId = itemId;
+        }
+
+        @Override
+        public String toString() {
+            return "ViewAndMetaData{View = " + view + ",relativeIndex = " + relativeIndex
+                    + ",adapterPosition = " + adapterPosition + ",itemId = " + itemId + "}";
         }
     }
 
@@ -300,6 +324,13 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
 
     private void setDisplayedChild(int whichChild, boolean animate) {
         if (mAdapter != null) {
+            if (DBG) {
+                Xlog.d(TAG, "setDisplayedChild: whichChild = " + whichChild + ",mWhichChild = "
+                        + mWhichChild + ",window size = " + getWindowSize() + ",animate = "
+                        + animate + ",mViewsMap = " + mViewsMap + ",mPreviousViews = "
+                        + mPreviousViews + ",item count = " + getCount());
+            }
+
             mWhichChild = whichChild;
             if (whichChild >= getWindowSize()) {
                 mWhichChild = mLoopViews ? 0 : getWindowSize() - 1;
@@ -413,6 +444,13 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
 
     void refreshChildren() {
         if (mAdapter == null) return;
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "refreshChildren: mCurrentWindowStart = " + mCurrentWindowStart
+                    + ",mCurrentWindowEnd = " + mCurrentWindowEnd + ",adapter count = "
+                    + getCount() + ",child count = " + getChildCount() + ",mViewsMap = "
+                    + mViewsMap + ",mPreviousViews = " + mPreviousViews + ",this = " + this);
+        }
+
         for (int i = mCurrentWindowStart; i <= mCurrentWindowEnd; i++) {
             int index = modulo(i, getWindowSize());
 
@@ -422,6 +460,13 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
 
             if (updatedChild.getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
                 updatedChild.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+            }
+
+            if (DBG_SHOW) {
+                Xlog.d(TAG, "refreshChildren 2: i = " + i + ", index = " + index
+                        + ", adapter count = " + getCount() + ", updatedChild = " + updatedChild
+                        + ", mViewsMap = " + mViewsMap + ", mPreviousViews = " + mPreviousViews
+                        + ", this = " + this);
             }
 
             if (mViewsMap.containsKey(index)) {
@@ -462,8 +507,21 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         final int adapterCount = getCount();
         if (adapterCount == 0) return;
 
+        if (DBG) {
+            Xlog.d(TAG, "showOnly start: childIndex = " + childIndex + ",mCurrentWindowStart = "
+                    + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                    + ",mWhichChild = " + mWhichChild + ",animate = " + animate + ",window size = "
+                    + getWindowSize() + ",mActiveOffset = " + mActiveOffset + ",childCount = "
+                    + getChildCount() + ",mViewsMap = " + mViewsMap + ",mPreviousViews = "
+                    + mPreviousViews + ",this = " + this);
+        }
+
         for (int i = 0; i < mPreviousViews.size(); i++) {
             View viewToRemove = mViewsMap.get(mPreviousViews.get(i)).view;
+            if (DBG_SHOW) {
+                Xlog.d(TAG, "showOnly 2: i = " + i + ", previous index = " + mPreviousViews.get(i)
+                        + ", viewToRemove = " + viewToRemove);
+            }
             mViewsMap.remove(mPreviousViews.get(i));
             viewToRemove.clearAnimation();
             if (viewToRemove instanceof ViewGroup) {
@@ -481,6 +539,17 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         int newWindowEndUnbounded = newWindowStartUnbounded + getNumActiveViews() - 1;
         int newWindowStart = Math.max(0, newWindowStartUnbounded);
         int newWindowEnd = Math.min(adapterCount - 1, newWindowEndUnbounded);
+
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "showOnly 3: childIndex = " + childIndex + ",mActiveOffset = "
+                    + mActiveOffset + ",newWindowStartUnbounded = " + newWindowStartUnbounded
+                    + ",newWindowEndUnbounded = " + newWindowEndUnbounded + ",newWindowStart = "
+                    + newWindowStart + ",mCurrentWindowStart = " + mCurrentWindowStart
+                    + ",mCurrentWindowEnd = " + mCurrentWindowEnd + ",newWindowEnd = "
+                    + newWindowEnd + ",window size = " + getWindowSize()
+                    + ",getNumActiveViews() = " + getNumActiveViews() + ",adapterCount = "
+                    + adapterCount + ",childCount = " + getChildCount());
+        }
 
         if (mLoopViews) {
             newWindowStart = newWindowStartUnbounded;
@@ -506,6 +575,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
                 remove = true;
             }
 
+            if (DBG_SHOW) {
+                Xlog.d(TAG, "showOnly before remove 4: index = " + index + ",wrap = " + wrap
+                        + ",rangeStart = " + rangeStart + ",rangeEnd = " + rangeEnd + ",remove = "
+                        + remove + ",index = " + index);
+            }
+
             if (remove) {
                 View previousView = mViewsMap.get(index).view;
                 int oldRelativeIndex = mViewsMap.get(index).relativeIndex;
@@ -515,9 +590,22 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
             }
         }
 
-        // If the window has changed
-        if (!(newWindowStart == mCurrentWindowStart && newWindowEnd == mCurrentWindowEnd &&
+        if (DBG_SHOW) {
+            Xlog.d(TAG, "showOnly 5: newWindowStartUnbounded = " + newWindowStartUnbounded
+                    + ",newWindowEndUnbounded = " + newWindowEndUnbounded + ",newWindowStart = "
+                    + newWindowStart + ",mCurrentWindowStart = " + mCurrentWindowStart
+                    + ",mCurrentWindowEnd = " + mCurrentWindowEnd + ",newWindowEnd = "
+                    + newWindowEnd + ",window size = " + getWindowSize() + ",childCount = "
+                    + getChildCount() + ",mCurrentWindowStartUnbounded = "
+                    + mCurrentWindowStartUnbounded + ",newWindowStartUnbounded = "
+                    + newWindowStartUnbounded);
+        }
+
+        /// M: If the window has changed or data has changed.
+        if (mDataHasChanged ||
+              !(newWindowStart == mCurrentWindowStart && newWindowEnd == mCurrentWindowEnd &&
               newWindowStartUnbounded == mCurrentWindowStartUnbounded)) {
+            mDataHasChanged = false;
             // Run through the indices in the new range
             for (int i = newWindowStart; i <= newWindowEnd; i++) {
 
@@ -534,6 +622,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
                 // the transform for it's new relative position in the window, and animate
                 // between it's current and new relative positions
                 boolean inOldRange = mViewsMap.containsKey(index) && !mPreviousViews.contains(index);
+                if (DBG_SHOW) {
+                    Xlog.d(TAG, "showOnly 6: i = " + i + ",newRelativeIndex = " + newRelativeIndex
+                            + ",oldRelativeIndex = " + oldRelativeIndex + ",index = " + index
+                            + ",inOldRange = " + inOldRange + ",mViewsMap = " + mViewsMap
+                            + ",mPreviousViews = " + mPreviousViews);
+                }
 
                 if (inOldRange) {
                     View view = mViewsMap.get(index).view;
@@ -575,10 +669,21 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         }
         requestLayout();
         invalidate();
+        if (DBG) {
+            Xlog.d(TAG, "showOnly end: childIndex = " + childIndex + ",mCurrentWindowStart = "
+                    + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                    + ",window size = " + getWindowSize() + ",mActiveOffset = " + mActiveOffset
+                    + ",childCount = " + getChildCount() + ",mPreviousViews = " + mPreviousViews
+                    + ",mViewsMap = " + mViewsMap);
+        }
     }
 
     private void addChild(View child) {
         addViewInLayout(child, -1, createOrReuseLayoutParams(child));
+        if (DBG) {
+            Xlog.d(TAG, "addChild: child = " + child + ",index = " + indexOfChild(child)
+                    + ",this = " + this);
+        }
 
         // This code is used to obtain a reference width and height of a child in case we need
         // to decide our own size. TODO: Do we want to update the size of the child that we're
@@ -623,6 +728,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         switch (action) {
             case MotionEvent.ACTION_DOWN: {
                 View v = getCurrentView();
+                if (DBG) {
+                    Xlog.d(TAG, "onTouchEvent touch down: mCurrentWindowStart = "
+                            + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                            + ",v = " + v + ",mTouchMode = " + mTouchMode + ",this = " + this);
+                }
+
                 if (v != null) {
                     if (isTransformedTouchPointInView(ev.getX(), ev.getY(), v, null)) {
                         if (mPendingCheckForTap == null) {
@@ -637,6 +748,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
             case MotionEvent.ACTION_MOVE: break;
             case MotionEvent.ACTION_POINTER_UP: break;
             case MotionEvent.ACTION_UP: {
+                if (DBG) {
+                    Xlog.d(TAG, "onTouchEvent touch up: mCurrentWindowStart = "
+                            + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                            + ",mTouchMode = " + mTouchMode + ",this = " + this);
+                }
+
                 if (mTouchMode == TOUCH_MODE_DOWN_IN_CURRENT_VIEW) {
                     final View v = getCurrentView();
                     final ViewAndMetaData viewData = getMetaDataForChild(v);
@@ -741,22 +858,53 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
         if (dataChanged) {
             post(new Runnable() {
                 public void run() {
+                    if (DBG) {
+                        Xlog.d(TAG, "Handle data change start: mCurrentWindowStart = "
+                                + mCurrentWindowStart
+                                + ", mCurrentWindowEnd = " + mCurrentWindowEnd
+                                + ", mWhichChild = " + mWhichChild + ", item count = " + getCount()
+                                + ", mOldItemCount = " + mOldItemCount
+                                + ", mPreviousItemCount = " + mPreviousItemCount
+                                + ", child count = " + getChildCount()
+                                + ", getWindowSize() = " + getWindowSize()
+                                + ", mViewsMap = " + mViewsMap
+                                + ", mPreviousViews = " + mPreviousViews + ", this = " + this);
+                    }
+
                     handleDataChanged();
+
+                    /// M: Clear cached view maps and previous views when item count changed.
+                    if (mPreviousItemCount != getCount()) {
+                        mDataHasChanged = true;
+                        clearViewMaps();
+                    }
+
                     // if the data changes, mWhichChild might be out of the bounds of the adapter
                     // in this case, we reset mWhichChild to the beginning
                     if (mWhichChild >= getWindowSize()) {
                         mWhichChild = 0;
 
                         showOnly(mWhichChild, false);
-                    } else if (mOldItemCount != getCount()) {
+                    } else if (mPreviousItemCount != getCount()) {
                         showOnly(mWhichChild, false);
                     }
+
+                    /// M: Record the current item count.
+                    mPreviousItemCount = getCount();
+
                     refreshChildren();
                     requestLayout();
+                    if (DBG) {
+                        Xlog.d(TAG, "Handle data change end: item count = " + getCount()
+                                + ",child count = " + getChildCount() + ",mCurrentWindowStart = "
+                                + mCurrentWindowStart + ",mCurrentWindowEnd = " + mCurrentWindowEnd
+                                + ",mWhichChild = " + mWhichChild + ",mViewsMap = " + mViewsMap
+                                + ",mPreviousViews = " + mPreviousViews);
+                    }
                 }
             });
         }
-        mDataChanged = false;
+        setDataChanged(false);
     }
 
     @Override
@@ -960,6 +1108,10 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
 
         mAdapter = adapter;
         checkFocus();
+        if (DBG) {
+            Xlog.d(TAG, "setAdapter: adapter count = " + getCount() + ",mWhichChild = "
+                    + mWhichChild + ",this = " + this);
+        }
 
         if (mAdapter != null) {
             mDataSetObserver = new AdapterDataSetObserver();
@@ -982,6 +1134,11 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
     public void setRemoteViewsAdapter(Intent intent) {
         // Ensure that we don't already have a RemoteViewsAdapter that is bound to an existing
         // service handling the specified intent.
+        if (DBG) {
+            Xlog.d(TAG, "setRemoteViewsAdapter: intent = " + intent + ",mRemoteViewsAdapter = "
+                    + mRemoteViewsAdapter + ",mWhichChild = " + mWhichChild + ",this = " + this);
+        }
+
         if (mRemoteViewsAdapter != null) {
             Intent.FilterComparison fcNew = new Intent.FilterComparison(intent);
             Intent.FilterComparison fcOld = new Intent.FilterComparison(
@@ -1035,6 +1192,12 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
      * Called back when the adapter connects to the RemoteViewsService.
      */
     public boolean onRemoteAdapterConnected() {
+        if (DBG) {
+            Xlog.d(TAG, "onRemoteAdapterConnected: mRemoteViewsAdapter = " + mRemoteViewsAdapter
+                    + ",mAdapter = " + mAdapter + ",mDeferNotifyDataSetChanged = "
+                    + mDeferNotifyDataSetChanged + ",this = " + this);
+        }
+
         if (mRemoteViewsAdapter != mAdapter) {
             setAdapter(mRemoteViewsAdapter);
 
@@ -1094,5 +1257,26 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
         info.setClassName(AdapterViewAnimator.class.getName());
+    }
+
+    /**
+     * M: Clear mViewsMap and mPreviousViews and the views maintained by them.
+     */
+    private void clearViewMaps() {
+        for (Integer index : mViewsMap.keySet()) {
+            View viewToRemove = mViewsMap.get(index).view;
+            viewToRemove.clearAnimation();
+            if (viewToRemove instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) viewToRemove;
+                vg.removeAllViewsInLayout();
+            }
+            // applyTransformForChildAtIndex here just allows for any cleanup
+            // associated with this view that may need to be done by a subclass
+            applyTransformForChildAtIndex(viewToRemove, -1);
+
+            removeViewInLayout(viewToRemove);
+        }
+        mViewsMap.clear();
+        mPreviousViews.clear();
     }
 }

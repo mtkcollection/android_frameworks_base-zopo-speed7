@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,7 +93,16 @@ public class AudioSystem
     public static final int MODE_RINGTONE           = 1;
     public static final int MODE_IN_CALL            = 2;
     public static final int MODE_IN_COMMUNICATION   = 3;
-    public static final int NUM_MODES               = 4;
+    public static final int MODE_IN_CALL_2          = 4;
+    /// M: add MODE_IN_CALL_EXTERNAL for T+C @{
+    /**
+     * In call external audio mode for external modem.
+     *
+     * @hide
+     */
+    public static final int MODE_IN_CALL_EXTERNAL = 5;
+    public static final int NUM_MODES = 6;
+    /// @}
 
 
     /* Routing bits for the former setRouting/getRouting API */
@@ -569,5 +583,59 @@ public class AudioSystem
     public static native int getAudioHwSyncForSession(int sessionId);
 
     public static native int registerPolicyMixes(ArrayList<AudioMix> mixes, boolean register);
-}
 
+    /**
+     * Set EM parameter.
+     *
+     * @param ptr The data to be set.
+     * @param length The data size.
+     * @return The status.
+     */
+    public static native int setEmParameter(byte[] ptr, int length);
+
+    /**
+     * Get EM parameter.
+     *
+     * @param ptr The data to be get.
+     * @param length The data size.
+     * @return The status.
+     */
+    public static native int getEmParameter(byte[] ptr, int length);
+
+    /**
+     * Set audio command.
+     *
+     * @param arg1 The first argument.
+     * @param arg2 The second argument.
+     * @return The status.
+     */
+    public static native int setAudioCommand(int arg1, int arg2);
+
+    /**
+     * Get audio command.
+     *
+     * @param arg1 The first argument.
+     * @return The status.
+     */
+    public static native int getAudioCommand(int arg1);
+
+    /**
+     * Set audio data.
+     *
+     * @param par1 The par1.
+     * @param len The length.
+     * @param ptr The array of audio data.
+     * @return The status.
+     */
+    public static native int setAudioData(int par1, int len, byte[] ptr);
+
+    /**
+     * Get audio data.
+     *
+     * @param par1 The par1.
+     * @param len The length of data..
+     * @param ptr The array to receive audio data.
+     * @return The status.
+     */
+    public static native int getAudioData(int par1, int len, byte[] ptr);
+}

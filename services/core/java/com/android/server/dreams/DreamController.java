@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -214,11 +219,13 @@ final class DreamController {
                 mContext.unbindService(oldDream);
             }
 
-            try {
-                mIWindowManager.removeWindowToken(oldDream.mToken);
-            } catch (RemoteException ex) {
-                Slog.w(TAG, "Error removing window token for dream.", ex);
-            }
+            /// M: ALPS00446494 Daydream BeanFlinger show once again after press back key to exit @{
+            // try {
+            //     mIWindowManager.removeWindowToken(oldDream.mToken);
+            // } catch (RemoteException ex) {
+            //     Slog.w(TAG, "Error removing window token for dream.", ex);
+            // }
+            /// @}
 
             mHandler.post(new Runnable() {
                 @Override
@@ -230,6 +237,20 @@ final class DreamController {
             Trace.traceEnd(Trace.TRACE_TAG_POWER);
         }
     }
+
+    /// M: ALPS00446494 Daydream BeanFlinger show once again after press back key to exit @{
+    /**
+     * Remove window token, need run after remove window
+     * @hide
+     */
+    public void removeToken(IBinder token) {
+        try {
+            mIWindowManager.removeWindowToken(token);
+        } catch (RemoteException ex) {
+            Slog.w(TAG, "Error removing window token for dream.", ex);
+        }
+    }
+    /// @}
 
     private void attach(IDreamService service) {
         try {

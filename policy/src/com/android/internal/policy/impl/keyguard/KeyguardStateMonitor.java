@@ -19,6 +19,7 @@ package com.android.internal.policy.impl.keyguard;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.os.RemoteException;
+import android.util.Log;
 import android.util.Slog;
 
 import com.android.internal.policy.IKeyguardService;
@@ -41,6 +42,9 @@ public class KeyguardStateMonitor extends IKeyguardStateCallback.Stub {
     private volatile boolean mSimSecure;
     private volatile boolean mInputRestricted;
 
+    ///M: added for ALPS01933830
+    private volatile boolean mIsAnthTheftEnabled;
+
     private final LockPatternUtils mLockPatternUtils;
 
     public KeyguardStateMonitor(Context context, IKeyguardService service) {
@@ -58,7 +62,7 @@ public class KeyguardStateMonitor extends IKeyguardStateCallback.Stub {
     }
 
     public boolean isSecure() {
-        return mLockPatternUtils.isSecure() || mSimSecure;
+        return mLockPatternUtils.isSecure() || mSimSecure || mIsAnthTheftEnabled;
     }
 
     public boolean isInputRestricted() {
@@ -82,5 +86,12 @@ public class KeyguardStateMonitor extends IKeyguardStateCallback.Stub {
     @Override // Binder interface
     public void onInputRestrictedStateChanged(boolean inputRestricted) {
         mInputRestricted = inputRestricted;
+    }
+
+    ///M: added for ALPS01933830.
+    @Override
+    public void onAntiTheftStateChanged(boolean antiTheftEnabled) {
+        mIsAnthTheftEnabled = antiTheftEnabled ;
+        Log.d(TAG, "onAntiTheftStateChanged() - mIsAnthTheftEnabled = " + mIsAnthTheftEnabled) ;
     }
 }

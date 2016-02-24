@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -158,6 +163,11 @@ public abstract class Conference implements IConferenceable {
      */
     public void removeCapability(int capability) {
         mConnectionCapabilities &= ~capability;
+        /// M: notify Connection Capabilities change @{
+        for (Listener l : mListeners) {
+            l.onConnectionCapabilitiesChanged(this, mConnectionCapabilities);
+        }
+        /// @}
     }
 
     /**
@@ -168,6 +178,11 @@ public abstract class Conference implements IConferenceable {
      */
     public void addCapability(int capability) {
         mConnectionCapabilities |= capability;
+        /// M: notify Connection Capabilities change @{
+        for (Listener l : mListeners) {
+            l.onConnectionCapabilitiesChanged(this, mConnectionCapabilities);
+        }
+        /// @}
     }
 
     /**
@@ -253,6 +268,39 @@ public abstract class Conference implements IConferenceable {
         setState(Connection.STATE_HOLDING);
     }
 
+    /// M: CC025: Interface for swap call @{
+    /**
+     * Swap conference call with background call.
+     * @hide
+     */
+    public void onSwapWithBackgroundCall() {}
+    /// @}
+
+    /// M: CC078: For DSDS/DSDA Two-action operation @{
+    /**
+     * Invoked when the conference should be put on hold, with pending call action, answer?
+     * @param pendingCallAction The pending call action.
+     * @hide
+     */
+    public void onHold(String pendingCallAction) {}
+
+    /**
+     * Invoked when the Conference and all it's {@link Connection}s should be disconnected,
+     * with pending call action, answer?
+     * @param pendingCallAction The pending call action.
+     * @hide
+     */
+    public void onDisconnect(String pendingCallAction) {}
+    /// @}
+
+    /// M: CC026: Interface for hangup all connections @{
+    /**
+     * To hang up all connections.
+     * @hide
+     */
+    public void onHangupAll() {}
+    /// @}
+
     /**
      * Sets state to be active.
      */
@@ -273,6 +321,20 @@ public abstract class Conference implements IConferenceable {
             l.onDisconnected(this, mDisconnectCause);
         }
     }
+
+    /// M: CC027: Proprietary scheme to build Connection Capabilities @{
+    /** @hide */
+    protected int buildConnectionCapabilities() {
+        // for nullConference object, it needs a default implementation
+        return 0;
+    };
+
+    /** @hide */
+    public final void updateConnectionCapabilities() {
+        int newConnectionCapabilities = buildConnectionCapabilities();
+        setCapabilities(newConnectionCapabilities);
+    }
+    /// @}
 
     /**
      * @return The {@link DisconnectCause} for this connection.
@@ -374,10 +436,38 @@ public abstract class Conference implements IConferenceable {
     public final void destroy() {
         Log.d(this, "destroying conference : %s", this);
         // Tear down the children.
+        /// M: set correct remove order. @{
+        // [ALPS01884124] The call being hung up is still shown in the "Manage conference" view.
+        // Conference Management UI requires the sequence of updating connection's removal.
+        // Remove disconnected calls first to avoid temporary incorrect UI.
+
+        /*
         for (Connection connection : mChildConnections) {
             Log.d(this, "removing connection %s", connection);
             removeConnection(connection);
         }
+        */
+        List<Connection> disconnectedChild = new ArrayList<>(mChildConnections.size());
+        List<Connection> activeChild = new ArrayList<>(mChildConnections.size());
+
+        for (Connection connection : mChildConnections) {
+            if (connection.getState() != Connection.STATE_ACTIVE) {
+                disconnectedChild.add(connection);
+            } else {
+                activeChild.add(connection);
+            }
+        }
+
+        for (Connection connection : disconnectedChild) {
+            Log.d(this, "removing connection for disconnectedChild %s", connection);
+            removeConnection(connection);
+        }
+
+        for (Connection connection : activeChild) {
+            Log.d(this, "removing connection for activeChild %s", connection);
+            removeConnection(connection);
+        }
+        /// @}
 
         // If not yet disconnected, set the conference call as disconnected first.
         if (mState != Connection.STATE_DISCONNECTED) {
@@ -461,9 +551,13 @@ public abstract class Conference implements IConferenceable {
     }
 
     private void setState(int newState) {
+        /// M: For VoLTE conference dial @{
+        // add Connection.STATE_DIALING. The conference for conference-dial maybe dialing state.
         if (newState != Connection.STATE_ACTIVE &&
                 newState != Connection.STATE_HOLDING &&
-                newState != Connection.STATE_DISCONNECTED) {
+                newState != Connection.STATE_DISCONNECTED &&
+                newState != Connection.STATE_DIALING) {
+        /// @}
             Log.w(this, "Unsupported state transition for Conference call.",
                     Connection.stateToString(newState));
             return;
@@ -484,4 +578,30 @@ public abstract class Conference implements IConferenceable {
         }
         mConferenceableConnections.clear();
     }
+
+    /// M: For VoLTE @{
+    /**
+     * This function used to invite conference participant(s) for VoLTE conference host.
+     * see android.telecom.PhoneCapabilities.INVITE_PARTICIPANTS.
+     * @param numbers the participant(s) to be invited.
+     * @hide
+     */
+    public void onInviteConferenceParticipants(List<String> numbers) {}
+
+    /**
+     * For oneKey MO conference, it will have dialing state.
+     * @hide
+     */
+    protected final void setDialing() {
+        setState(Connection.STATE_DIALING);
+    }
+
+    /**
+     * For oneKey MT conference, it will have ringing state.
+     * @hide
+     */
+    protected final void setRinging() {
+        setState(Connection.STATE_RINGING);
+    }
+    /// @}
 }

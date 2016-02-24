@@ -31,6 +31,11 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
+/* Vanzo:songlixin on: Fri, 25 Apr 2014 15:50:51 +0800
+ */
+import java.util.Calendar;
+import android.text.format.DateFormat;
+// End of Vanzo:songlixin
 public class DateView extends TextView {
     private static final String TAG = "DateView";
 
@@ -98,6 +103,8 @@ public class DateView extends TextView {
     }
 
     protected void updateClock() {
+/* Vanzo:hanshengpeng on: Fri, 01 Nov 2013 14:56:08 +0800
+ * porting jb2->kk #53983
         if (mDateFormat == null) {
             final Locale l = Locale.getDefault();
             final String fmt = DateFormat.getBestDateTimePattern(l, mDatePattern);
@@ -111,5 +118,10 @@ public class DateView extends TextView {
             setText(text);
             mLastText = text;
         }
+ */
+        java.text.DateFormat shortDateFormat = DateFormat.getDateFormat(mContext);
+        final Calendar now = Calendar.getInstance();
+        setText(shortDateFormat.format(now.getTime()));
+// End of Vanzo:hanshengpeng
     }
 }

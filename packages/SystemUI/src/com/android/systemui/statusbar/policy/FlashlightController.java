@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +21,10 @@
 
 package com.android.systemui.statusbar.policy;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -36,18 +44,27 @@ import android.view.Surface;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 
+/* Vanzo:tanglei on: Wed, 06 May 2015 20:59:31 +0800
+ */
+import android.provider.Settings;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:tanglei
 /**
  * Manages the flashlight.
  */
 public class FlashlightController {
 
     private static final String TAG = "FlashlightController";
-    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final boolean DEBUG = true;//Log.isLoggable(TAG, Log.DEBUG);
 
     private static final int DISPATCH_ERROR = 0;
     private static final int DISPATCH_OFF = 1;
     private static final int DISPATCH_AVAILABILITY_CHANGED = 2;
-
+    
+    private static final String ACTION_SHUTDOWN_IPO = "android.intent.action.ACTION_SHUTDOWN_IPO";
+    
     private final CameraManager mCameraManager;
     /** Call {@link #ensureHandler()} before using */
     private Handler mHandler;
@@ -65,13 +82,27 @@ public class FlashlightController {
     private CameraCaptureSession mSession;
     private SurfaceTexture mSurfaceTexture;
     private Surface mSurface;
+/* Vanzo:tanglei on: Wed, 06 May 2015 10:55:56 +0800
+ */
+    private Context sContext;
+// End of Vanzo:tanglei
 
     public FlashlightController(Context mContext) {
+        Log.i(TAG, "[FlashlightController]");
         mCameraManager = (CameraManager) mContext.getSystemService(Context.CAMERA_SERVICE);
         initialize();
+        // M: Turn off the flashlight when shutdown.
+        initializeReceiver(mContext);
+/* Vanzo:tanglei on: Thu, 07 May 2015 18:32:52 +0800
+ */
+        if (FeatureOption.VANZO_FEATURE_TORCH_APP_SUPPORT) {
+            sContext = mContext;
+        }
+// End of Vanzo:tanglei
     }
 
     public void initialize() {
+        Log.i(TAG, "[initialize]");
         try {
             mCameraId = getCameraId();
         } catch (Throwable e) {
@@ -86,13 +117,25 @@ public class FlashlightController {
     }
 
     public synchronized void setFlashlight(boolean enabled) {
+        Log.i(TAG, "[setFlashlight]enabled=" + enabled);
         if (mFlashlightEnabled != enabled) {
             mFlashlightEnabled = enabled;
+ /* Vanzo:tanglei on: Wed, 06 May 2015 20:56:42 +0800
+ */
+            if (FeatureOption.VANZO_FEATURE_TORCH_APP_SUPPORT) {
+                Intent intent = new Intent();
+                intent.setAction("com.v.torch.status");
+                intent.putExtra("torch_on", mFlashlightEnabled);
+                sContext.sendBroadcast(intent);
+                Settings.System.putInt(sContext.getContentResolver(), "torch_status", mFlashlightEnabled ? 1 : 0);
+            }
+// End of Vanzo:tanglei
             postUpdateFlashlight();
         }
     }
 
     public void killFlashlight() {
+        Log.i(TAG, "[killFlashlight]mFlashlightEnabled=" + mFlashlightEnabled);
         boolean enabled;
         synchronized (this) {
             enabled = mFlashlightEnabled;
@@ -192,6 +235,13 @@ public class FlashlightController {
                     startSession();
                     return;
                 }
+                /// M: [ALPS01753229]JE @{
+                if (mSurface == null) {
+                    Log.e(TAG, "Error in updateFlashlight: mSurface is null");
+                    handleError();
+                    return;
+                }
+                /// M: [ALPS01753229]JE @}
                 if (mFlashlightRequest == null) {
                     CaptureRequest.Builder builder = mCameraDevice.createCaptureRequest(
                             CameraDevice.TEMPLATE_PREVIEW);
@@ -215,6 +265,14 @@ public class FlashlightController {
     }
 
     private void teardown() {
+        /// M: [ALPS01753229]JE @{
+        if (mCameraDevice != null) {
+            mCameraDevice.close();
+        }
+        if (mSession != null) {
+            mSession.close();
+        }
+        /// M: [ALPS01753229]JE @}
         mCameraDevice = null;
         mSession = null;
         mFlashlightRequest = null;
@@ -392,4 +450,46 @@ public class FlashlightController {
          */
         void onFlashlightAvailabilityChanged(boolean available);
     }
+
+    // M: Turn off the flashlight when shutdown.
+    private void initializeReceiver(Context context) {
+        Log.i(TAG, "[initializeReceiver]");
+        if (mCameraId == null) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SHUTDOWN);
+        filter.addAction(ACTION_SHUTDOWN_IPO);
+        context.registerReceiver(mShutdownReceiver, filter);
+/* Vanzo:tanglei on: Tue, 05 May 2015 15:20:41 +0800
+ */
+        if (FeatureOption.VANZO_FEATURE_TORCH_APP_SUPPORT) {
+            IntentFilter torchFilter = new IntentFilter("com.v.torch.toggle");
+            torchFilter.addAction("com.v.torch.toggle");
+            context.registerReceiver(mTorchReceiver, torchFilter);
+        }
+
+// End of Vanzo:tanglei
+    }
+
+    private final BroadcastReceiver mShutdownReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.i(TAG, "[onReceive]intent=" + intent);
+            killFlashlight();
+        }
+    };
+/* Vanzo:tanglei on: Tue, 05 May 2015 15:16:25 +0800
+ */
+    private final BroadcastReceiver mTorchReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            boolean cmd = intent.getBooleanExtra("cmd", false);
+            if ("com.v.torch.toggle".equals(action)) {
+                setFlashlight(cmd);
+            }
+        }
+    };
+// End of Vanzo:tanglei
+
 }

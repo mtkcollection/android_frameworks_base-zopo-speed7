@@ -35,6 +35,7 @@ import android.view.View;
 import com.android.systemui.recents.RecentsConfiguration;
 import com.android.systemui.recents.misc.Utilities;
 import com.android.systemui.recents.model.Task;
+import com.mediatek.xlog.Xlog;
 
 
 /**
@@ -42,6 +43,9 @@ import com.android.systemui.recents.model.Task;
  * alpha of the thumbnail image.
  */
 public class TaskViewThumbnail extends View {
+    /// M: For Debug
+    static final String TAG = "recents.TaskViewThumbnail";
+    static final boolean DEBUG = true;
 
     RecentsConfiguration mConfig;
 
@@ -110,6 +114,37 @@ public class TaskViewThumbnail extends View {
         }
     }
 
+    /// M: [ALPS01955768] Update clip bounds when onMeasure() @{
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        int width = MeasureSpec.getSize(widthMeasureSpec);
+        int height = MeasureSpec.getSize(heightMeasureSpec);
+
+        if (isHardwareAccelerated() == false) {
+            if (mClipRect.right != width || mClipRect.bottom != height) {
+                if (mTaskBar != null) {
+                    int top = (int) Math.max(0, mTaskBar.getTranslationY() +
+                        mTaskBar.getMeasuredHeight() - 1);
+                    if (DEBUG) {
+                        Xlog.d(TAG, "onMeasure: " + width + ", " + height + ", " + top);
+                    }
+                    mClipRect.set(0, top, width, height);
+                    setClipBounds(mClipRect);
+                } else {
+                    if (DEBUG) {
+                        Xlog.d(TAG, "onMeasure: mTaskBar is null, " + width + ", " + height);
+                    }
+                    mClipRect.set(0, 0, width, height);
+                    setClipBounds(null);
+                }
+            }
+        }
+
+        /// M: if setMeasuredDimension() was not invoked, it will raise an exception
+        setMeasuredDimension(width, height);
+    }
+    /// M: [ALPS01955768] Update clip bounds when onMeasure() @}
+
     @Override
     protected void onDraw(Canvas canvas) {
         if (mInvisible) {
@@ -130,6 +165,10 @@ public class TaskViewThumbnail extends View {
             mBitmapRect.set(0, 0, bm.getWidth(), bm.getHeight());
             updateThumbnailScale();
         } else {
+            if (DEBUG) {
+                Xlog.d(TAG, "setThumbnail to null");
+            }
+
             mBitmapShader = null;
             mDrawPaint.setShader(null);
         }

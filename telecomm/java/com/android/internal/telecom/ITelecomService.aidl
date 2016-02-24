@@ -208,4 +208,16 @@ interface ITelecomService {
      * @see TelecomServiceImpl#addNewUnknownCall
      */
     void addNewUnknownCall(in PhoneAccountHandle phoneAccount, in Bundle extras);
+
+    /// M: CC048: TelecomManager API to get IMS specific feature capable PhoneAccounts @{
+    /**
+     * @see TelecomService#getVolteCallCapablePhoneAccounts
+     */
+    List<PhoneAccountHandle> getVolteCallCapablePhoneAccounts();
+
+    /**
+     * @see TelecomService#getVideoCallCapablePhoneAccounts
+     */
+    List<PhoneAccountHandle> getVideoCallCapablePhoneAccounts();
+    /// @}
 }

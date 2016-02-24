@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1103,7 +1108,9 @@ public class Instrumentation {
      */
     public void callActivityOnCreate(Activity activity, Bundle icicle) {
         prePerformCreate(activity);
+        ActivityThread.logAppLaunchTime(TAG, "activity.onCreate +"); /// M: It's for debugging App Launch time
         activity.performCreate(icicle);
+        ActivityThread.logAppLaunchTime(TAG, "activity.onCreate -"); /// M: It's for debugging App Launch time
         postPerformCreate(activity);
     }
 
@@ -1233,7 +1240,9 @@ public class Instrumentation {
      * @param activity The activity being started.
      */
     public void callActivityOnStart(Activity activity) {
+        ActivityThread.logAppLaunchTime(TAG, "activity.onStart +"); /// M: It's for debugging App Launch time
         activity.onStart();
+        ActivityThread.logAppLaunchTime(TAG, "activity.onStart -"); /// M: It's for debugging App Launch time
     }
 
     /**
@@ -1253,8 +1262,10 @@ public class Instrumentation {
      * @param activity The activity being resumed.
      */
     public void callActivityOnResume(Activity activity) {
+        ActivityThread.logAppLaunchTime(TAG, "activity.onResume +"); /// M: It's for debugging App Launch time
         activity.mResumed = true;
         activity.onResume();
+        ActivityThread.logAppLaunchTime(TAG, "activity.onResume -"); /// M: It's for debugging App Launch time
         
         if (mActivityMonitors != null) {
             synchronized (mSync) {
@@ -1783,6 +1794,9 @@ public class Instrumentation {
             case ActivityManager.START_PERMISSION_DENIED:
                 throw new SecurityException("Not allowed to start activity "
                         + intent);
+            case ActivityManager.START_PERMISSION_USER_DENIED:
+                Log.e(TAG, "User denied to start activity with intent: " + intent);
+                return;
             case ActivityManager.START_FORWARD_AND_REQUEST_CONFLICT:
                 throw new AndroidRuntimeException(
                         "FORWARD_RESULT_FLAG used while also requesting a result");

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -158,6 +163,10 @@ public class SyncManager {
      */
     private static final long ACTIVE_SYNC_TIMEOUT_MILLIS = 30L * 60 * 1000;  // 30 mins.
 
+    private static final long EXPEDITED_SYNC_DELAY = 500;
+
+    private static final int INITIALIZATION_UNBIND_DELAY_MS = 5000;
+
     private static final String SYNC_WAKE_LOCK_PREFIX = "*sync*/";
     private static final String HANDLE_SYNC_ALARM_WAKE_LOCK = "SyncManagerHandleSyncAlarm";
     private static final String SYNC_LOOP_WAKE_LOCK = "SyncLoopWakeLock";
@@ -249,6 +258,32 @@ public class SyncManager {
     private static final long SYNC_ALARM_TIMEOUT_MIN = 30 * 1000; // 30 seconds
     private static final long SYNC_ALARM_TIMEOUT_MAX = 2 * 60 * 60 * 1000; // two hours
 
+    //M: fixed CTS testCancelSync bug
+    /*private static final String AUTHORITY = "android.content.cts.authority";
+    private static final Account ACCOUNT = new Account("android.content.cts.account.name",
+            "android.content.cts.account.type");
+    private Long cancelAllSyncTime = null;
+    private Long addAccountTime = null;
+
+    private void setCancelAllSyncTime(Account account, String authority, Long time) {
+        Log.v(TAG, "setCancelAllSyncTime begin: account = " + account + ", authority = " + authority + ", time = " + time);
+        if (account == null && authority != null) {
+            if (authority.equals(AUTHORITY)) {
+                Log.v(TAG, "set cancelAllSync time, account = " + account + ", authority = " + authority + ", time = " + time);
+                cancelAllSyncTime = time;
+            }
+        }
+    }
+
+    private void setAddAccountTime(Account account, Long time) {
+        Log.v(TAG, "setAddAccountTime begin: account = " + account + ", time = " + time);
+        if (account != null && account.name.equals(ACCOUNT.name)) {
+            Log.v(TAG, "set AddAccount time, account = " + account + ", time = " + time);
+            addAccountTime = time;
+        }
+    }*/
+    //M:end fixed CTS testCancelSync bug
+
     private List<UserInfo> getAllUsers() {
         return mUserManager.getUsers();
     }
@@ -282,6 +317,28 @@ public class SyncManager {
                         null /* no result since this is a cancel */);
             }
         }
+        //M: fixed CTS testCancelSync bug
+        /*Log.v(TAG, "Compare new account or not");
+        if (mActiveSyncContexts.size() == 0 && mRunningAccounts.length != 0) {
+            Log.v(TAG, "No active account, so is a new account");
+            for (int i = 0;i < mRunningAccounts.length;i++) {
+                setAddAccountTime(mRunningAccounts[i].account, SystemClock.elapsedRealtime());
+            }
+        } else if (mActiveSyncContexts.size() != 0 && mRunningAccounts.length != 0) {
+            for (ActiveSyncContext currentSyncContext : mActiveSyncContexts) {
+                for (int i = 0; i < mRunningAccounts.length; i++) {
+                    if (mRunningAccounts[i].userId == currentSyncContext.mSyncOperation.userId
+                            && mRunningAccounts[i].account.equals(currentSyncContext.mSyncOperation.account)) {
+                        break;
+                    } else {
+                        Log.v(TAG, "Add new account, will set the account time");
+                        setAddAccountTime(mRunningAccounts[i].account, SystemClock.elapsedRealtime());
+                    }
+                }
+            }
+        }*/
+        //M: end fixed CTS testCancelSync bug
+
         // we must do this since we don't bother scheduling alarms when
         // the accounts are not set yet
         sendCheckAlarmsMessage();
@@ -855,6 +912,9 @@ public class SyncManager {
         msg.setData(extras);
         msg.obj = info;
         mSyncHandler.sendMessage(msg);
+
+        //M: fixed CTS testCancelSync bug
+        //setCancelAllSyncTime(account, authority, SystemClock.elapsedRealtime());
     }
 
     /**
@@ -1081,6 +1141,15 @@ public class SyncManager {
                 Log.d(TAG, "retrying sync operation that failed because there was already a "
                         + "sync in progress: " + operation);
             }
+            /*SyncOperation newSyncOperation = new SyncOperation(
+                    operation.account, operation.userId,
+                    operation.reason,
+                    operation.syncSource,
+                    operation.authority, operation.extras,
+                    DELAY_RETRY_SYNC_IN_PROGRESS_IN_SECONDS * 1000, operation.flexTime,
+                    operation.backoff, operation.delayUntil, operation.allowParallelSyncs);
+            newSyncOperation.setDelayRunTime(EXPEDITED_SYNC_DELAY);
+            scheduleSyncOperation(newSyncOperation);*/
             scheduleSyncOperation(
                 new SyncOperation(
                         operation,
@@ -1949,6 +2018,10 @@ public class SyncManager {
             }
             doDatabaseCleanup();
             synchronized(this) {
+                if (mBootQueue == null) {
+                    return;
+                }
+
                 // Dispatch any stashed messages.
                 for (Message message : mBootQueue) {
                     sendMessage(message);
@@ -2045,12 +2118,34 @@ public class SyncManager {
                         break;
 
                     case SyncHandler.MESSAGE_CANCEL: {
+                        /*Pair<Account, String> payload = (Pair<Account, String>) msg.obj;
+                        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                            Log.d(TAG, "handleSyncHandlerMessage: MESSAGE_SERVICE_CANCEL: "
+                                    + payload.first + ", " + payload.second);
+                        }
+
+                        //M: fixed CTS testCancelSync bug
+                        if (payload.first == null) {
+                            Log.v(TAG, "cancelAllSyncTime = " + cancelAllSyncTime + ", addAccountTime = " + addAccountTime);
+                        }
+
+                        if (payload.first == null && payload.second != null && cancelAllSyncTime != null && addAccountTime != null) {
+                            if (payload.second.equals(AUTHORITY) && cancelAllSyncTime < addAccountTime) {
+                                Log.v(TAG, "Break cancel all sync, because the new account added and run.");
+                                setCancelAllSyncTime(payload.first, payload.second, null);
+                                break;
+                            }
+                        }
+                        //end M
+
+                        cancelActiveSyncLocked(payload.first, msg.arg1, payload.second);*/
                         SyncStorageEngine.EndPoint payload = (SyncStorageEngine.EndPoint) msg.obj;
                         Bundle extras = msg.peekData();
                         if (Log.isLoggable(TAG, Log.DEBUG)) {
                             Log.d(TAG, "handleSyncHandlerMessage: MESSAGE_SERVICE_CANCEL: "
                                     + payload + " bundle: " + extras);
                         }
+
                         cancelActiveSyncLocked(payload, extras);
                         nextPendingSyncTime = maybeStartNextSyncLocked();
                         break;

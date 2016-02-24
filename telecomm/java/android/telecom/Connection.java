@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,10 +26,18 @@ import com.android.internal.telecom.IVideoProvider;
 
 import android.annotation.SystemApi;
 import android.net.Uri;
+/// M: For Volte @{
+import android.os.Bundle;
+/// @}
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
+
+/// M: CC030: CRSS notification @{
+import android.text.TextUtils;
+/// @}
+
 import android.view.Surface;
 
 import java.util.ArrayList;
@@ -147,11 +160,60 @@ public abstract class Connection implements IConferenceable {
      */
     public static final int CAPABILITY_GENERIC_CONFERENCE = 0x00004000;
 
+
+    /// M: CC027: Proprietary scheme to build Connection Capabilities @{
     /**
-     * Speed up audio setup for MT call.
+     * Can be answered without hanging up the active call.
      * @hide
-    */
-    public static final int CAPABILITY_SPEED_UP_MT_AUDIO = 0x00008000;
+     * @internal
+     */
+    public static final int CAPABILITY_ANSWER = 0x00008000;
+
+    /**
+     * Call can unhold
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_UNHOLD = 0x00010000;
+
+    /**
+     * Call can add call
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_ADD_CALL = 0x00020000;
+
+    /**
+     * M: Can record voice
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_VOICE_RECORD = 0x00040000;
+
+    /**
+     * M: Device support ECT(explicit call transfer).
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_ECT = 0x00080000;
+    /// @}
+
+    /// M: For VoLTE @{
+    /**
+     * Connection is using voice over LTE.
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_VOLTE = 0x00100000;
+
+    /**
+     * Indicate the call has capability to invite conference participant(s).
+     * (for VoLTE conference host).
+     * @hide
+     * @internal
+     */
+    public static final int CAPABILITY_INVITE_PARTICIPANTS = 0x00200000;
+    /// @}
 
     // Flag controlling whether PII is emitted into the logs
     private static final boolean PII_DEBUG = Log.isLoggable(android.util.Log.DEBUG);
@@ -239,9 +301,40 @@ public abstract class Connection implements IConferenceable {
         if (can(capabilities, CAPABILITY_GENERIC_CONFERENCE)) {
             builder.append(" CAPABILITY_GENERIC_CONFERENCE");
         }
-        if (can(capabilities, CAPABILITY_SPEED_UP_MT_AUDIO)) {
-            builder.append(" CAPABILITY_SPEED_UP_IMS_MT_AUDIO");
+        /// M: CC027: Proprietary scheme to build Connection Capabilities @{
+        if ((capabilities & CAPABILITY_ANSWER) != 0) {
+            builder.append(" CAPABILITY_ANSWER");
         }
+        if ((capabilities & CAPABILITY_UNHOLD) != 0) {
+            builder.append(" CAPABILITY_UNHOLD");
+        }
+        if ((capabilities & CAPABILITY_ADD_CALL) != 0) {
+            builder.append(" CAPABILITY_ADD_CALL");
+        }
+        if ((capabilities & CAPABILITY_VOICE_RECORD) != 0) {
+            builder.append(" CAPABILITY_VOICE_RECORD");
+        }
+        if ((capabilities & CAPABILITY_ECT) != 0) {
+            builder.append(" CAPABILITY_ECT");
+        }
+        /// @}
+        /// M: For VoLTE @{
+        if ((capabilities & CAPABILITY_VOLTE) != 0) {
+            builder.append(" CAPABILITY_VOLTE");
+        }
+
+        if ((capabilities & CAPABILITY_INVITE_PARTICIPANTS) != 0) {
+            builder.append(" CAPABILITY_INVITE_PARTICIPANTS");
+        }
+
+        if ((capabilities & CAPABILITY_SEPARATE_FROM_CONFERENCE) != 0) {
+            builder.append(" CAPABILITY_SEPARATE_FROM_CONFERENCE");
+        }
+
+        if ((capabilities & CAPABILITY_DISCONNECT_FROM_CONFERENCE) != 0) {
+            builder.append(" CAPABILITY_DISCONNECT_FROM_CONFERENCE");
+        }
+        /// @}
         builder.append("]");
         return builder.toString();
     }
@@ -270,6 +363,30 @@ public abstract class Connection implements IConferenceable {
         public void onConferenceParticipantsChanged(Connection c,
                 List<ConferenceParticipant> participants) {}
         public void onConferenceStarted() {}
+        /// M: CC031: Radio off notification @{
+        /** the connection lost after MD reset. */
+        public void onConnectionLost(Connection c) {}
+        /// @}
+        /// M: CC030: CRSS notification @{
+        public void onActionFailed(Connection c) {}
+        public void onCrssSuppServiceNumberUpdate(Connection c, String number) {}
+
+        public void onActionFailed(Connection c, int action) {}
+        public void onSSNotificationToast(Connection c, int notiType, int type, int code, String number, int index) {}
+        /// @}
+        public void onNumberUpdate(Connection c, String number) {}
+        public void onIncomingInfoUpdate(Connection c, int type, String alphaid, int cli_validity) {}
+        /* M: CC part start */
+        /**
+         * The CDMA call really be accepted.
+         * @param c The connection of the CDMA call
+         */
+        public void onCdmaCallAccepted(Connection c) {}
+        /* M: CC part end */
+
+        /// M: For Volte @{
+        public void onCallInfoChanged(Connection c, Bundle bundle) {}
+        /// @}
     }
 
     /** @hide */
@@ -672,11 +789,26 @@ public abstract class Connection implements IConferenceable {
     private DisconnectCause mDisconnectCause;
     private Conference mConference;
     private ConnectionService mConnectionService;
-
+    private PhoneAccountHandle mAccountHandle;
     /**
      * Create a new Connection.
      */
     public Connection() {}
+
+    /// M: CC036: [ALPS01794357] Set PhoneAccountHandle for ECC @{
+    /**
+     * @return The PhoneAccountHandle this connection really used.
+     * @hide
+     */
+    public PhoneAccountHandle getAccountHandle() { return mAccountHandle; }
+    /**
+     *  set the PhoneAccountHandle this connection really used.
+     * @hide
+     */
+    public void setAccountHandle(PhoneAccountHandle handle) {
+        mAccountHandle = handle;
+    }
+    /// @}
 
     /**
      * @return The address (e.g., phone number) to which this Connection is currently communicating.
@@ -1212,6 +1344,75 @@ public abstract class Connection implements IConferenceable {
         }
     }
 
+    /// M: CC031: Radio off notification @{
+    /**
+     * Notify to telecomm if the connection is lost.
+     * @hide
+     */
+    public final void notifyConnectionLost() {
+        for (Listener l : mListeners) {
+            l.onConnectionLost(this);
+        }
+    }
+    /// @}
+
+    /// M: CC030: CRSS notification @{
+    /** @hide */
+    public final void notifyActionFailed(int action) {
+        Log.i(this, "notifyActionFailed action = " + action);
+        for (Listener l : mListeners) {
+            // Notify to telecom if call action failed.
+            l.onActionFailed(this, action);
+        }
+    }
+
+    /** @hide */
+    public void notifySSNotificationToast(int notiType, int type, int code, String number, int index) {
+        Log.i(this, "notifySSNotificationToast notiType = "
+                + notiType + " type = " + type + " code = " + code + " number = " + number + " index = " + index);
+        for (Listener l : mListeners) {
+            //Todo: notify listeners
+            l.onSSNotificationToast(this, notiType, type, code, number, index);
+        }
+    }
+
+    /** @hide */
+    public void notifyNumberUpdate(String number) {
+        Log.i(this, "notifyNumberUpdate number = " + number);
+        if (!TextUtils.isEmpty(number)) {
+            for (Listener l : mListeners) {
+                l.onNumberUpdate(this, number);
+            }
+        }
+    }
+
+    /** @hide */
+    public void notifyIncomingInfoUpdate(int type, String alphaid, int cli_validity) {
+        Log.i(this, "notifyIncomingInfoUpdate type = "
+                + type + " alphaid = " + alphaid + " cli_validity = " + cli_validity);
+        for (Listener l : mListeners) {
+            l.onIncomingInfoUpdate(this, type, alphaid, cli_validity);
+        }
+    }
+    /// @}
+
+    /// M: For Volte @{
+    /**
+     * This function used to update some VoLTE related info of the connection.
+     * This will triger IConnectionServiceAdapter.updateExtras().
+     * see com.mediatek.telecom.TelecomManagerEx.EXTRA_VOLTE_MARKED_AS_EMERGENCY
+     *     com.mediatek.telecom.TelecomManagerEx.EXTRA_VOLTE_PAU_FIELD
+     * @param bundle
+     * @hide
+     */
+    public void setCallInfo(Bundle bundle) {
+        Log.d(this, "setCallInfo");
+        for (Listener l : mListeners) {
+            l.onCallInfoChanged(this, bundle);
+        }
+    }
+    /// @}
+
     /**
      * Notifies this Connection that the {@link #getAudioState()} property has a new value.
      *
@@ -1301,6 +1502,49 @@ public abstract class Connection implements IConferenceable {
      */
     public void onPostDialContinue(boolean proceed) {}
 
+    /// M: CC025: Interface for swap call @{
+    /**
+     * Swap this call with a background call.
+     * @hide
+     */
+    public void onSwapWithBackgroundCall() {}
+    /// @}
+
+    /// M: CC078: For DSDS/DSDA Two-action operation @{
+    /**
+     * Notifies this Connection of a request to hold, with pending call action, answer?
+     * @param pendingCallAction The pending call action.
+     * @hide
+     */
+    public void onHold(String pendingCallAction) {}
+    /// @}
+
+    /// M: CC040: Reject call with cause for HFP @{
+    /**
+     * Notifies this Connection, which is in {@link #STATE_RINGING}, of
+     * a request to reject, with specified cause.
+     * @param cause The specified disconnect cause.
+     * @hide
+     */
+    public void onReject(int cause) {}
+    /// @}
+
+    /// M: CC041: Interface for ECT @{
+    /**
+     * Handle explicit call transfer.
+     * @hide
+     */
+    public void onExplicitCallTransfer() {}
+    /// @}
+
+    /// M: CC026: Interface for hangup all connections @{
+    /**
+     * To hang up all connections.
+     * @hide
+     */
+    public void onHangupAll() {}
+    /// @}
+
     static String toLogSafePhoneNumber(String number) {
         // For unknown number, log empty string.
         if (number == null) {
@@ -1341,6 +1585,27 @@ public abstract class Connection implements IConferenceable {
             }
         }
     }
+
+    /// M: CC046: Force updateState for Connection once its ConnectionService is set @{
+    /**
+     * Base class for forcing call state update after ConnectionService is set,
+     * to keep phoneCapabilities up-to-date.
+     * see {@link ConnectionService#addConnection}
+     * To be overrided by children classes.
+     * @hide
+     */
+    protected void fireOnCallState() {}
+    /// @}
+
+    /* M: CC part start */
+    /** @hide */
+    protected void fireOnCdmaCallAccepted() {
+        Log.d(this, "fireOnCdmaCallAccepted: %s", stateToString(mState));
+        for (Listener l : mListeners) {
+            l.onCdmaCallAccepted(this);
+        }
+    }
+    /* M: CC part end */
 
     private static class FailureSignalingConnection extends Connection {
         private boolean mImmutable = false;

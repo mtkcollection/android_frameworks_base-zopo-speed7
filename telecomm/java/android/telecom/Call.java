@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+
+import com.mediatek.telecom.TelecomManagerEx;
 
 /**
  * Represents an ongoing phone call that the in-call app should present to the user.
@@ -173,7 +180,7 @@ public final class Call {
          * Call is able to be individually disconnected when in a {@code Conference}.
          */
         public static final int CAPABILITY_DISCONNECT_FROM_CONFERENCE = 0x00002000;
-        
+
         /**
          * Whether the call is a generic conference, where we do not know the precise state of
          * participants in the conference (eg. on CDMA).
@@ -182,11 +189,60 @@ public final class Call {
          */
         public static final int CAPABILITY_GENERIC_CONFERENCE = 0x00004000;
 
+        /* M: CC part start */
         /**
-         * Speed up audio setup for MT call.
+         * Can be answered without hanging up the active call.
          * @hide
+         * @internal
          */
-        public static final int CAPABILITY_SPEED_UP_MT_AUDIO = 0x00008000;
+        public static final int CAPABILITY_ANSWER = 0x00008000;
+
+        /**
+         * Call can unhold
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_UNHOLD = 0x00010000;
+
+        /**
+         * Call can add call
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_ADD_CALL = 0x00020000;
+
+        /**
+         * M: Can record voice
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_VOICE_RECORD = 0x00040000;
+
+        /**
+         * M: Device support ECT(explicit call transfer).
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_ECT = 0x00080000;
+
+        /* M: CC part end */
+
+        /// M: For VoLTE @{
+        /**
+         * Connection is using voice over LTE.
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_VOLTE = 0x00100000;
+
+        /**
+         * Indicate the call has capability to invite conference participant(s).
+         * (for VoLTE conference host).
+         * @hide
+         * @internal
+         */
+        public static final int CAPABILITY_INVITE_PARTICIPANTS = 0x00200000;
+        /// @}
 
         private final Uri mHandle;
         private final int mHandlePresentation;
@@ -270,9 +326,32 @@ public final class Call {
             if (can(capabilities, CAPABILITY_GENERIC_CONFERENCE)) {
                 builder.append(" CAPABILITY_GENERIC_CONFERENCE");
             }
-            if (can(capabilities, CAPABILITY_SPEED_UP_MT_AUDIO)) {
-                builder.append(" CAPABILITY_SPEED_UP_IMS_MT_AUDIO");
+            /* M: CC part start */
+            if ((capabilities & CAPABILITY_ANSWER) != 0) {
+                builder.append(" CAPABILITY_ANSWER");
             }
+            if ((capabilities & CAPABILITY_UNHOLD) != 0) {
+                builder.append(" CAPABILITY_UNHOLD");
+            }
+            if ((capabilities & CAPABILITY_ADD_CALL) != 0) {
+                builder.append(" CAPABILITY_ADD_CALL");
+            }
+            if ((capabilities & CAPABILITY_VOICE_RECORD) != 0) {
+                builder.append(" CAPABILITY_VOICE_RECORD");
+            }
+            if ((capabilities & CAPABILITY_ECT) != 0) {
+                builder.append(" CAPABILITY_ECT");
+            }
+            /* M: CC part end */
+            /// M: For VoLTE @{
+            if ((capabilities & CAPABILITY_VOLTE) != 0) {
+                builder.append(" CAPABILITY_VOLTE");
+            }
+
+            if ((capabilities & CAPABILITY_INVITE_PARTICIPANTS) != 0) {
+                builder.append(" CAPABILITY_INVITE_PARTICIPANTS");
+            }
+            /// @}
             builder.append("]");
             return builder.toString();
         }
@@ -1008,4 +1087,35 @@ public final class Call {
                 return STATE_NEW;
         }
     }
+
+/* Vanzo:yuecaili on: Tue, 16 Jun 2015 10:56:22 +0800
+ * implement #111577: modify incall ring delay
+ */
+    /**
+     * {@hide}
+     */
+    public void playIncomingCallRingtone() {
+        mInCallAdapter.playIncomingCallRingtone();
+    }
+// End of Vanzo:yuecaili
+    /**
+     * M: get the telecom call id.
+     * @hide
+     */
+    public String getCallId() {
+        return internalGetCallId();
+    }
+
+    /// M: For VoLTE @{
+    /**
+     * This function used to invite conference participant(s) for VoLTE conference host.
+     * see IInCallAdapter.inviteConferenceParticipants()
+     * and android.telecom.PhoneCapabilities.INVITE_PARTICIPANTS.
+     * @param numbers
+     * @hide
+     */
+    public void inviteConferenceParticipants(List<String> numbers) {
+        mInCallAdapter.inviteConferenceParticipants(mTelecomCallId, numbers);
+    }
+    /// @}
 }

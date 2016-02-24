@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -301,9 +306,22 @@ public class TaskStackBuilder {
         Intent[] intents = new Intent[mIntents.size()];
         if (intents.length == 0) return intents;
 
-        intents[0] = new Intent(mIntents.get(0)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_CLEAR_TASK |
-                Intent.FLAG_ACTIVITY_TASK_ON_HOME);
+        /// M: Fix CMCC issues ALPS00436513 / ALPS01885855
+        /// If AP is MMS / Calendar, we do not add the flag FLAG_ACTIVITY_TASK_ON_HOME. @{
+        String processName = mSourceContext.getApplicationInfo().processName;
+        if (processName.equals("com.android.mms")) {
+            intents[0] = new Intent(mIntents.get(0)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        } else if (processName.equals("com.android.calendar")) {
+            intents[0] = new Intent(mIntents.get(0)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        } else {
+            // original
+            intents[0] = new Intent(mIntents.get(0)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK |
+                    Intent.FLAG_ACTIVITY_TASK_ON_HOME);
+        }
+        /// @}
         for (int i = 1; i < intents.length; i++) {
             intents[i] = new Intent(mIntents.get(i));
         }

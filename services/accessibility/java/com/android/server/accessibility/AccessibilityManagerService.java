@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  ** Copyright 2009, The Android Open Source Project
  **
  ** Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +63,7 @@ import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
@@ -236,6 +242,12 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub {
         registerBroadcastReceivers();
         new AccessibilityContentObserver(mMainHandler).register(
                 context.getContentResolver());
+
+        /// M: IPO feature @{
+        if (SystemProperties.get("ro.mtk_ipo_support").equals("1")) {
+            registerIPOReceiver(context);
+        }
+        /// @}
     }
 
     private UserState getUserStateLocked(int userId) {
@@ -3899,5 +3911,37 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub {
                 }
             }
         }
+    }
+
+    /// M: IPO feature
+    private void manageAccessibilityServices() {
+        UserState userState = getCurrentUserStateLocked();
+        if (true == userState.mIsAccessibilityEnabled) {
+            userState.mIsAccessibilityEnabled = false;
+            synchronized (mLock) {
+                unbindAllServicesLocked(userState);
+                scheduleUpdateClientsIfNeededLocked(userState);
+            }
+        }
+    }
+
+    /// M: IPO feature
+    private void registerIPOReceiver(Context context) {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction("android.intent.action.ACTION_BOOT_IPO");
+        filter.addAction("android.intent.action.ACTION_SHUTDOWN_IPO");
+        context.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                UserState userState = getCurrentUserStateLocked();
+                if ("android.intent.action.ACTION_BOOT_IPO".equals(intent.getAction())) {
+                    /// M: Update Accessibility settings to current user.
+                    readConfigurationForUserStateLocked(userState);
+                    onUserStateChangedLocked(userState);
+                } else if ("android.intent.action.ACTION_SHUTDOWN_IPO".equals(intent.getAction())) {
+                    manageAccessibilityServices();
+                }
+            }
+        }, filter);
     }
 }

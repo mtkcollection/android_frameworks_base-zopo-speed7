@@ -34,6 +34,7 @@ import android.widget.TextView;
 
 import com.android.systemui.DemoMode;
 import com.android.systemui.R;
+import com.mediatek.xlog.Xlog;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -46,6 +47,9 @@ import libcore.icu.LocaleData;
  * Digital clock for the status bar.
  */
 public class Clock extends TextView implements DemoMode {
+    /// M: For Debug
+    final static String TAG = "Clock";
+    static final boolean DEBUG = true;
     private boolean mAttached;
     private Calendar mCalendar;
     private String mClockFormatString;
@@ -73,7 +77,16 @@ public class Clock extends TextView implements DemoMode {
                 R.styleable.Clock,
                 0, 0);
         try {
+/* Vanzo:wudu on: Thu, 16 Apr 2015 11:25:48 +0800
+ * fixbug #106970 fix statusbar show am/pm
             mAmPmStyle = a.getInt(R.styleable.Clock_amPmStyle, AM_PM_STYLE_GONE);
+ */
+            if(com.android.featureoption.FeatureOption.VANZO_FEATURE_STATUSBAR_SHOW_AM_PM){
+                mAmPmStyle = a.getInt(R.styleable.Clock_amPmStyle, AM_PM_STYLE_NORMAL);
+            }else{
+                mAmPmStyle = a.getInt(R.styleable.Clock_amPmStyle, AM_PM_STYLE_GONE);
+            }
+// End of Vanzo:wudu
         } finally {
             a.recycle();
         }
@@ -102,6 +115,9 @@ public class Clock extends TextView implements DemoMode {
 
         // The time zone may have changed while the receiver wasn't registered, so update the Time
         mCalendar = Calendar.getInstance(TimeZone.getDefault());
+        if (DEBUG) {
+            Xlog.d(TAG, "onAttachedToWindow, TimeZone = " + TimeZone.getDefault());
+        }
 
         // Make sure we update to the current time
         updateClock();
@@ -125,6 +141,10 @@ public class Clock extends TextView implements DemoMode {
                 mCalendar = Calendar.getInstance(TimeZone.getTimeZone(tz));
                 if (mClockFormat != null) {
                     mClockFormat.setTimeZone(mCalendar.getTimeZone());
+                }
+                if (DEBUG) {
+                    Xlog.d(TAG, "onReceive : ACTION_TIMEZONE_CHANGED : " + mCalendar);
+                    Xlog.d(TAG, "TimeZone =" + TimeZone.getTimeZone(tz));
                 }
             } else if (action.equals(Intent.ACTION_CONFIGURATION_CHANGED)) {
                 final Locale newLocale = getResources().getConfiguration().locale;

@@ -36,6 +36,13 @@ struct TypefaceImpl {
 
     // resolved style actually used for rendering
     FontStyle fStyle;
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:18:19 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+#ifdef VANZO_FEATURE_LOVELYFONTS_SUPPORT
+    std::string lovelyfonts;
+#endif
+// End of Vanzo:zhangjingzhi
 };
 
 // Note: it would be cleaner if the following functions were member
@@ -60,6 +67,11 @@ int TypefaceImpl_getStyle(TypefaceImpl* face);
 
 void TypefaceImpl_setDefault(TypefaceImpl* face);
 
+/* Vanzo:zhangjingzhi on: Tue, 09 Jun 2015 21:18:43 +0800
+ * for 3rd VANZO_FEATURE_LOVELYFONTS_SUPPORT
+ */
+void TypefaceImpl_updateLovelyfonts(TypefaceImpl* face);
+// End of Vanzo:zhangjingzhi
 }
 
 #endif  // ANDROID_TYPEFACE_IMPL_H

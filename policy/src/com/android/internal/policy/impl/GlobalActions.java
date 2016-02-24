@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +27,8 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.R;
 import com.android.internal.widget.LockPatternUtils;
+//FIXME: for build pass, please help to crrect me
+//import com.mediatek.common.telephony.ITelephonyEx;
 
 import android.app.ActivityManager;
 import android.app.ActivityManagerNative;
@@ -79,6 +86,17 @@ import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
+/* Vanzo:yinjun on: Wed, 11 Mar 2015 17:47:07 +0800
+ * for screenshot
+ */
+import com.android.featureoption.FeatureOption;
+import android.os.AsyncTask;
+import android.net.wifi.WifiManager;
+import android.telephony.SubscriptionManager;
+import android.telephony.SubscriptionInfo;
+import com.android.internal.telephony.PhoneConstants;
+import com.mediatek.audioprofile.AudioProfileManager;
+// End of Vanzo: yinjun
 
 /**
  * Helper to show the global actions dialog.  Each item is an {@link Action} that
@@ -94,6 +112,24 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     /* Valid settings for global actions keys.
      * see config.xml config_globalActionList */
     private static final String GLOBAL_ACTION_KEY_POWER = "power";
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 12:00:05 +0800
+ * Power Reboot
+ */
+    private static final String GLOBAL_ACTION_KEY_REBOOT = "reboot";
+    private static final String GLOBAL_ACTION_KEY_SHOT_SCREEN = "shotscreen";
+    private static final String GLOBAL_ACTION_KEY_WIFI_DATA_CONNECT = "wifi_dataconnect";
+    public static final int DEFAULT_DATA_SIM_UNSET = 0;
+    public static final int DEFAULT_DATA_SIM_SET = 1;
+    private ToggleAction mDataConnection;
+    private ToggleAction mWifiModeOn;
+    private ToggleAction.State mDataConnState = ToggleAction.State.Off;
+    private ToggleAction.State mWifiConnState = ToggleAction.State.Off;
+    private TelephonyManager mTelephonyManager;
+    private long simId = 0;
+
+    private final AudioProfileManager mProfileManager;
+    private static boolean audioSupport = SystemProperties.get("ro.mtk_audio_profiles").equals("1");
+// End of Vanzo:tanglei
     private static final String GLOBAL_ACTION_KEY_AIRPLANE = "airplane";
     private static final String GLOBAL_ACTION_KEY_BUGREPORT = "bugreport";
     private static final String GLOBAL_ACTION_KEY_SILENT = "silent";
@@ -122,6 +158,12 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     private boolean mHasVibrator;
     private final boolean mShowSilentToggle;
 
+    /// M:[ALPS00109833]
+    static private boolean mIsVisable = false;
+    /// M:[ALPS01667103] SmartBook Recreate Dialog
+    private static boolean bSmartbookSupport = SystemProperties.get("ro.mtk_smartbook_support").equals("1");
+    private boolean mReCreate = false;
+
     /**
      * @param context everything needs a context :(
      */
@@ -129,6 +171,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         mContext = context;
         mWindowManagerFuncs = windowManagerFuncs;
         mAudioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+/* Vanzo:yinjun on: Tue, 21 Apr 2015 10:11:30 +0800
+ * bugfix #107265 modify audio ProfileManager
+ */
+        mProfileManager = (AudioProfileManager) mContext.getSystemService(Context.AUDIO_PROFILE_SERVICE);
+// End of Vanzo: yinjun
         mDreamManager = IDreamManager.Stub.asInterface(
                 ServiceManager.getService(DreamService.DREAM_SERVICE));
 
@@ -137,6 +184,15 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         filter.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         filter.addAction(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED);
+        /// M:[ALPS01667103] SmartBook Recreate Dialog
+        filter.addAction(Intent.ACTION_SMARTBOOK_PLUG);
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 19:47:03 +0800
+ * add golbal wifi and data connect
+ */
+        if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+            filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
+        }
+// End of Vanzo: yinjun
         context.registerReceiver(mBroadcastReceiver, filter);
 
         ConnectivityManager cm = (ConnectivityManager)
@@ -147,6 +203,16 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         TelephonyManager telephonyManager =
                 (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         telephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_SERVICE_STATE);
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 10:35:25 +0800
+ * add golbal wifi and data connect
+ */
+        if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+            mTelephonyManager = TelephonyManager.from(context);
+            mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Global.MOBILE_DATA),
+                true, mMobileStateChangeObserver);
+        }
+// End of Vanzo: yinjun
         mContext.getContentResolver().registerContentObserver(
                 Settings.Global.getUriFor(Settings.Global.AIRPLANE_MODE_ON), true,
                 mAirplaneModeObserver);
@@ -155,6 +221,18 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
         mShowSilentToggle = SHOW_SILENT_TOGGLE && !mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_useFixedVolume);
+/* Vanzo:yinjun on: Wed, 22 Apr 2015 14:23:07 +0800
+ * bugfix #106745 modify airplane mode
+ */
+        boolean airplaneModeOn = Settings.Global.getInt(mContext.getContentResolver(),
+            Settings.Global.AIRPLANE_MODE_ON, 0) == 1;
+        mAirplaneState = airplaneModeOn ? ToggleAction.State.On : ToggleAction.State.Off;
+// End of Vanzo: yinjun
+    }
+
+    /** M:[ALPS00109833] */
+    static public boolean isVisable() {
+        return mIsVisable;
     }
 
     /**
@@ -214,7 +292,12 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         if (!mHasVibrator) {
             mSilentModeAction = new SilentModeToggleAction();
         } else {
+/* Vanzo:yinjun on: Tue, 21 Apr 2015 14:08:06 +0800
+ * bugfix #107265 modify audio ProfileManager
             mSilentModeAction = new SilentModeTriStateAction(mContext, mAudioManager, mHandler);
+ */
+            mSilentModeAction = new SilentModeTriStateAction(mContext, mAudioManager, mHandler, mProfileManager);
+// End of Vanzo: yinjun
         }
         mAirplaneModeOn = new ToggleAction(
                 R.drawable.ic_lock_airplane_mode,
@@ -246,6 +329,16 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                         SystemProperties.get(TelephonyProperties.PROPERTY_INECM_MODE)))) {
                     mState = buttonOn ? State.TurningOn : State.TurningOff;
                     mAirplaneState = mState;
+/* Vanzo:yujianpeng on: Mon, 29 Jun 2015 20:31:38 +0800
+ * implement #112645 modify AirplaneMode can't close
+ */
+                    boolean inAirplaneMode;
+                    inAirplaneMode = Settings.Global.getInt(mContext.getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0) != 0;
+                    mAirplaneState = inAirplaneMode ? ToggleAction.State.On : ToggleAction.State.Off;
+                    mAirplaneModeOn.updateState(mAirplaneState);
+                    mAdapter.notifyDataSetChanged();
+                    Log.d("yjp","11111  mAirplaneState " + mAirplaneState);
+// End of Vanzo:yujianpeng
                 }
             }
 
@@ -256,8 +349,101 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             public boolean showBeforeProvisioning() {
                 return false;
             }
+
+            public boolean isEnabled() {
+                boolean isAirplaneModeAvailable = true;
+                //FIXME: for build pass, please help to crrect me
+                /*try {
+                    final ITelephonyEx phoneEx = ITelephonyEx.Stub.asInterface(ServiceManager.checkService("phoneEx"));
+                    if (phoneEx != null) {
+                        isAirplaneModeAvailable = phoneEx.isAirplanemodeAvailableNow();
+                    }
+                } catch (RemoteException e) {
+                    Log.d(TAG, "isAirplanemodeAvailableNow exception caught");
+                }*/
+                return (super.isEnabled() && isAirplaneModeAvailable);
+            }
         };
         onAirplaneModeChanged();
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 19:52:41 +0800
+ * add golbal wifi and data connect
+ */
+        if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+            //next: data connection
+            mDataConnection = new ToggleAction(
+                    R.drawable.ic_qs_mobile_connection,
+                    R.drawable.ic_qs_mobile_conn_off,
+                    R.string.global_actions_toggle_dataconnection_mode,
+                    R.string.global_actions_dataconnection_mode_on_status,
+                    R.string.global_actions_dataconnection_mode_off_status) {
+
+                public boolean showDuringKeyguard() {
+                    return true;
+                }
+
+                public boolean showBeforeProvisioning() {
+                    return false;
+                }
+
+                void onToggle(boolean on) {
+                    simId = 0;
+                    changeDataConnectionModeSystemSetting(on);
+                }
+                protected void changeStateFromPress(boolean buttonOn) {
+                    if (!mHasTelephony) return;
+                    Log.d("hyh","changeStateFromPress" + buttonOn);
+                    mState = buttonOn ? State.TurningOn : State.TurningOff;
+                    mDataConnState = mState;
+                }
+                public boolean isEnabled() {
+                    boolean isAirplaneMode = Settings.Global.getInt(mContext.getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0) != 0;
+                    Log.d("hyh","isAirplaneMode = "+ isAirplaneMode);
+                    return (/*super.isEnabled() &&*/ hasSimInserted() && mHasTelephony && !isAirplaneMode);
+                }
+            };
+            onDataConnetionChanged();
+            //add wifi mode
+            mWifiModeOn = new ToggleAction(
+                    R.drawable.ic_qs_wifi_enable,
+                    R.drawable.ic_qs_wifi_off,
+                    R.string.global_actions_toggle_wifi_mode,
+                    R.string.global_actions_wifi_mode_on_status,
+                    R.string.global_actions_wifi_mode_off_status) {
+
+                public boolean showDuringKeyguard() {
+                    return true;
+                }
+
+                public boolean showBeforeProvisioning() {
+                    return false;
+                }
+
+                void onToggle(boolean on) {
+                    WifiManager mWifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+                    if (mWifiManager != null) {
+                        int wifiApState = mWifiManager.getWifiApState();
+                        if ((wifiApState == WifiManager.WIFI_AP_STATE_ENABLING)
+                                || (wifiApState == WifiManager.WIFI_AP_STATE_ENABLED)) {
+                            mWifiManager.setWifiApEnabled(null, false);
+                            Log.d("hyh","WIFI_AP_STATE_ENABLING ");
+                        }
+                    }
+                    Log.d("hyh","wifi onToggle on = " + on);
+                    changeWifiConnectionModeSystemSetting(on);
+                }
+                protected void changeStateFromPress(boolean buttonOn) {
+                    Log.d("hyh","wifi changeStateFromPress" + buttonOn);
+                    mState = buttonOn ? State.TurningOn : State.TurningOff;
+                    mWifiConnState = mState;
+                }
+                public boolean isEnabled() {
+                    WifiManager wifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+                    return super.isEnabled() && wifiManager != null;
+                }
+            };
+            onWifiConnectionChanged();
+        }
+// End of Vanzo: yinjun
 
         mItems = new ArrayList<Action>();
         String[] defaultActions = mContext.getResources().getStringArray(
@@ -272,6 +458,17 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             }
             if (GLOBAL_ACTION_KEY_POWER.equals(actionKey)) {
                 mItems.add(new PowerAction());
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 12:00:29 +0800
+ * Power Reboot
+ */
+            } else if (GLOBAL_ACTION_KEY_REBOOT.equals(actionKey)) {
+                mItems.add(new RebootAction());
+            } else if (FeatureOption.VANZO_FEATURE_GOLBAL_SCREENSHOT && GLOBAL_ACTION_KEY_SHOT_SCREEN.equals(actionKey)) {
+                mItems.add(new ShotScreenAction());
+            } else if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT && GLOBAL_ACTION_KEY_WIFI_DATA_CONNECT.equals(actionKey)) {
+                mItems.add(mDataConnection);
+                mItems.add(mWifiModeOn);
+// End of Vanzo:tanglei
             } else if (GLOBAL_ACTION_KEY_AIRPLANE.equals(actionKey)) {
                 mItems.add(mAirplaneModeOn);
             } else if (GLOBAL_ACTION_KEY_BUGREPORT.equals(actionKey)) {
@@ -297,6 +494,13 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             // Add here so we don't add more than one.
             addedKeys.add(actionKey);
         }
+/* Vanzo:yujianpeng on: Tue, 09 Jun 2015 16:02:52 +0800
+ * add power notice
+ */
+        if (FeatureOption.VANZO_FEATURE_POWER_NOTICE) {
+            mItems.add(getNotifiAction());
+        }
+// End of Vanzo:yujianpeng
 
         mAdapter = new MyAdapter();
 
@@ -354,10 +558,103 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         @Override
         public void onPress() {
             // shutdown by making sure radio and power are handled accordingly.
-            mWindowManagerFuncs.shutdown(false /* confirm */);
+/* Vanzo:tanglei on: Fri, 03 Apr 2015 15:42:06 +0800
+ * shutdown confirm
+            mWindowManagerFuncs.shutdown(false);
+ */
+            mWindowManagerFuncs.shutdown(true /* confirm */);
+// End of Vanzo:tanglei
         }
     }
 
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 11:58:54 +0800
+ * Power Reboot
+ */
+    private final class RebootAction extends SinglePressAction implements LongPressAction {
+        private RebootAction() {
+            super(com.android.internal.R.drawable.ic_lock_reboot,
+                R.string.global_action_reboot);
+        }
+
+        @Override
+        public boolean onLongPress() {
+            mWindowManagerFuncs.rebootSafeMode(true);
+            return true;
+        }
+
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
+
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
+
+        @Override
+        public void onPress() {
+            mWindowManagerFuncs.reboot("null", true);
+        }
+    }
+// End of Vanzo:tanglei
+/* Vanzo:yinjun on: Wed, 11 Mar 2015 17:49:16 +0800
+ * for screenshot
+ */
+    private final class ShotScreenAction extends SinglePressAction {
+        private ShotScreenAction() {
+            super(com.android.internal.R.drawable.ic_lock_shotscreen,
+                R.string.global_action_shotscreen);
+        }
+
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
+
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
+
+        @Override
+        public void onPress() {
+            mHandler.sendEmptyMessageDelayed(MESSAGE_SHOT_SCREEN, 300);
+        }
+    }
+// End of Vanzo: yinjun
+
+/* Vanzo:yujianpeng on: Tue, 09 Jun 2015 16:06:17 +0800
+ * add power notice
+ */
+    private Action getNotifiAction() {
+        return new SinglePressAction(com.android.internal.R.drawable.ic_lock_reboot,
+                R.string.global_action_reboot) {
+            public void onPress() {
+            }
+            public View create(Context context, View convertView,
+                    ViewGroup parent, LayoutInflater inflater) {
+                View v = inflater.inflate(R.layout.global_actions_item, parent,
+                        false);
+                ImageView icon = (ImageView) v.findViewById(R.id.icon);
+                icon.setVisibility(View.GONE);
+                TextView messageView = (TextView) v.findViewById(R.id.message);
+                messageView.setVisibility(View.GONE);
+                TextView text = (TextView) v.findViewById(R.id.status);
+                text.setText(com.android.internal.R.string.global_actions_toggle_longclick_notice);
+                return v;
+            }
+
+            public boolean showDuringKeyguard() {
+                return true;
+            }
+
+            public boolean showBeforeProvisioning() {
+                return true;
+            }
+        };
+    }
+// End of Vanzo:yujianpeng
     private Action getBugReportAction() {
         return new SinglePressAction(com.android.internal.R.drawable.ic_lock_bugreport,
                 R.string.bugreport_title) {
@@ -515,11 +812,22 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     private void prepareDialog() {
         refreshSilentMode();
         mAirplaneModeOn.updateState(mAirplaneState);
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 20:04:11 +0800
+ * add golbal wifi and data connect
+ */
+        if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+            mDataConnection.updateState(mDataConnState);
+            mWifiModeOn.updateState(mWifiConnState);
+        }
+// End of Vanzo: yinjun
         mAdapter.notifyDataSetChanged();
         mDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
         if (mShowSilentToggle) {
+            /// M:[ALPS00230716]
+            Log.d(TAG, "prepareDialog -- registerReceiver mRingerModeReceiver, mAirplaneState = " + mAirplaneState);
             IntentFilter filter = new IntentFilter(AudioManager.RINGER_MODE_CHANGED_ACTION);
             mContext.registerReceiver(mRingerModeReceiver, filter);
+            mRingerModeReceiverRegistered = true;
         }
     }
 
@@ -534,14 +842,18 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
     /** {@inheritDoc} */
     public void onDismiss(DialogInterface dialog) {
-        if (mShowSilentToggle) {
+        if (mShowSilentToggle & mRingerModeReceiverRegistered) {
+            Log.d(TAG, "onDismiss -- unregisterReceiver mRingerModeReceiver");
             try {
                 mContext.unregisterReceiver(mRingerModeReceiver);
             } catch (IllegalArgumentException ie) {
                 // ignore this
                 Log.w(TAG, ie);
             }
+            mRingerModeReceiverRegistered = false;
         }
+        /// M:[ALPS00109833]
+        mIsVisable = false;
     }
 
     /** {@inheritDoc} */
@@ -902,12 +1214,24 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     private static class SilentModeTriStateAction implements Action, View.OnClickListener {
 
         private final int[] ITEM_IDS = { R.id.option1, R.id.option2, R.id.option3 };
+/* Vanzo:yinjun on: Tue, 21 Apr 2015 10:25:55 +0800
+ * bugfix #107265 modify audio ProfileManager
+ */
+        private final String[] ITEM_AUDIOPRO = { "mtk_audioprofile_silent", "mtk_audioprofile_meeting", "mtk_audioprofile_general" };
+        private final AudioProfileManager mProfileManager;
+// End of Vanzo: yinjun
 
         private final AudioManager mAudioManager;
         private final Handler mHandler;
         private final Context mContext;
 
+/* Vanzo:yinjun on: Tue, 21 Apr 2015 14:12:02 +0800
+ * bugfix #107265 modify audio ProfileManager
         SilentModeTriStateAction(Context context, AudioManager audioManager, Handler handler) {
+ */
+        SilentModeTriStateAction(Context context, AudioManager audioManager, Handler handler, AudioProfileManager profileManager) {
+            mProfileManager = profileManager;
+// End of Vanzo: yinjun
             mAudioManager = audioManager;
             mHandler = handler;
             mContext = context;
@@ -965,7 +1289,16 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             if (!(v.getTag() instanceof Integer)) return;
 
             int index = (Integer) v.getTag();
+/* Vanzo:yinjun on: Tue, 21 Apr 2015 14:13:01 +0800
+ * bugfix #107265 modify audio ProfileManager
             mAudioManager.setRingerMode(indexToRingerMode(index));
+ */
+            if (audioSupport) {
+                mProfileManager.setActiveProfile(ITEM_AUDIOPRO[index]);
+            } else {
+                mAudioManager.setRingerMode(indexToRingerMode(index));
+            }
+// End of Vanzo: yinjun
             mHandler.sendEmptyMessageDelayed(MESSAGE_DISMISS, DIALOG_DISMISS_DELAY);
         }
     }
@@ -987,7 +1320,25 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                     mIsWaitingForEcmExit = false;
                     changeAirplaneModeSystemSetting(true);
                 }
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 20:08:10 +0800
+ * add golbal wifi and data connect
+ */
+            } else if (action.equals(WifiManager.WIFI_STATE_CHANGED_ACTION)) {
+                if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+                    onWifiConnectionChanged();
+                }
+// End of Vanzo: yinjun
             }
+            /// M:[ALPS01667103] SmartBook Recreate Dialog @{ 
+              else if (bSmartbookSupport &&
+                       Intent.ACTION_SMARTBOOK_PLUG.equals(action)) {
+                if (mDialog!=null && mDialog.isShowing()) {
+                   mHandler.sendEmptyMessage(MESSAGE_DISMISS);
+                   mReCreate = true;
+                   Log.v(TAG, "Dismiss Dialog for smartbook plugin");
+                }
+            }
+            /// @}
         }
     };
 
@@ -995,7 +1346,13 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         @Override
         public void onServiceStateChanged(ServiceState serviceState) {
             if (!mHasTelephony) return;
-            final boolean inAirplaneMode = serviceState.getState() == ServiceState.STATE_POWER_OFF;
+            /// M:[ALPS00109833] @{
+            final boolean inAirplaneMode;
+            inAirplaneMode = Settings.Global.getInt(mContext.getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0) != 0;
+            Log.v(TAG, "Phone State = " + serviceState.getState()
+                    + " gemini = " + SystemProperties.get("ro.mtk_gemini_support").equals("1")
+                    + " inAirplaneMode " + inAirplaneMode);
+            /// @}
             mAirplaneState = inAirplaneMode ? ToggleAction.State.On : ToggleAction.State.Off;
             mAirplaneModeOn.updateState(mAirplaneState);
             mAdapter.notifyDataSetChanged();
@@ -1015,12 +1372,30 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         @Override
         public void onChange(boolean selfChange) {
             onAirplaneModeChanged();
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 20:09:38 +0800
+ * add golbal wifi and data connect
+ */
+            if (FeatureOption.VANZO_FEATURE_GOLBAL_WIFI_DATA_CONNECT) {
+                onWifiConnectionChanged();
+            }
+// End of Vanzo: yinjun
         }
     };
+
+    /// M: [ALPS00230716]
+    ///    A workaround solution. Sometimes, mRingerModeReceiver isn't registered. But, the function "onDismiss"
+    ///    wants to do the unregister operation that can cause a JE.
+    ///    Therefore, we use mRingerModeReceiverRegistered to avoid the issue happen again.
+    private boolean mRingerModeReceiverRegistered = false;
 
     private static final int MESSAGE_DISMISS = 0;
     private static final int MESSAGE_REFRESH = 1;
     private static final int MESSAGE_SHOW = 2;
+/* Vanzo:yinjun on: Wed, 11 Mar 2015 17:50:02 +0800
+ * for screenshot
+ */
+    private static final int MESSAGE_SHOT_SCREEN = 3;
+// End of Vanzo: yinjun
     private static final int DIALOG_DISMISS_DELAY = 300; // ms
 
     private Handler mHandler = new Handler() {
@@ -1031,6 +1406,15 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                     mDialog.dismiss();
                     mDialog = null;
                 }
+                /// M:[ALPS01667103] SmartBook Recreate Dialog @{
+                if (bSmartbookSupport && mReCreate) {
+                    if (!mHandler.hasMessages(MESSAGE_SHOW)) {
+                        mHandler.sendEmptyMessage(MESSAGE_SHOW);
+                        Log.v(TAG, "Recreate the dialog for smartbook plugin");
+                    }
+                }
+                mReCreate = false;
+                /// @}
                 break;
             case MESSAGE_REFRESH:
                 refreshSilentMode();
@@ -1039,6 +1423,14 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             case MESSAGE_SHOW:
                 handleShow();
                 break;
+/* Vanzo:yinjun on: Wed, 11 Mar 2015 17:50:24 +0800
+ * for screenshot
+ */
+            case MESSAGE_SHOT_SCREEN:
+                Intent intent = new Intent("com.v.ShotScreen");
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+                break;
+// End of Vanzo: yinjun
             }
         }
     };
@@ -1067,11 +1459,115 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
         intent.putExtra("state", on);
         mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+        /// M:[ALPS00109833]
+        Log.v(TAG, "Enter the airplane mode " + on);
         if (!mHasTelephony) {
             mAirplaneState = on ? ToggleAction.State.On : ToggleAction.State.Off;
         }
     }
 
+/* Vanzo:yinjun on: Wed, 18 Mar 2015 20:11:07 +0800
+ * add golbal wifi and data connect
+ */
+    private void onDataConnetionChanged(){
+        if (mHasTelephony && hasSimInserted()) {
+            boolean isConnEnable = mTelephonyManager.getDataEnabled();
+            mDataConnState = isConnEnable ? ToggleAction.State.On : ToggleAction.State.Off;
+            mDataConnection.updateState(mDataConnState);
+        }
+    }
+
+    private void onWifiConnectionChanged(){
+        WifiManager wifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager != null) {
+            switch (wifiManager.getWifiState()) {
+                case WifiManager.WIFI_STATE_DISABLED:
+                    mWifiConnState =  ToggleAction.State.Off;
+                    break;
+                case WifiManager.WIFI_STATE_ENABLED:
+                    mWifiConnState =  ToggleAction.State.On;
+                    break;
+                case WifiManager.WIFI_STATE_DISABLING:
+                    mWifiConnState =  ToggleAction.State.TurningOff;
+                    break;
+                case WifiManager.WIFI_STATE_ENABLING:
+                    mWifiConnState =  ToggleAction.State.TurningOn;
+                    break;
+                default:
+                    mWifiConnState =  ToggleAction.State.Off;
+            }
+        }else{
+            mWifiConnState =  ToggleAction.State.Off;
+        }
+        Log.d("hyh","onWifiConnectionChanged  mWifiConnState = " + mWifiConnState + "getWifiState = " + wifiManager.getWifiState());
+        if(mWifiModeOn !=null && mWifiConnState !=null)
+            mWifiModeOn.updateState(mWifiConnState);
+    }
+
+    private void changeWifiConnectionModeSystemSetting(final boolean on){
+        final WifiManager wifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager == null) {
+            Log.d("hyh", "No wifiManager.");
+            mWifiConnState = ToggleAction.State.Off;
+            return;
+        }
+        /// M: Actually request the wifi change and persistent settings write off the UI thread, as it can take a
+        /// user-noticeable amount of time, especially if there's disk contention.
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            protected Void doInBackground(Void... args) {
+                wifiManager.setWifiEnabled(on);
+                return null;
+            }
+        }.execute();
+    }
+
+    public static long getDefaultSIM(Context context, String businessType) {
+        return Settings.System.getLong(context.getContentResolver(), businessType, -1);
+    }
+
+    private void changeDataConnectionModeSystemSetting(boolean on){
+        if (hasSimInserted() && mAirplaneState == ToggleAction.State.Off && isDefaultSimSet() != DEFAULT_DATA_SIM_UNSET) {
+            mTelephonyManager.setDataEnabled(on);
+            android.util.Log.i("yinjun", "changeDataConnectionModeSystemSetting====="+on);
+        }
+
+        if (mHasTelephony) {
+            mDataConnState = on ? ToggleAction.State.On : ToggleAction.State.Off;
+        }
+    }
+    private int isDefaultSimSet() {
+        long mDefaultDataSim = SubscriptionManager.getDefaultDataSubId();
+        if (hasSimInserted() && (mDefaultDataSim == SubscriptionManager.INVALID_SUBSCRIPTION_ID)) {
+            return DEFAULT_DATA_SIM_UNSET;
+        } else if (hasSimInserted() && (mDefaultDataSim != SubscriptionManager.INVALID_SUBSCRIPTION_ID)) {
+            return DEFAULT_DATA_SIM_SET;
+        } else {
+            return -1;
+        }
+    }
+
+    private boolean hasSimInserted(){
+        List<SubscriptionInfo> mSimInfoList = SubscriptionManager.from(mContext).getActiveSubscriptionInfoList();
+        if (mSimInfoList == null || mSimInfoList.size() <= 0) {
+            Log.d("hyh", "simInfoList size is empty");
+            return false;
+        } else {
+            Log.d("hyh", "simInfoList size = " + mSimInfoList.size());
+            return true;
+        }
+    }
+
+    private ContentObserver mMobileStateChangeObserver = new ContentObserver(new Handler()) {
+        @Override
+        public void onChange(boolean selfChange) {
+            if (mHasTelephony) {
+                onDataConnetionChanged();
+                android.util.Log.i("yinjun", "mMobileStateChangeObserver====="+selfChange);
+            }
+        }
+    };
+// End of Vanzo: yinjun
     private static final class GlobalActionsDialog extends Dialog implements DialogInterface {
         private final Context mContext;
         private final int mWindowTouchSlop;

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,7 @@ package com.android.server.power;
 
 import com.android.internal.app.IAppOpsService;
 import com.android.internal.app.IBatteryStats;
+import com.android.internal.telephony.ITelephony;
 import com.android.internal.os.BackgroundThread;
 import com.android.server.EventLogTags;
 import com.android.server.ServiceThread;
@@ -38,6 +44,8 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.hardware.SensorManager;
 import android.hardware.SystemSensorManager;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.WifiDisplayStatus;
 import android.hardware.display.DisplayManagerInternal;
 import android.hardware.display.DisplayManagerInternal.DisplayPowerRequest;
 import android.net.Uri;
@@ -58,6 +66,7 @@ import android.os.SystemProperties;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.os.WorkSource;
+import android.os.ServiceManager;
 import android.provider.Settings;
 import android.service.dreams.DreamManagerInternal;
 import android.util.EventLog;
@@ -65,8 +74,12 @@ import android.util.Slog;
 import android.util.TimeUtils;
 import android.view.Display;
 import android.view.WindowManagerPolicy;
+import android.view.Display;
+
+import android.telecom.TelecomManager;
 
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 
@@ -77,6 +90,9 @@ import static android.os.PowerManagerInternal.WAKEFULNESS_AWAKE;
 import static android.os.PowerManagerInternal.WAKEFULNESS_DREAMING;
 import static android.os.PowerManagerInternal.WAKEFULNESS_DOZING;
 
+import com.mediatek.hdmi.HdmiDef;
+import com.mediatek.hdmi.IMtkHdmiManager;
+
 /**
  * The power manager service is responsible for coordinating power management
  * functions on the device.
@@ -85,7 +101,7 @@ public final class PowerManagerService extends SystemService
         implements Watchdog.Monitor {
     private static final String TAG = "PowerManagerService";
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
     private static final boolean DEBUG_SPEW = DEBUG && true;
 
     // Message: Sent when a user activity timeout occurs to update the power state.
@@ -119,6 +135,12 @@ public final class PowerManagerService extends SystemService
     private static final int DIRTY_DOCK_STATE = 1 << 10;
     // Dirty bit: brightness boost changed
     private static final int DIRTY_SCREEN_BRIGHTNESS_BOOST = 1 << 11;
+    // Dirty bit: ipo boot
+    private static final int DIRTY_BOOT_IPO = 1 << 12;
+    // Dirty bit: sd card state changed
+    private static final int DIRTY_SD_STATE = 1 << 13;
+    // Dirty bit: smart book state changed
+    private static final int DIRTY_SMARTBOOK_STATE = 1 << 14;
 
     // Summarizes the state of all active wakelocks.
     private static final int WAKE_LOCK_CPU = 1 << 0;
@@ -133,6 +155,7 @@ public final class PowerManagerService extends SystemService
     private static final int USER_ACTIVITY_SCREEN_BRIGHT = 1 << 0;
     private static final int USER_ACTIVITY_SCREEN_DIM = 1 << 1;
     private static final int USER_ACTIVITY_SCREEN_DREAM = 1 << 2;
+    private static final int USER_ACTIVITY_BUTTON_BRIGHT = 1 << 3;
 
     // Default timeout in milliseconds.  This is only used until the settings
     // provider populates the actual default value (R.integer.def_screen_off_timeout).
@@ -144,9 +167,22 @@ public final class PowerManagerService extends SystemService
     // This should perhaps be a setting.
     private static final int SCREEN_BRIGHTNESS_BOOST_TIMEOUT = 5 * 1000;
 
+    // The button off timeout, in milliseconds.
+    // This is subtracted from the end of the screen off timeout so the
+    // minimum button off timeout should be longer than this.
+    private static final int SCREEN_BUTTON_LIGHT_DURATION = 8 * 1000;
+
+    // The maximum button off timeout expressed as a ratio relative to the button
+    // off timeout.
+    private static final float MAXIMUM_SCREEN_BUTTON_RATIO = 0.3f;
+
     // Power hints defined in hardware/libhardware/include/hardware/power.h.
     private static final int POWER_HINT_INTERACTION = 2;
     private static final int POWER_HINT_LOW_POWER = 5;
+
+    // Send cmd to nativeSetSmartBookScreen on/off
+    private static final int SMARTBOOK_SCREEN_OFF = 0;
+    private static final int SMARTBOOK_SCREEN_ON = 2;
 
     private final Context mContext;
     private final ServiceThread mHandlerThread;
@@ -163,6 +199,8 @@ public final class PowerManagerService extends SystemService
     private SettingsObserver mSettingsObserver;
     private DreamManagerInternal mDreamManager;
     private Light mAttentionLight;
+    private Light mButtonLight;
+    private Light mBacklight;
 
     private final Object mLock = new Object();
 
@@ -203,6 +241,7 @@ public final class PowerManagerService extends SystemService
     // Timestamp of the last call to user activity.
     private long mLastUserActivityTime;
     private long mLastUserActivityTimeNoChangeLights;
+    private long mLastUserActivityButtonTime;
 
     // Timestamp of last interactive power hint.
     private long mLastInteractivePowerHintTime;
@@ -268,6 +307,9 @@ public final class PowerManagerService extends SystemService
     // The current dock state.
     private int mDockState = Intent.EXTRA_DOCK_STATE_UNDOCKED;
 
+    // [WFD] The current wfd sleep state.
+    private boolean mWfdShouldBypass = false;
+
     // True to decouple auto-suspend mode from the display state.
     private boolean mDecoupleHalAutoSuspendModeFromDisplayConfig;
 
@@ -279,6 +321,9 @@ public final class PowerManagerService extends SystemService
 
     // True if the device should wake up when plugged or unplugged in theater mode.
     private boolean mWakeUpWhenPluggedOrUnpluggedInTheaterModeConfig;
+
+    // True if the device should wake up when plugged or unplugged.
+    private boolean mPreWakeUpWhenPluggedOrUnpluggedConfig;
 
     // True if the device should suspend when the screen is off due to proximity.
     private boolean mSuspendWhenScreenOffDueToProximityConfig;
@@ -354,6 +399,9 @@ public final class PowerManagerService extends SystemService
     // True if the device should stay on.
     private boolean mStayOn;
 
+    // Keep system alive to prevent from screen off timeout
+    private boolean mStayOnWithoutDim = false;
+
     // True if the proximity sensor reads a positive result.
     private boolean mProximityPositive;
 
@@ -404,6 +452,36 @@ public final class PowerManagerService extends SystemService
     // Time when we last logged a warning about calling userActivity() without permission.
     private long mLastWarningAboutUserActivityPermission = Long.MIN_VALUE;
 
+    public static final String IPO_BOOT = "android.intent.action.ACTION_BOOT_IPO";
+    public static final String IPO_PREBOOT = "android.intent.action.ACTION_PREBOOT_IPO";
+
+    // IPO shutdown backlight/display
+    private boolean mIPOShutdown = false;
+
+    // shutdown screen off
+    private boolean mShutdownFlag = false;
+
+    private boolean mUserActivityTimeoutMin = false;
+    private int mUserActivityTimeoutOverrideFromCMD = 10;
+
+    // [Smart Book] HDMI state
+    private IMtkHdmiManager mHdmiManager = null;
+
+    // [Smart Book] smartbook power state
+    private boolean mSmartBookSleeped = false;
+
+    // [Smart Book] RDMA Limitation
+    private boolean mSmartBookRDMALimited = false;
+
+    // [Smart Book] wakeup pending
+    private boolean mSmartBookWakeUpPendingByIPO = false;
+
+    // [Smart Book] The current smartbook plug state.
+    private boolean mSmartBookPlugState = false;
+
+    // [Smart Book] The lcd backlight control.
+    private boolean mSmartBookForceBacklightOff = false;
+
     // If true, the device is in low power mode.
     private boolean mLowPowerModeEnabled;
 
@@ -431,6 +509,10 @@ public final class PowerManagerService extends SystemService
     private static native void nativeReleaseSuspendBlocker(String name);
     private static native void nativeSetInteractive(boolean enable);
     private static native void nativeSetAutoSuspend(boolean enable);
+    private static native void nativeSetSmartBookMode(boolean enable);
+    private static native void nativeSetSmartBookSuspend(boolean enable);
+    private static native void nativeSetSmartBookScreen(int cmd, int timeout);
+    private static native void nativeSetBlNotify(boolean enable);
     private static native void nativeSendPowerHint(int hintId, int data);
 
     public PowerManagerService(Context context) {
@@ -494,6 +576,12 @@ public final class PowerManagerService extends SystemService
             mScreenBrightnessSettingMaximum = pm.getMaximumScreenBrightnessSetting();
             mScreenBrightnessSettingDefault = pm.getDefaultScreenBrightnessSetting();
 
+            if (DEBUG_SPEW) {
+                Slog.d(TAG, "mScreenBrightnessSettingMinimum = " + mScreenBrightnessSettingMinimum +
+                    " mScreenBrightnessSettingMinimum = " + mScreenBrightnessSettingMaximum +
+                    " mScreenBrightnessSettingDefault = " + mScreenBrightnessSettingDefault);
+            }
+
             SensorManager sensorManager = new SystemSensorManager(mContext, mHandler.getLooper());
 
             // The notifier runs on the system server's main looper so as not to interfere
@@ -510,6 +598,8 @@ public final class PowerManagerService extends SystemService
 
             mLightsManager = getLocalService(LightsManager.class);
             mAttentionLight = mLightsManager.getLight(LightsManager.LIGHT_ID_ATTENTION);
+            mButtonLight = mLightsManager.getLight(LightsManager.LIGHT_ID_BUTTONS);
+            mBacklight = mLightsManager.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
 
             // Initialize display power management.
             mDisplayManagerInternal.initPowerManagement(
@@ -534,6 +624,108 @@ public final class PowerManagerService extends SystemService
             filter.addAction(Intent.ACTION_DOCK_EVENT);
             mContext.registerReceiver(new DockReceiver(), filter, null, mHandler);
 
+            // Register for SD Hot Plug notification 
+            filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SD_INSERTED);
+            filter.addDataScheme("file");
+            mContext.registerReceiver(new SDHotPlugReceiver(), filter, null, mHandler);
+
+            // Register for IPO feature
+            if (SystemProperties.get("ro.mtk_ipo_support").equals("1")) {
+                filter = new IntentFilter();
+                filter.addAction(IPO_BOOT);
+                filter.addAction(IPO_PREBOOT);
+                mContext.registerReceiver(new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        synchronized (mLock) {
+                            if (IPO_PREBOOT.equals(intent.getAction())) {
+                                Slog.d(TAG, "PREBOOT_IPO");
+                                mStayOnWithoutDim = true;
+                                mIPOShutdown = false;
+                                mDirty |= DIRTY_BOOT_IPO;
+                                if (mSmartBookWakeUpPendingByIPO) {
+                                    wakeUpByReasonInternal(SystemClock.uptimeMillis(), PowerManager.WAKE_UP_REASON_SMARTBOOK);
+                                    mSmartBookWakeUpPendingByIPO = false;
+                                    wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
+                                }
+                            } else if (IPO_BOOT.equals(intent.getAction())) {
+                                Slog.d(TAG, "IPO_BOOT");
+                                mStayOnWithoutDim = false;
+                                mIPOShutdown = false;
+                                mDirty |= DIRTY_BOOT_IPO;
+                                mDisplayManagerInternal.setIPOScreenOnDelay(0);
+                                if (mWakefulness != WAKEFULNESS_AWAKE) {
+                                    wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
+                                } else {
+                                    userActivityNoUpdateLocked(
+                                        SystemClock.uptimeMillis(), PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                                }
+                            }
+                            updatePowerStateLocked();
+                        }
+                    }
+                }, filter, null, mHandler);
+
+                filter = new IntentFilter();
+                filter.addAction("android.intent.action.ACTION_SHUTDOWN_IPO");
+                mContext.registerReceiver(new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        if (DEBUG) {
+                            Slog.d(TAG, "ACTION_SHUTDOWN_IPO.");
+                        }
+                        mIPOShutdown = true;
+                    }
+                }, filter, null, mHandler);
+
+                filter = new IntentFilter();
+                filter.addAction("android.intent.action.normal.shutdown");
+                mContext.registerReceiver(new BroadcastReceiver() {
+                    @Override
+                    // receive android.intent.action.normal.shutdown intent
+                    // user choose to shutdown while alarm boot
+                    // set mBootCompleted as true for blank/unblank control during IPO shutdown
+                    public void onReceive(Context context, Intent intent) {
+                        if(mBootCompleted != true){
+                            Slog.d(TAG, "set mBootCompleted as true");
+                            mBootCompleted = true;
+                        }
+                    }
+                }, filter, null, mHandler);
+            }
+
+            // Register for smart book notification 
+            filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SMARTBOOK_PLUG);
+            mContext.registerReceiver(new SmartBookPlugReceiver(), filter, null, mHandler);	
+
+            filter = new IntentFilter();
+            filter.addAction("com.mediatek.SCREEN_TIMEOUT_MINIMUM");
+            mContext.registerReceiver(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "SCREEN_TIMEOUT_MINIMUM.");
+                    }
+                    mPreWakeUpWhenPluggedOrUnpluggedConfig = mWakeUpWhenPluggedOrUnpluggedConfig;
+                    mWakeUpWhenPluggedOrUnpluggedConfig = false;
+                    mUserActivityTimeoutMin = true;
+                }
+            }, filter, null, mHandler);
+
+            filter = new IntentFilter();
+            filter.addAction("com.mediatek.SCREEN_TIMEOUT_NORMAL");
+            mContext.registerReceiver(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "SCREEN_TIMEOUT_NORMAL.");
+                    }
+                    mWakeUpWhenPluggedOrUnpluggedConfig = mPreWakeUpWhenPluggedOrUnpluggedConfig;
+                    mUserActivityTimeoutMin = false;
+                }
+            }, filter, null, mHandler);
             // Register for settings changes.
             final ContentResolver resolver = mContext.getContentResolver();
             resolver.registerContentObserver(Settings.Secure.getUriFor(
@@ -572,7 +764,26 @@ public final class PowerManagerService extends SystemService
             resolver.registerContentObserver(Settings.Global.getUriFor(
                     Settings.Global.THEATER_MODE_ON),
                     false, mSettingsObserver, UserHandle.USER_ALL);
+
+            mHdmiManager = IMtkHdmiManager.Stub.asInterface(ServiceManager.getService(Context.HDMI_SERVICE));
+            if (mHdmiManager != null) {
+                try {
+                    if (mHdmiManager.hasCapability(HdmiDef.CAPABILITY_RDMA_LIMIT)) {
+                        Slog.d(TAG, "RDMA with limitation");
+                        mSmartBookRDMALimited = true;
+                    } else {
+                        Slog.d(TAG, "RDMA without limitation");
+                        mSmartBookRDMALimited = false;
+                    }
+                } catch (RemoteException e) {
+                    Slog.d(TAG, "RemoteException on mHdmiManager hasCapability");
+                }
+            }
+
             // Go.
+            if (DEBUG) {
+                Slog.d(TAG, "system ready!");
+            }
             readConfigurationLocked();
             updateSettingsLocked();
             mDirty |= DIRTY_BATTERY_STATE;
@@ -666,6 +877,10 @@ public final class PowerManagerService extends SystemService
                 Settings.System.SCREEN_BRIGHTNESS_MODE,
                 Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL, UserHandle.USER_CURRENT);
 
+        if (DEBUG_SPEW) {
+            Slog.d(TAG, "updateSettingsLocked: mScreenBrightnessModeSetting=" + mScreenBrightnessModeSetting);
+        }
+
         final boolean lowPowerModeEnabled = Settings.Global.getInt(resolver,
                 Settings.Global.LOW_POWER_MODE, 0) != 0;
         final boolean autoLowPowerModeConfigured = Settings.Global.getInt(resolver,
@@ -755,6 +970,7 @@ public final class PowerManagerService extends SystemService
                 }
                 mWakeLocks.add(wakeLock);
                 notifyAcquire = true;
+                wakeLock.mActiveSince = SystemClock.uptimeMillis();
             }
 
             applyWakeLockFlagsOnAcquireLocked(wakeLock, uid);
@@ -784,7 +1000,9 @@ public final class PowerManagerService extends SystemService
 
     private void applyWakeLockFlagsOnAcquireLocked(WakeLock wakeLock, int uid) {
         if ((wakeLock.mFlags & PowerManager.ACQUIRE_CAUSES_WAKEUP) != 0
-                && isScreenLock(wakeLock)) {
+            && isScreenLock(wakeLock)) {
+            if (mIPOShutdown) 
+                return;
             wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), uid);
         }
     }
@@ -801,9 +1019,11 @@ public final class PowerManagerService extends SystemService
             }
 
             WakeLock wakeLock = mWakeLocks.get(index);
+            wakeLock.mTotalTime = SystemClock.uptimeMillis() - wakeLock.mActiveSince;
+
             if (DEBUG_SPEW) {
                 Slog.d(TAG, "releaseWakeLockInternal: lock=" + Objects.hashCode(lock)
-                        + " [" + wakeLock.mTag + "], flags=0x" + Integer.toHexString(flags));
+                        + " [" + wakeLock.mTag + "], flags=0x" + Integer.toHexString(flags) + ", total_time=" + wakeLock.mTotalTime + "ms");
             }
 
             if ((flags & PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) != 0) {
@@ -916,6 +1136,60 @@ public final class PowerManagerService extends SystemService
         }
     }
 
+    private void dumpWakeLockLocked() {
+        final int numWakeLocks = mWakeLocks.size();
+        if (numWakeLocks > 0) {
+            Slog.d(TAG, "wakelock list dump: mLocks.size=" + numWakeLocks + ":");
+        } else {
+            return;
+        }
+
+        for (int i = 0; i < numWakeLocks; i++) {
+            final WakeLock wakeLock = mWakeLocks.get(i);
+            String type = "";
+
+            switch (wakeLock.mFlags & PowerManager.WAKE_LOCK_LEVEL_MASK) {
+                case PowerManager.PARTIAL_WAKE_LOCK:
+                    type = "PARTIAL_WAKE_LOCK";
+                    break;
+                case PowerManager.FULL_WAKE_LOCK:
+                    type = "FULL_WAKE_LOCK";
+                    break;
+                case PowerManager.SCREEN_BRIGHT_WAKE_LOCK:
+                    type = "SCREEN_BRIGHT_WAKE_LOCK";
+                    break;
+                case PowerManager.SCREEN_DIM_WAKE_LOCK:
+                    type = "SCREEN_DIM_WAKE_LOCK";
+                    break;
+                case PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK:
+                    type = "PROXIMITY_SCREEN_OFF_WAKE_LOCK";
+                    break;
+                case PowerManager.DOZE_WAKE_LOCK:
+                    type = "DOZE_WAKE_LOCK";
+                    break;
+            }
+            long total_time = SystemClock.uptimeMillis() - wakeLock.mActiveSince;
+            Slog.d(TAG, "No." + i + ": " + type + " '" + wakeLock.mTag + "'"
+                        + "activated" + "(flags=" + wakeLock.mFlags
+                        + ", uid=" + wakeLock.mOwnerUid + ", pid=" + wakeLock.mOwnerPid + ")" + " total=" + total_time +  "ms)");
+        }
+    }
+
+    private boolean canBrightnessOverRange() {
+        if (isWfdEnabled())
+            return true;
+        return false;
+    }
+
+    private boolean isWfdEnabled() {
+        boolean enabled = false;
+        DisplayManager mDisplayManager = (DisplayManager) mContext.getSystemService(Context.DISPLAY_SERVICE);
+        WifiDisplayStatus mWfdStatus = mDisplayManager.getWifiDisplayStatus();
+        enabled = (WifiDisplayStatus.DISPLAY_STATE_CONNECTED == mWfdStatus.getActiveDisplayState());
+        Slog.d(TAG, "isWfdEnabled() mWfdStatus=" + mWfdStatus + ", return " + enabled);
+        return enabled;
+    }
+
     @SuppressWarnings("deprecation")
     private boolean isWakeLockLevelSupportedInternal(int level) {
         synchronized (mLock) {
@@ -938,6 +1212,9 @@ public final class PowerManagerService extends SystemService
 
     // Called from native code.
     private void userActivityFromNative(long eventTime, int event, int flags) {
+        if (DEBUG_SPEW) {
+            Slog.d(TAG, "userActivityFromNative");
+        }
         userActivityInternal(eventTime, event, flags, Process.SYSTEM_UID);
     }
 
@@ -987,6 +1264,9 @@ public final class PowerManagerService extends SystemService
                 if (eventTime > mLastUserActivityTime) {
                     mLastUserActivityTime = eventTime;
                     mDirty |= DIRTY_USER_ACTIVITY;
+                    if (event == PowerManager.USER_ACTIVITY_EVENT_BUTTON) {
+                        mLastUserActivityButtonTime = eventTime;
+                    }
                     return true;
                 }
             }
@@ -996,7 +1276,117 @@ public final class PowerManagerService extends SystemService
         return false;
     }
 
+    // Called from native code.
+    private void setSmartBookScreenFromNative(int cmd, int timeout) {
+        synchronized (mLock) {
+            if (DEBUG) {
+                StackTraceElement[] stack = new Throwable().getStackTrace();
+                for (StackTraceElement element : stack)
+                {
+                    Slog.d(TAG, " 	|----" + element.toString());
+                }
+                Slog.d(TAG, "setSmartBookScreenFromNative (cmd =" + cmd + ", timeout = " + timeout);
+            }
+
+            if (cmd == SMARTBOOK_SCREEN_ON) {
+                setSmartBookScreenInternal(true);
+            } else if (cmd == SMARTBOOK_SCREEN_OFF) {
+                setSmartBookScreenInternal(false);
+            } else {
+                Slog.i(TAG, "setSmartBookScreenFromNative cmd not defined (cmd = " + cmd + ")");
+            }
+
+            if (SystemProperties.getBoolean("persist.smb.phone.both.on", false)) {
+                if (cmd == SMARTBOOK_SCREEN_ON) {
+                    if (DEBUG_SPEW) {
+                        Slog.i(TAG, "setSmartBookScreenFromNative: turn on phone screen...");
+                    }
+                    wakeUpByReasonInternal(SystemClock.uptimeMillis(), PowerManager.WAKE_UP_REASON_SMARTBOOK);
+                }
+            }
+            userActivityNoUpdateLocked(
+                    SystemClock.uptimeMillis(), PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+            mDirty |= DIRTY_SMARTBOOK_STATE;
+            updatePowerStateLocked();
+        }
+    }
+
+    private void setSmartBookScreenInternal(boolean on) {
+        if (mIPOShutdown) {
+            return;
+        }
+        synchronized (mLock) {
+            if (on) {
+                if (mSmartBookSleeped) {
+                    Slog.i(TAG, "setSmartBookScreenInternal (on = " + on + ")");
+                    nativeSetSmartBookScreen(SMARTBOOK_SCREEN_ON, 0);
+                    mSmartBookSleeped = false;
+                    userActivityNoUpdateLocked(
+                            SystemClock.uptimeMillis(), PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                }
+            } else {
+                if (!mSmartBookSleeped) {
+                    Slog.i(TAG, "setSmartBookScreenInternal (on = " + on + ")");
+                    nativeSetSmartBookScreen(SMARTBOOK_SCREEN_OFF, 0);
+                    mSmartBookSleeped = true;
+                }
+            }
+        }
+    }
+
+    private void wakeUpByReasonInternal(long eventTime, int reason) {        
+        if (DEBUG) {
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            for (StackTraceElement element : stack)
+            {
+                Slog.d(TAG, " 	|----" + element.toString());
+            }
+            Slog.d(TAG, "wakeUpByReasonInternal in (eventTime = " + eventTime + ", reason = " + reason + ")");
+        }
+
+        if (reason == PowerManager.WAKE_UP_REASON_SMARTBOOK) {
+            if (mIPOShutdown)
+                return;
+
+            synchronized (mLock) {
+                Slog.d(TAG, "wakeUpByReasonInternal - nativeSetSmartBookMode");
+                nativeSetSmartBookMode(false);
+
+                /* Turn on backlight */
+                Slog.d(TAG, "smart book mode: turn on lcd backlight");
+                mSmartBookForceBacklightOff = false;
+
+                if (mSmartBookSleeped) {
+                    Slog.d(TAG, "setSmartBookScreenFromNative: turn on smart book screen...");
+                    nativeSetSmartBookScreen(SMARTBOOK_SCREEN_ON, 0);
+                    mSmartBookSleeped = false;
+                } else {
+                    /* do nothing, smart book screen is still on */
+                }
+
+                Slog.d(TAG, "wakeUpByReasonInternal - out");
+
+                userActivityNoUpdateLocked(
+                    eventTime, PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                updatePowerStateLocked();
+            }
+        } else if (reason == PowerManager.WAKE_UP_REASON_SHUTDOWN) {
+            synchronized (mLock) {
+                mShutdownFlag = false;
+                Slog.d(TAG, "mShutdownFlag = " + mShutdownFlag);
+
+                mDirty |= DIRTY_SETTINGS;
+                updatePowerStateLocked();
+            }
+        } else {
+            Slog.d(TAG, "wakeUpByReasonInternal: reason = " + reason + " not support");
+        }
+    }
+
     private void wakeUpInternal(long eventTime, int uid) {
+        if (mIPOShutdown)
+            return;
+
         synchronized (mLock) {
             if (wakeUpNoUpdateLocked(eventTime, uid)) {
                 updatePowerStateLocked();
@@ -1005,6 +1395,22 @@ public final class PowerManagerService extends SystemService
     }
 
     private boolean wakeUpNoUpdateLocked(long eventTime, int uid) {
+        if (mSmartBookPlugState) {
+            if (DEBUG_SPEW) {
+                Slog.d(TAG, "smart book mode: mark mWakefulness as WAKEFULNESS_AWAKE but skip formal wakeUp flow");
+            }
+            mWakefulness = WAKEFULNESS_AWAKE;
+            return false;
+        }
+
+        if (DEBUG) {
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            for (StackTraceElement element : stack)
+            {
+                Slog.d(TAG, " 	|----" + element.toString());
+            }
+        }
+
         if (DEBUG_SPEW) {
             Slog.d(TAG, "wakeUpNoUpdateLocked: eventTime=" + eventTime + ", uid=" + uid);
         }
@@ -1041,6 +1447,14 @@ public final class PowerManagerService extends SystemService
 
     private void goToSleepInternal(long eventTime, int reason, int flags, int uid) {
         synchronized (mLock) {
+            if (mProximityPositive && reason == PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON) {
+                Slog.d(TAG, "Proximity positive sleep and force wakeup by power button");
+                mDirty |= DIRTY_WAKEFULNESS;
+                mWakefulness = WAKEFULNESS_ASLEEP;
+                updatePowerStateLocked();
+                return;
+            }
+
             if (goToSleepNoUpdateLocked(eventTime, reason, flags, uid)) {
                 updatePowerStateLocked();
             }
@@ -1051,15 +1465,47 @@ public final class PowerManagerService extends SystemService
     // dozing before really going to sleep.
     @SuppressWarnings("deprecation")
     private boolean goToSleepNoUpdateLocked(long eventTime, int reason, int flags, int uid) {
+        if (DEBUG) {
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            for (StackTraceElement element : stack)
+            {
+                Slog.d(TAG, " 	|----" + element.toString());
+            }
+        }
+
         if (DEBUG_SPEW) {
             Slog.d(TAG, "goToSleepNoUpdateLocked: eventTime=" + eventTime
                     + ", reason=" + reason + ", flags=" + flags + ", uid=" + uid);
         }
 
+        if (reason == PowerManager.GO_TO_SLEEP_REASON_SMARTBOOK) {
+            Slog.i(TAG, "Going to sleep due to smart book (uid " + uid +")...");
+
+            /* Turn off button backlight */
+            Slog.d(TAG, "Turn off button backlight");
+            mButtonLight.turnOff();
+
+            /* Turn off backlight */
+            Slog.d(TAG, "Turn off screen backlight");
+            mSmartBookForceBacklightOff = true;
+
+            Slog.d(TAG, "Invoke low-level smartbook mode sleep");
+            nativeSetSmartBookMode(true);
+
+            Slog.d(TAG, "Smartbook mode sleep completion");
+            return true;
+        } else if (reason == PowerManager.GO_TO_SLEEP_REASON_SHUTDOWN) {
+            mDirty |= DIRTY_SETTINGS;
+            mShutdownFlag = true;
+            Slog.d(TAG, "mShutdownFlag = " + mShutdownFlag);
+            return true;
+        }
+
         if (eventTime < mLastWakeTime
                 || mWakefulness == WAKEFULNESS_ASLEEP
                 || mWakefulness == WAKEFULNESS_DOZING
-                || !mBootCompleted || !mSystemReady) {
+                || !mBootCompleted || !mSystemReady
+                || mSmartBookPlugState) {
             return false;
         }
 
@@ -1072,7 +1518,6 @@ public final class PowerManagerService extends SystemService
                     break;
                 case PowerManager.GO_TO_SLEEP_REASON_TIMEOUT:
                     Slog.i(TAG, "Going to sleep due to screen timeout (uid " + uid +")...");
-                    break;
                 case PowerManager.GO_TO_SLEEP_REASON_LID_SWITCH:
                     Slog.i(TAG, "Going to sleep due to lid switch (uid " + uid +")...");
                     break;
@@ -1081,6 +1526,9 @@ public final class PowerManagerService extends SystemService
                     break;
                 case PowerManager.GO_TO_SLEEP_REASON_HDMI:
                     Slog.i(TAG, "Going to sleep due to HDMI standby (uid " + uid +")...");
+                    break;
+                case PowerManager.GO_TO_SLEEP_REASON_PROXIMITY:
+                    Slog.i(TAG, "Going to sleep due to proximity (uid " + uid +")...");
                     break;
                 default:
                     Slog.i(TAG, "Going to sleep by application request (uid " + uid +")...");
@@ -1106,6 +1554,9 @@ public final class PowerManagerService extends SystemService
                 }
             }
             EventLog.writeEvent(EventLogTags.POWER_SLEEP_REQUESTED, numWakeLocksCleared);
+
+            // Wakelock debug
+            dumpWakeLockLocked();
 
             // Skip dozing if requested.
             if ((flags & PowerManager.GO_TO_SLEEP_FLAG_NO_DOZE) != 0) {
@@ -1410,7 +1861,8 @@ public final class PowerManagerService extends SystemService
                 mWakeLockSummary &= ~(WAKE_LOCK_SCREEN_BRIGHT | WAKE_LOCK_SCREEN_DIM
                         | WAKE_LOCK_BUTTON_BRIGHT);
                 if (mWakefulness == WAKEFULNESS_ASLEEP) {
-                    mWakeLockSummary &= ~WAKE_LOCK_PROXIMITY_SCREEN_OFF;
+                    /* Power Key Force Wakeup to Keep Proximity Wakelock */
+                    // mWakeLockSummary &= ~WAKE_LOCK_PROXIMITY_SCREEN_OFF;
                 }
             }
 
@@ -1431,6 +1883,20 @@ public final class PowerManagerService extends SystemService
         }
     }
 
+    /*
+     * Check if system should be always on
+     */
+    private boolean bypassUserActivityTimeout() {
+        if (mStayOnWithoutDim) {
+            Slog.d(TAG, "bypass UserActivityTimeout because of setting");
+            return true;
+        } else if (SystemProperties.getBoolean("persist.keep.awake", false)) {
+            Slog.d(TAG, "bypass UserActivityTimeout because of system property request");
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Updates the value of mUserActivitySummary to summarize the user requested
      * state of the system such as whether the screen should be bright or dim.
@@ -1445,23 +1911,43 @@ public final class PowerManagerService extends SystemService
             mHandler.removeMessages(MSG_USER_ACTIVITY_TIMEOUT);
 
             long nextTimeout = 0;
+
+            if (mSmartBookPlugState) {
+                if (!mSmartBookSleeped) {
+                    final int sleepTimeout = getSleepTimeoutLocked();
+                    final int screenOffTimeout = getScreenOffTimeoutLocked(sleepTimeout);
+
+                    nextTimeout = mLastUserActivityTime + screenOffTimeout;
+                    mUserActivitySummary |= USER_ACTIVITY_SCREEN_BRIGHT;
+
+                    Message msg = mHandler.obtainMessage(MSG_USER_ACTIVITY_TIMEOUT);
+                    msg.setAsynchronous(true);
+                    mHandler.sendMessageAtTime(msg, nextTimeout);
+                }
+                return;
+            }
+
             if (mWakefulness == WAKEFULNESS_AWAKE
                     || mWakefulness == WAKEFULNESS_DREAMING
                     || mWakefulness == WAKEFULNESS_DOZING) {
                 final int sleepTimeout = getSleepTimeoutLocked();
                 final int screenOffTimeout = getScreenOffTimeoutLocked(sleepTimeout);
                 final int screenDimDuration = getScreenDimDurationLocked(screenOffTimeout);
+                final int screenButtonLightDuration = getButtonLightDurationLocked(screenOffTimeout);
 
                 mUserActivitySummary = 0;
                 if (mLastUserActivityTime >= mLastWakeTime) {
-                    nextTimeout = mLastUserActivityTime
-                            + screenOffTimeout - screenDimDuration;
-                    if (now < nextTimeout) {
-                        mUserActivitySummary = USER_ACTIVITY_SCREEN_BRIGHT;
+                    if ( (mLastUserActivityButtonTime >= mLastWakeTime) && (now < mLastUserActivityButtonTime + screenButtonLightDuration) ) {
+                        mUserActivitySummary |= USER_ACTIVITY_BUTTON_BRIGHT;
+                        mUserActivitySummary |= USER_ACTIVITY_SCREEN_BRIGHT;
+                        nextTimeout = mLastUserActivityButtonTime + screenButtonLightDuration;
+                    } else if (now < mLastUserActivityTime + screenOffTimeout - screenDimDuration) {
+                        nextTimeout = mLastUserActivityTime + screenOffTimeout - screenDimDuration;
+                        mUserActivitySummary |= USER_ACTIVITY_SCREEN_BRIGHT;
                     } else {
                         nextTimeout = mLastUserActivityTime + screenOffTimeout;
                         if (now < nextTimeout) {
-                            mUserActivitySummary = USER_ACTIVITY_SCREEN_DIM;
+                            mUserActivitySummary |= USER_ACTIVITY_SCREEN_DIM;
                         }
                     }
                 }
@@ -1491,11 +1977,29 @@ public final class PowerManagerService extends SystemService
                         nextTimeout = -1;
                     }
                 }
+/* Vanzo:wudu on: Fri, 10 Apr 2015 09:37:52 +0800
+ * implement #106623 add never to screen timeout
                 if (mUserActivitySummary != 0 && nextTimeout >= 0) {
                     Message msg = mHandler.obtainMessage(MSG_USER_ACTIVITY_TIMEOUT);
                     msg.setAsynchronous(true);
                     mHandler.sendMessageAtTime(msg, nextTimeout);
                 }
+*/
+                if (mUserActivitySummary != 0 && nextTimeout >= 0) {
+                    if(com.android.featureoption.FeatureOption.VANZO_FEATURE_SCREEN_NEVER_OFF){
+                        if(mScreenOffTimeoutSetting > 0){
+                            Message msg = mHandler.obtainMessage(MSG_USER_ACTIVITY_TIMEOUT);
+                            msg.setAsynchronous(true);
+                            mHandler.sendMessageAtTime(msg, nextTimeout);
+                        }
+                    }else{
+                        Message msg = mHandler.obtainMessage(MSG_USER_ACTIVITY_TIMEOUT);
+                        msg.setAsynchronous(true);
+                        mHandler.sendMessageAtTime(msg, nextTimeout);
+                    }
+                }
+
+// End of Vanzo:wudu
             } else {
                 mUserActivitySummary = 0;
             }
@@ -1519,12 +2023,51 @@ public final class PowerManagerService extends SystemService
      */
     private void handleUserActivityTimeout() { // runs on handler thread
         synchronized (mLock) {
-            if (DEBUG_SPEW) {
-                Slog.d(TAG, "handleUserActivityTimeout");
-            }
+            if (!mSmartBookPlugState) {
+                if (DEBUG_SPEW) {
+                    Slog.d(TAG, "handleUserActivityTimeout");
+                }
 
-            mDirty |= DIRTY_USER_ACTIVITY;
-            updatePowerStateLocked();
+                mDirty |= DIRTY_USER_ACTIVITY;
+                updatePowerStateLocked();
+            } else {
+                if ((mWakeLockSummary & WAKE_LOCK_STAY_AWAKE) == 0) {
+                    /* Handle smart book screen off timeout */
+                    if (DEBUG_SPEW) {
+                        Slog.d(TAG, "handleUserActivityTimeout - SmartBook");
+                    }
+
+                    /* If dreaming is on-going, do not turn off smart book screen */
+                    boolean isDreaming = false;
+                    if (mDreamManager != null) {
+                        isDreaming = mDreamManager.isDreaming();
+                    }
+
+                    if (isDreaming) {
+                        if (DEBUG_SPEW) {
+                            Slog.d(TAG, "smart book mode: dreaming is on-going, return directly");
+                        }
+                    } else {
+                        /* Trigger SmartBook enter power saving mode */
+                        if (shouldNapAtBedTimeLocked()) {
+                            if (DEBUG_SPEW) {
+                                Slog.d(TAG, "smart book mode: napNoUpdateLocked");
+                            }
+                            napNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
+                        } else {
+                            setSmartBookScreenInternal(false);
+                            mDirty |= DIRTY_SMARTBOOK_STATE;
+                            if (SystemProperties.getBoolean("persist.smb.phone.both.on", false)) {
+                                if (DEBUG_SPEW) {
+                                    Slog.d(TAG, "smart book mode: screen off timeout, turn off phone screen together");
+                                }
+                                goToSleepNoUpdateLocked(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SMARTBOOK, 0, Process.SYSTEM_UID);
+                            }
+                            updatePowerStateLocked();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1547,12 +2090,20 @@ public final class PowerManagerService extends SystemService
         if (sleepTimeout >= 0) {
             timeout = Math.min(timeout, sleepTimeout);
         }
+        if (mUserActivityTimeoutMin) {
+            timeout = (int)Math.min(timeout, mUserActivityTimeoutOverrideFromCMD);
+        }
         return Math.max(timeout, mMinimumScreenOffTimeoutConfig);
     }
 
     private int getScreenDimDurationLocked(int screenOffTimeout) {
         return Math.min(mMaximumScreenDimDurationConfig,
                 (int)(screenOffTimeout * mMaximumScreenDimRatioConfig));
+    }
+
+    private int getButtonLightDurationLocked(int screenOffTimeout) {
+        return Math.min(SCREEN_BUTTON_LIGHT_DURATION,
+                (int)(screenOffTimeout * MAXIMUM_SCREEN_BUTTON_RATIO));
     }
 
     /**
@@ -1601,7 +2152,7 @@ public final class PowerManagerService extends SystemService
      * to being fully awake or else go to sleep for good.
      */
     private boolean isItBedTimeYetLocked() {
-        return mBootCompleted && !isBeingKeptAwakeLocked();
+        return mBootCompleted && !isBeingKeptAwakeLocked() && !mIPOShutdown;
     }
 
     /**
@@ -1618,7 +2169,8 @@ public final class PowerManagerService extends SystemService
                 || (mWakeLockSummary & WAKE_LOCK_STAY_AWAKE) != 0
                 || (mUserActivitySummary & (USER_ACTIVITY_SCREEN_BRIGHT
                         | USER_ACTIVITY_SCREEN_DIM)) != 0
-                || mScreenBrightnessBoostInProgress;
+                || mScreenBrightnessBoostInProgress
+                || bypassUserActivityTimeout();
     }
 
     /**
@@ -1629,9 +2181,11 @@ public final class PowerManagerService extends SystemService
                 | DIRTY_USER_ACTIVITY
                 | DIRTY_WAKE_LOCKS
                 | DIRTY_BOOT_COMPLETED
+                | DIRTY_BOOT_IPO
                 | DIRTY_SETTINGS
                 | DIRTY_IS_POWERED
                 | DIRTY_STAY_ON
+                | DIRTY_SD_STATE
                 | DIRTY_PROXIMITY_POSITIVE
                 | DIRTY_BATTERY_STATE)) != 0 || displayBecameReady) {
             if (mDisplayReady) {
@@ -1665,6 +2219,9 @@ public final class PowerManagerService extends SystemService
             wakefulness = mWakefulness;
             if (mSandmanSummoned && mDisplayReady) {
                 startDreaming = canDreamLocked() || canDozeLocked();
+                if (DEBUG_SPEW) {
+                    Slog.i(TAG, "handleSandman startDreaming = " + startDreaming);
+                }
                 mSandmanSummoned = false;
             } else {
                 startDreaming = false;
@@ -1726,10 +2283,12 @@ public final class PowerManagerService extends SystemService
 
                 // Dream has ended or will be stopped.  Update the power state.
                 if (isItBedTimeYetLocked()) {
+                    Slog.i(TAG, "handleSandman: Bed time and goToSleepNoUpdateLocked");
                     goToSleepNoUpdateLocked(SystemClock.uptimeMillis(),
                             PowerManager.GO_TO_SLEEP_REASON_TIMEOUT, 0, Process.SYSTEM_UID);
                     updatePowerStateLocked();
                 } else {
+                    Slog.i(TAG, "handleSandman: time to wakeUpNoUpdateLocked");
                     wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
                     updatePowerStateLocked();
                 }
@@ -1746,18 +2305,31 @@ public final class PowerManagerService extends SystemService
 
         // Stop dream.
         if (isDreaming) {
+            if (DEBUG_SPEW) {
+                Slog.i(TAG, "handleSandman stopDream(false)");
+            }
             mDreamManager.stopDream(false /*immediate*/);
         }
+
     }
 
     /**
      * Returns true if the device is allowed to dream in its current state.
      */
     private boolean canDreamLocked() {
+        if (DEBUG_SPEW) {
+            Slog.i(TAG, "canDreamLocked mWakefulness = " + mWakefulness
+                    + ", mDreamsSupportedConfig = " + mDreamsSupportedConfig
+                    + ", mDreamsEnabledSetting = " + mDreamsEnabledSetting
+                    + ", mDisplayPowerRequest.isBrightOrDim() = " + mDisplayPowerRequest.isBrightOrDim()
+                    + ", mSmartBookForceBacklightOff = " + mSmartBookForceBacklightOff
+                    + ", mUserActivitySummary = " + mUserActivitySummary
+                    + ", mBootCompleted = " + mBootCompleted);
+        }
         if (mWakefulness != WAKEFULNESS_DREAMING
                 || !mDreamsSupportedConfig
                 || !mDreamsEnabledSetting
-                || !mDisplayPowerRequest.isBrightOrDim()
+                || (!mDisplayPowerRequest.isBrightOrDim() && !mSmartBookForceBacklightOff)
                 || (mUserActivitySummary & (USER_ACTIVITY_SCREEN_BRIGHT
                         | USER_ACTIVITY_SCREEN_DIM | USER_ACTIVITY_SCREEN_DREAM)) == 0
                 || !mBootCompleted) {
@@ -1767,12 +2339,12 @@ public final class PowerManagerService extends SystemService
             if (!mIsPowered && !mDreamsEnabledOnBatteryConfig) {
                 return false;
             }
-            if (!mIsPowered
+            if ((!mIsPowered)
                     && mDreamsBatteryLevelMinimumWhenNotPoweredConfig >= 0
                     && mBatteryLevel < mDreamsBatteryLevelMinimumWhenNotPoweredConfig) {
                 return false;
             }
-            if (mIsPowered
+            if ((mIsPowered)
                     && mDreamsBatteryLevelMinimumWhenPoweredConfig >= 0
                     && mBatteryLevel < mDreamsBatteryLevelMinimumWhenPoweredConfig) {
                 return false;
@@ -1802,14 +2374,17 @@ public final class PowerManagerService extends SystemService
         final boolean oldDisplayReady = mDisplayReady;
         if ((dirty & (DIRTY_WAKE_LOCKS | DIRTY_USER_ACTIVITY | DIRTY_WAKEFULNESS
                 | DIRTY_ACTUAL_DISPLAY_POWER_STATE_UPDATED | DIRTY_BOOT_COMPLETED
-                | DIRTY_SETTINGS | DIRTY_SCREEN_BRIGHTNESS_BOOST)) != 0) {
+                | DIRTY_SETTINGS | DIRTY_SCREEN_BRIGHTNESS_BOOST | DIRTY_BOOT_IPO)) != 0) {
             mDisplayPowerRequest.policy = getDesiredScreenPolicyLocked();
+            if (DEBUG) {
+                Slog.d(TAG, "mDisplayPowerRequest.policy = " + mDisplayPowerRequest.policy);
+            }
 
             // Determine appropriate screen brightness and auto-brightness adjustments.
             int screenBrightness = mScreenBrightnessSettingDefault;
             float screenAutoBrightnessAdjustment = 0.0f;
-            boolean autoBrightness = (mScreenBrightnessModeSetting ==
-                    Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
+            boolean autoBrightness = ((mScreenBrightnessModeSetting &
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC) > 0);
             if (isValidBrightness(mScreenBrightnessOverrideFromWindowManager)) {
                 screenBrightness = mScreenBrightnessOverrideFromWindowManager;
                 autoBrightness = false;
@@ -1829,8 +2404,10 @@ public final class PowerManagerService extends SystemService
                     screenAutoBrightnessAdjustment = mScreenAutoBrightnessAdjustmentSetting;
                 }
             }
-            screenBrightness = Math.max(Math.min(screenBrightness,
-                    mScreenBrightnessSettingMaximum), mScreenBrightnessSettingMinimum);
+            if (!canBrightnessOverRange()) {
+                screenBrightness = Math.max(Math.min(screenBrightness,
+                        mScreenBrightnessSettingMaximum), mScreenBrightnessSettingMinimum);
+            }
             screenAutoBrightnessAdjustment = Math.max(Math.min(
                     screenAutoBrightnessAdjustment, 1.0f), -1.0f);
 
@@ -1855,6 +2432,22 @@ public final class PowerManagerService extends SystemService
             mDisplayReady = mDisplayManagerInternal.requestPowerState(mDisplayPowerRequest,
                     mRequestWaitForNegativeProximity);
             mRequestWaitForNegativeProximity = false;
+
+            // Button backlight begin
+            if ((mDisplayPowerRequest.policy == DisplayPowerRequest.POLICY_BRIGHT) && (mWakefulness == WAKEFULNESS_AWAKE) && !mIPOShutdown && !mShutdownFlag) {
+                if ( ( (mWakeLockSummary & WAKE_LOCK_BUTTON_BRIGHT) != 0 ) ||
+                        ( (mUserActivitySummary & USER_ACTIVITY_BUTTON_BRIGHT) != 0) ) {
+                    mButtonLight.setBrightness(screenBrightness);
+                    Slog.i(TAG, "setBrightness mButtonLight, screenBrightness=" + screenBrightness);
+                } else {
+                    mButtonLight.turnOff();
+                    Slog.i(TAG, "setBrightness mButtonLight 0.");
+                }
+            } else {
+                mButtonLight.turnOff();
+                Slog.i(TAG, "setBrightness mButtonLight 0.");
+            }
+            // Button backlight end
 
             if (DEBUG_SPEW) {
                 Slog.d(TAG, "updateDisplayPowerStateLocked: mDisplayReady=" + mDisplayReady
@@ -1902,7 +2495,7 @@ public final class PowerManagerService extends SystemService
     }
 
     private int getDesiredScreenPolicyLocked() {
-        if (mWakefulness == WAKEFULNESS_ASLEEP) {
+        if ((mWakefulness == WAKEFULNESS_ASLEEP) || mShutdownFlag || mSmartBookForceBacklightOff) {
             return DisplayPowerRequest.POLICY_OFF;
         }
 
@@ -1920,7 +2513,8 @@ public final class PowerManagerService extends SystemService
         if ((mWakeLockSummary & WAKE_LOCK_SCREEN_BRIGHT) != 0
                 || (mUserActivitySummary & USER_ACTIVITY_SCREEN_BRIGHT) != 0
                 || !mBootCompleted
-                || mScreenBrightnessBoostInProgress) {
+                || mScreenBrightnessBoostInProgress
+                || bypassUserActivityTimeout()) {
             return DisplayPowerRequest.POLICY_BRIGHT;
         }
 
@@ -1942,6 +2536,7 @@ public final class PowerManagerService extends SystemService
         @Override
         public void onProximityPositive() {
             synchronized (mLock) {
+                Slog.i(TAG, "onProximityPositive");
                 mProximityPositive = true;
                 mDirty |= DIRTY_PROXIMITY_POSITIVE;
                 updatePowerStateLocked();
@@ -1951,20 +2546,25 @@ public final class PowerManagerService extends SystemService
         @Override
         public void onProximityNegative() {
             synchronized (mLock) {
+                Slog.i(TAG, "onProximityNegative");
                 mProximityPositive = false;
                 mDirty |= DIRTY_PROXIMITY_POSITIVE;
                 userActivityNoUpdateLocked(SystemClock.uptimeMillis(),
                         PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
                 updatePowerStateLocked();
             }
         }
 
-        @Override
         public void onDisplayStateChange(int state) {
             // This method is only needed to support legacy display blanking behavior
             // where the display's power state is coupled to suspend or to the power HAL.
             // The order of operations matters here.
             synchronized (mLock) {
+                if (mSmartBookPlugState) {
+                    Slog.i(TAG, "bypass onDisplayStateChange in smart book mode");
+                    return;
+                }
                 if (mDisplayState != state) {
                     mDisplayState = state;
                     if (state == Display.STATE_OFF) {
@@ -2291,6 +2891,9 @@ public final class PowerManagerService extends SystemService
         synchronized (mLock) {
             if (mScreenBrightnessOverrideFromWindowManager != brightness) {
                 mScreenBrightnessOverrideFromWindowManager = brightness;
+                if (DEBUG) {
+                    Slog.d(TAG, "mScreenBrightnessOverrideFromWindowManager = " + brightness);
+                }
                 mDirty |= DIRTY_SETTINGS;
                 updatePowerStateLocked();
             }
@@ -2300,6 +2903,9 @@ public final class PowerManagerService extends SystemService
     private void setUserActivityTimeoutOverrideFromWindowManagerInternal(long timeoutMillis) {
         synchronized (mLock) {
             if (mUserActivityTimeoutOverrideFromWindowManager != timeoutMillis) {
+                if (DEBUG) {
+                    Slog.d(TAG, "UA TimeoutOverrideFromWindowManagerInternal = " + timeoutMillis);
+                }
                 mUserActivityTimeoutOverrideFromWindowManager = timeoutMillis;
                 mDirty |= DIRTY_SETTINGS;
                 updatePowerStateLocked();
@@ -2311,6 +2917,9 @@ public final class PowerManagerService extends SystemService
         synchronized (mLock) {
             if (mTemporaryScreenBrightnessSettingOverride != brightness) {
                 mTemporaryScreenBrightnessSettingOverride = brightness;
+                if (DEBUG) {
+                    Slog.d(TAG, "mTemporaryScreenBrightnessSettingOverride = " + brightness);
+                }
                 mDirty |= DIRTY_SETTINGS;
                 updatePowerStateLocked();
             }
@@ -2585,6 +3194,77 @@ public final class PowerManagerService extends SystemService
         }
     }
 
+    private final class SDHotPlugReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            synchronized (mLock) {
+                if (DEBUG) {
+                    Slog.d(TAG, "<<<<< SD Hot Plug >>>>> Receiving " + intent.getAction());
+                }
+                if (intent.getAction().equals(Intent.ACTION_SD_INSERTED)) {
+                    mDirty |= DIRTY_SD_STATE;
+                    if (!mIPOShutdown) {
+                        if (mWakefulness != WAKEFULNESS_AWAKE) {
+                            wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
+                        } else {
+                            userActivityNoUpdateLocked(SystemClock.uptimeMillis(),
+                                    PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                        }
+                        updatePowerStateLocked();
+                    }
+                }
+            }
+        }
+    }
+
+    private final class SmartBookPlugReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            synchronized (mLock) {
+                mSmartBookPlugState = intent.getBooleanExtra(Intent.EXTRA_SMARTBOOK_PLUG_STATE, false);
+                if (DEBUG) {
+                    Slog.d(TAG, "<<<<< SmartBook Plug >>>>> Receiving " + intent.getAction() + ", mSmartBookPlugState = " + mSmartBookPlugState);
+                }
+
+                if (mSmartBookPlugState) {
+                    if (!mSmartBookRDMALimited) {
+                        if (SystemProperties.getBoolean("persist.smb.phone.both.on", false)) {
+                            if (DEBUG_SPEW) {
+                                Slog.d(TAG, "smart book mode: both smart book and phone screen keep on");
+                            }
+                        } else {
+                            TelecomManager telecomm = (TelecomManager) mContext.getSystemService(Context.TELECOM_SERVICE);
+                            if (telecomm != null) {
+                                if (telecomm.isInCall()) {
+                                    Slog.d(TAG, "SmartBookPlugReceiver: InCalling, no need to invoke smartbook sleep mode");
+                                } else {
+                                    goToSleepNoUpdateLocked(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SMARTBOOK, 0, Process.SYSTEM_UID);
+                                }
+                            } else {
+                                goToSleepNoUpdateLocked(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SMARTBOOK, 0, Process.SYSTEM_UID);
+                            }
+                        }
+                    } else {
+                        goToSleepNoUpdateLocked(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SMARTBOOK, 0, Process.SYSTEM_UID);
+                    }
+
+                    /* Re-draw power off dialog if power off dialog is showing*/
+                    ShutdownThread.powerOffDialogRedrawForSmartBook(context);
+                } else {
+                    if (mIPOShutdown) {
+                        mSmartBookWakeUpPendingByIPO = true;
+                    }
+                }
+
+                setSmartBookScreenInternal(true);
+                mDirty |= DIRTY_SMARTBOOK_STATE;
+
+                userActivityNoUpdateLocked(SystemClock.uptimeMillis(), PowerManager.USER_ACTIVITY_EVENT_OTHER, 0, Process.SYSTEM_UID);
+                updatePowerStateLocked();
+            }
+        }
+    }
+
     private final class SettingsObserver extends ContentObserver {
         public SettingsObserver(Handler handler) {
             super(handler);
@@ -2635,6 +3315,8 @@ public final class PowerManagerService extends SystemService
         public final int mOwnerUid;
         public final int mOwnerPid;
         public boolean mNotifiedAcquired;
+        public long mActiveSince = 0;
+        public long mTotalTime = 0;
 
         public WakeLock(IBinder lock, int flags, String tag, String packageName,
                 WorkSource workSource, String historyTag, int ownerUid, int ownerPid) {
@@ -3216,6 +3898,99 @@ public final class PowerManagerService extends SystemService
                 dumpInternal(pw);
             } finally {
                 Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        @Override // Binder call
+        public void setSmartBookScreen(boolean on) {
+            mContext.enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER, null);
+
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                setSmartBookScreenInternal(on);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        @Override // Binder call
+        public void wakeUpByReason(long eventTime, int reason) {
+            if (eventTime > SystemClock.uptimeMillis()) {
+                throw new IllegalArgumentException("event time must not be in the future");
+            }
+
+            mContext.enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER, null);
+
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                wakeUpByReasonInternal(eventTime, reason);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        @Override // Binder call
+        public void startBacklight(int delay_msec) {
+            synchronized (mLock) {
+                if (SystemProperties.get("ro.mtk_ipo_support").equals("1")) {
+                    Slog.d(TAG, "startBacklight");
+                    mContext.enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER, null);
+
+                    final long ident = Binder.clearCallingIdentity();
+                    try {
+                        mDisplayManagerInternal.setIPOScreenOnDelay(delay_msec);
+                        wakeUpNoUpdateLocked(SystemClock.uptimeMillis(), Process.SYSTEM_UID);
+                        updatePowerStateLocked();
+                    } finally {
+                        Binder.restoreCallingIdentity(ident);
+                    }
+                } else {
+                    Slog.d(TAG, "skip startBacklight because MTK_IPO_SUPPORT not enabled");
+                }
+            }
+        }
+
+        @Override // Binder call
+        public void stopBacklight() {
+            synchronized (mLock) {
+                if (SystemProperties.get("ro.mtk_ipo_support").equals("1")) {
+                    Slog.d(TAG, "stopBacklight");
+                    mContext.enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER, null);
+
+                    final long ident = Binder.clearCallingIdentity();
+                    try {
+                        mDisplayManagerInternal.setIPOScreenOnDelay(0);
+                        goToSleepNoUpdateLocked(SystemClock.uptimeMillis(),
+                        PowerManager.GO_TO_SLEEP_REASON_APPLICATION, 0, Process.SYSTEM_UID);
+                        updatePowerStateLocked();
+                    } finally {
+                        Binder.restoreCallingIdentity(ident);
+                    }
+                } else {
+                    Slog.d(TAG, "skip stopBacklight because MTK_IPO_SUPPORT not enabled");
+                }
+            }
+        }
+
+        @Override
+        public void setBlNotify() {
+            synchronized (this) {
+                nativeSetBlNotify(true);
+            }
+        }
+
+        @Override
+        public void setBacklightOffForWfd(boolean enable) {
+            if(enable) {
+                Slog.d(TAG, "setBacklightOffForWfd true");
+                mBacklight.setBrightness(0);
+            } else {
+                if (mWfdShouldBypass != true) {
+                    Slog.d(TAG, "setBacklightOffForWfd false");
+                    mBacklight.setBrightness(mScreenBrightnessSetting);
+                } else {
+                    Slog.d(TAG, "setBacklightOffForWfd false ignored due to screen is off by power key");
+                }
             }
         }
     }

@@ -1874,4 +1874,9 @@
     <string name="stk_cc_ss_to_dial" msgid="2151304435775557162">"SS сұрауы DIAL сұрауына өзгертілді."</string>
     <string name="stk_cc_ss_to_ussd" msgid="3951862188105305589">"SS сұрауы USSD сұрауына өзгертілді."</string>
     <string name="stk_cc_ss_to_ss" msgid="5470768854991452695">"SS сұрауы жаңа SS сұрауына өзгертілді."</string>
+    <string name="storage_phone">Телефон жады</string>
+    <string name="storage_external_usb">Сыртқы USB жады</string>
+    <string name="storage_ic_usb1">Сыртқы IC-USB 1-жады</string>
+    <string name="storage_ic_usb2">Сыртқы IC-USB 2-жады</string>
+    <string name="network_available_sign_in_detailed"><xliff:g id="network_ssid">%1$s</xliff:g></string>
 </resources>

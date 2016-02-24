@@ -27,5 +27,6 @@ oneway interface IInputMethodClient {
     void onBindMethod(in InputBindResult res);
     void onUnbindMethod(int sequence);
     void setActive(boolean active);
+    void sendCharacter(int unicode);
     void setUserActionNotificationSequenceNumber(int sequenceNumber);
 }

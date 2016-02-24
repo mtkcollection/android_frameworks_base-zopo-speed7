@@ -396,6 +396,14 @@ interface IPackageManager {
     void performBootDexOpt();
 
     /**
+     * M: [Mediatek Framework] Plug-in Manager (Limited use)
+     * Ask the package manager to enforce dex-opt (if needed) on the given
+     * package, if it already hasn't done mode.  Only does this if running
+     * in the special development "no pre-dexopt" mode.
+     */
+    boolean enforceDexOpt(String packageName);
+
+    /**
      * Ask the package manager to perform dex-opt (if needed) on the given
      * package and for the given instruction set if it already hasn't done
      * so.
@@ -437,6 +445,10 @@ interface IPackageManager {
     boolean isFirstBoot();
     boolean isOnlyCoreApps();
     boolean isUpgrade();
+
+    /// M: [ALPS00091751] Add api for check apk signature @{
+    int checkAPKSignatures(String pkg);
+    /// @}
 
     void setPermissionEnforced(String permission, boolean enforced);
     boolean isPermissionEnforced(String permission);

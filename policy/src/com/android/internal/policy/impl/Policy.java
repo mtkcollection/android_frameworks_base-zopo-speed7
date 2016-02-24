@@ -24,6 +24,8 @@ import android.view.Window;
 import android.view.WindowManagerPolicy;
 
 import com.android.internal.policy.IPolicy;
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 /**
  * {@hide}
@@ -65,7 +67,13 @@ public class Policy implements IPolicy {
     }
 
     public WindowManagerPolicy makeNewWindowManager() {
-        return new PhoneWindowManager();
+        /// M: BMW. @{
+        if (MultiWindowProxy.isFeatureSupport()){
+            return new MtkPhoneWindowManager();
+        }else {
+            return new PhoneWindowManager();
+        }
+        /// @}
     }
 
     public FallbackEventHandler makeNewFallbackEventHandler(Context context) {

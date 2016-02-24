@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +47,9 @@ public class DhcpResults extends StaticIpConfiguration {
 
     public int leaseDuration;
 
+    public String ppplinkname;
+    public int pidForRenew;
+
     public DhcpResults() {
         super();
     }
@@ -59,6 +67,8 @@ public class DhcpResults extends StaticIpConfiguration {
             serverAddress = source.serverAddress;
             vendorInfo = source.vendorInfo;
             leaseDuration = source.leaseDuration;
+            ppplinkname = source.ppplinkname;
+            pidForRenew = source.pidForRenew;
         }
     }
 
@@ -91,6 +101,8 @@ public class DhcpResults extends StaticIpConfiguration {
         super.clear();
         vendorInfo = null;
         leaseDuration = 0;
+        ppplinkname = null;
+        pidForRenew =  0;
     }
 
     @Override
@@ -100,6 +112,8 @@ public class DhcpResults extends StaticIpConfiguration {
         str.append(" DHCP server ").append(serverAddress);
         str.append(" Vendor info ").append(vendorInfo);
         str.append(" lease ").append(leaseDuration).append(" seconds");
+        str.append(" ppplinkname ").append(ppplinkname);
+        str.append(" pid ").append(pidForRenew);
 
         return str.toString();
     }
@@ -138,6 +152,8 @@ public class DhcpResults extends StaticIpConfiguration {
         dest.writeInt(leaseDuration);
         NetworkUtils.parcelInetAddress(dest, serverAddress, flags);
         dest.writeString(vendorInfo);
+        dest.writeString(ppplinkname);
+        dest.writeInt(pidForRenew);
     }
 
     private static void readFromParcel(DhcpResults dhcpResults, Parcel in) {
@@ -145,13 +161,16 @@ public class DhcpResults extends StaticIpConfiguration {
         dhcpResults.leaseDuration = in.readInt();
         dhcpResults.serverAddress = NetworkUtils.unparcelInetAddress(in);
         dhcpResults.vendorInfo = in.readString();
+        dhcpResults.ppplinkname = in.readString();
+        dhcpResults.pidForRenew = in.readInt();
     }
 
     // Utils for jni population - false on success
     // Not part of the superclass because they're only used by the JNI iterface to the DHCP daemon.
     public boolean setIpAddress(String addrString, int prefixLength) {
         try {
-            Inet4Address addr = (Inet4Address) NetworkUtils.numericToInetAddress(addrString);
+            //M: Modify to support DhcpV6
+            InetAddress addr = (InetAddress) NetworkUtils.numericToInetAddress(addrString);
             ipAddress = new LinkAddress(addr, prefixLength);
         } catch (IllegalArgumentException|ClassCastException e) {
             Log.e(TAG, "setIpAddress failed with addrString " + addrString + "/" + prefixLength);
@@ -202,5 +221,13 @@ public class DhcpResults extends StaticIpConfiguration {
 
     public void setDomains(String newDomains) {
         domains = newDomains;
+    }
+
+    public void setPpplinkname(String linkname) {
+        ppplinkname = linkname;
+    }
+
+    public void setPidForRenew(int pid) {
+        pidForRenew = pid;
     }
 }

@@ -111,6 +111,14 @@ public class BluetoothControllerImpl implements BluetoothController {
         bindAllProfiles();
     }
 
+    /// M: For debug last device @{
+    private void setLastDevice(BluetoothDevice device) {
+        Log.d(TAG, "setLastDevice: " + deviceToString(mLastDevice) +
+            " -> " +  deviceToString(device));
+        mLastDevice = device;
+    }
+    /// M: For debug last device @}
+
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("BluetoothController state:");
         pw.print("  mAdapter="); pw.println(mAdapter);
@@ -206,12 +214,19 @@ public class BluetoothControllerImpl implements BluetoothController {
             paired.name = device.getAliasName();
             paired.state = connectionStateToPairedDeviceState(info.connectionStateIndex);
             rt.add(paired);
+            Log.d(TAG, "getPairedDevices paired.id=" + paired.id
+                + " paired.tag=" + paired.tag
+                + " paired.name=" + paired.name
+                + " paired.state=" + paired.state);
         }
         return rt;
     }
 
     private static int connectionStateToPairedDeviceState(int index) {
         int state = CONNECTION_STATES[index];
+
+        Log.d(TAG, "connectionStateToPairedDeviceState [" + index + "] state=" + state);
+
         if (state == BluetoothAdapter.STATE_CONNECTED) return PairedDevice.STATE_CONNECTED;
         if (state == BluetoothAdapter.STATE_CONNECTING) return PairedDevice.STATE_CONNECTING;
         if (state == BluetoothAdapter.STATE_DISCONNECTING) return PairedDevice.STATE_DISCONNECTING;
@@ -297,6 +312,9 @@ public class BluetoothControllerImpl implements BluetoothController {
     }
 
     private void handleUpdateBondedDevices() {
+
+        Log.d(TAG, "handleUpdateBondedDevices");
+
         if (mAdapter == null) return;
         final Set<BluetoothDevice> bondedDevices = mAdapter.getBondedDevices();
         for (DeviceInfo info : mDeviceInfo.values()) {
@@ -311,11 +329,13 @@ public class BluetoothControllerImpl implements BluetoothController {
                 if (bonded) {
                     bondedCount++;
                     lastBonded = bondedDevice;
+
+                    Log.d(TAG, "handleUpdateBondedDevices lastBonded=" + lastBonded);
                 }
             }
         }
         if (mLastDevice == null && bondedCount == 1) {
-            mLastDevice = lastBonded;
+            setLastDevice(lastBonded);
         }
         updateConnectionStates();
         firePairedDevicesChanged();
@@ -338,7 +358,7 @@ public class BluetoothControllerImpl implements BluetoothController {
     }
 
     private void handleUpdateConnectionState(BluetoothDevice device, int profile, int state) {
-        if (DEBUG) Log.d(TAG, "updateConnectionState " + BluetoothUtil.deviceToString(device)
+        Log.d(TAG, "updateConnectionState " + BluetoothUtil.deviceToString(device)
                 + " " + BluetoothUtil.profileToString(profile)
                 + " " + BluetoothUtil.connectionStateToString(state));
         DeviceInfo info = updateInfo(device);
@@ -372,7 +392,7 @@ public class BluetoothControllerImpl implements BluetoothController {
                 CONNECTION_STATES[mDeviceInfo.get(mLastDevice).connectionStateIndex]
                         != BluetoothProfile.STATE_CONNECTED) {
             // Make sure we don't keep this device while it isn't connected.
-            mLastDevice = null;
+            setLastDevice(null);
             // Look for anything else connected.
             final int size = mDeviceInfo.size();
             for (int i = 0; i < size; i++) {
@@ -380,7 +400,7 @@ public class BluetoothControllerImpl implements BluetoothController {
                 DeviceInfo info = mDeviceInfo.valueAt(i);
                 if (CONNECTION_STATES[info.connectionStateIndex]
                         == BluetoothProfile.STATE_CONNECTED) {
-                    mLastDevice = device;
+                    setLastDevice(device);
                     break;
                 }
             }
@@ -448,7 +468,7 @@ public class BluetoothControllerImpl implements BluetoothController {
         } else if (BluetoothPan.ACTION_CONNECTION_STATE_CHANGED.equals(action)) {
             return BluetoothProfile.PAN;
         }
-        if (DEBUG) Log.d(TAG, "Unknown action " + action);
+        Log.d(TAG, "Unknown action " + action);
         return -1;
     }
 
@@ -491,28 +511,31 @@ public class BluetoothControllerImpl implements BluetoothController {
             final String action = intent.getAction();
             final BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
 
+            Log.d(TAG, "onReceive action=" + action);
+
             if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
                 setAdapterState(intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, ERROR));
                 updateBondedDevices();
-                if (DEBUG) Log.d(TAG, "ACTION_STATE_CHANGED " + mEnabled);
+                Log.d(TAG, "ACTION_STATE_CHANGED " + mEnabled);
             } else if (action.equals(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)) {
                 updateInfo(device);
                 final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_CONNECTION_STATE,
                         ERROR);
-                mLastDevice = device;
-                if (DEBUG) Log.d(TAG, "ACTION_CONNECTION_STATE_CHANGED "
+                setLastDevice(device);
+                Log.d(TAG, "ACTION_CONNECTION_STATE_CHANGED "
                         + connectionStateToString(state) + " " + deviceToString(device));
                 setConnecting(state == BluetoothAdapter.STATE_CONNECTING);
             } else if (action.equals(BluetoothDevice.ACTION_ALIAS_CHANGED)) {
+                Log.d(TAG, "onReceive BluetoothDevice.ACTION_ALIAS_CHANGED=" + action);
                 updateInfo(device);
-                mLastDevice = device;
+                setLastDevice(device);
             } else if (action.equals(BluetoothDevice.ACTION_BOND_STATE_CHANGED)) {
-                if (DEBUG) Log.d(TAG, "ACTION_BOND_STATE_CHANGED " + device);
+                Log.d(TAG, "ACTION_BOND_STATE_CHANGED device=" + device);
                 updateBondedDevices();
             } else {
                 int profile = getProfileFromAction(intent.getAction());
                 int state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1);
-                if (DEBUG) Log.d(TAG, "ACTION_CONNECTION_STATE_CHANGE "
+                Log.d(TAG, "ACTION_CONNECTION_STATE_CHANGE "
                         + BluetoothUtil.profileToString(profile)
                         + " " + BluetoothUtil.connectionStateToString(state));
                 if ((profile != -1) && (state != -1)) {
@@ -526,6 +549,7 @@ public class BluetoothControllerImpl implements BluetoothController {
         DeviceInfo info = mDeviceInfo.get(device);
         info = info != null ? info : new DeviceInfo();
         mDeviceInfo.put(device, info);
+        Log.d(TAG, "updateInfo info=" + info);
         return info;
     }
 

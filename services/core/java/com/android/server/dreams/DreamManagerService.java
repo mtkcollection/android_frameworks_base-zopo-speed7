@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -157,6 +162,12 @@ public final class DreamManagerService extends SystemService {
         // cannot be started, we keep one eye open and gently poke user activity.
         long time = SystemClock.uptimeMillis();
         mPowerManager.userActivity(time, true /*noChangeLights*/);
+        /// M: Sleep to workaround start dream fail @{
+        try {
+            Thread.sleep(5);
+        } catch (InterruptedException e) {
+        }
+        /// @}
         mPowerManager.nap(time);
     }
 
@@ -187,6 +198,24 @@ public final class DreamManagerService extends SystemService {
             }
         }
     }
+
+    /// M: {@ add remove token API
+    private void removeTokenInternal(IBinder token) {
+        if (DEBUG) {
+            Slog.d(TAG, "Dream removeToken: " + token);
+        }
+
+        final IBinder removeToken = token;
+        synchronized (mLock) {
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mController.removeToken(removeToken);
+                }
+            });
+        }
+    }
+    /// @}
 
     private void testDreamInternal(ComponentName dream, int userId) {
         synchronized (mLock) {
@@ -591,6 +620,27 @@ public final class DreamManagerService extends SystemService {
                 Binder.restoreCallingIdentity(ident);
             }
         }
+
+        /// M: ALPS00446494 Daydream BeanFlinger show once again after press back key to exit @{
+        /**
+         * Remove window token, need run after remove window
+         * @hide
+         */
+        @Override // Binder call
+        public void removeToken(IBinder token) {
+            // Requires no permission, called by Dream from an arbitrary process.
+            if (token == null) {
+                throw new IllegalArgumentException("token must not be null");
+            }
+
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                removeTokenInternal(token);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+        /// @}
 
         @Override // Binder call
         public void startDozing(IBinder token, int screenState, int screenBrightness) {

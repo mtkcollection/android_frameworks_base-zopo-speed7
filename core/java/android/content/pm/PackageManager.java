@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -3878,6 +3883,13 @@ public abstract class PackageManager {
      * applications on the device.
      */
     public abstract @NonNull PackageInstaller getPackageInstaller();
+
+    /**
+     * M: [ALPS00091751] Add api for check apk signature
+     *
+     * @hide
+     */
+    public abstract int checkAPKSignatures(String pkg);
 
     /**
      * Returns the data directory for a particular user and package, given the uid of the package.

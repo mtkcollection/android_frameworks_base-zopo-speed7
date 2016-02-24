@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +20,6 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include <GLES2/gl2.h>
 
@@ -30,6 +34,9 @@
 #include "Properties.h"
 #include "utils/TraceUtils.h"
 
+#define DEFAULT_TEXTURE_CACHE_SCREEN_COUNT 5
+#define DEFAULT_TEXTURE_CACHE_SCREEN_BASED_SIZE ceil(((atoi(LCM_WIDTH) * atoi(LCM_HEIGHT) * 4.0) / (1024 * 1024)) * DEFAULT_TEXTURE_CACHE_SCREEN_COUNT)
+
 namespace android {
 namespace uirenderer {
 
@@ -41,10 +48,12 @@ TextureCache::TextureCache():
         mCache(LruCache<uint32_t, Texture*>::kUnlimitedCapacity),
         mSize(0), mMaxSize(MB(DEFAULT_TEXTURE_CACHE_SIZE)),
         mFlushRate(DEFAULT_TEXTURE_CACHE_FLUSH_RATE), mAssetAtlas(0) {
+    bool setSizeByProperty = false;
     char property[PROPERTY_VALUE_MAX];
     if (property_get(PROPERTY_TEXTURE_CACHE_SIZE, property, NULL) > 0) {
         INIT_LOGD("  Setting texture cache size to %sMB", property);
         setMaxSize(MB(atof(property)));
+        setSizeByProperty = true;
     } else {
         INIT_LOGD("  Using default texture cache size of %.2fMB", DEFAULT_TEXTURE_CACHE_SIZE);
     }
@@ -56,6 +65,14 @@ TextureCache::TextureCache():
     } else {
         INIT_LOGD("  Using default texture cache flush rate of %.2f%%",
                 DEFAULT_TEXTURE_CACHE_FLUSH_RATE * 100.0f);
+    }
+
+    /// M: Expand texture cache size for project with large resolution.
+    if (!setSizeByProperty) {
+        if (DEFAULT_TEXTURE_CACHE_SCREEN_BASED_SIZE > DEFAULT_TEXTURE_CACHE_SIZE) {
+            INIT_LOGD("  Setting texture cache size to %.2fMB by screen based size", DEFAULT_TEXTURE_CACHE_SCREEN_BASED_SIZE);
+            setMaxSize(MB(DEFAULT_TEXTURE_CACHE_SCREEN_BASED_SIZE));
+        }
     }
 
     init();
@@ -117,6 +134,7 @@ void TextureCache::operator()(uint32_t&, Texture*& texture) {
             ALOGD("Texture deleted, size = %d", texture->bitmapSize);
         }
         texture->deleteTexture();
+        TT_REMOVE(texture->id, "[TextureCache.cpp] operator -");
         delete texture;
     }
 }
@@ -302,28 +320,30 @@ void TextureCache::generateTexture(const SkBitmap* bitmap, Texture* texture, boo
     switch (bitmap->colorType()) {
     case kAlpha_8_SkColorType:
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        uploadToTexture(resize, GL_ALPHA, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
+        uploadToTexture(texture->id, resize, GL_ALPHA, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
                 texture->width, texture->height, GL_UNSIGNED_BYTE, bitmap->getPixels());
         texture->blend = true;
         break;
     case kRGB_565_SkColorType:
         glPixelStorei(GL_UNPACK_ALIGNMENT, bitmap->bytesPerPixel());
-        uploadToTexture(resize, GL_RGB, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
+        uploadToTexture(texture->id, resize, GL_RGB, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
                 texture->width, texture->height, GL_UNSIGNED_SHORT_5_6_5, bitmap->getPixels());
         texture->blend = false;
+        DUMP_TEXTURE(texture->id, bitmap->rowBytesAsPixels(), texture->height, bitmap);
         break;
     case kN32_SkColorType:
         glPixelStorei(GL_UNPACK_ALIGNMENT, bitmap->bytesPerPixel());
-        uploadToTexture(resize, GL_RGBA, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
+        uploadToTexture(texture->id, resize, GL_RGBA, bitmap->rowBytesAsPixels(), bitmap->bytesPerPixel(),
                 texture->width, texture->height, GL_UNSIGNED_BYTE, bitmap->getPixels());
         // Do this after calling getPixels() to make sure Skia's deferred
         // decoding happened
         texture->blend = !bitmap->isOpaque();
+        DUMP_TEXTURE(texture->id, bitmap->rowBytesAsPixels(), texture->height, bitmap);
         break;
     case kARGB_4444_SkColorType:
     case kIndex_8_SkColorType:
         glPixelStorei(GL_UNPACK_ALIGNMENT, bitmap->bytesPerPixel());
-        uploadLoFiTexture(resize, bitmap, texture->width, texture->height);
+        uploadLoFiTexture(texture->id, resize, bitmap, texture->width, texture->height);
         texture->blend = !bitmap->isOpaque();
         break;
     default:
@@ -344,7 +364,7 @@ void TextureCache::generateTexture(const SkBitmap* bitmap, Texture* texture, boo
     }
 }
 
-void TextureCache::uploadLoFiTexture(bool resize, const SkBitmap* bitmap,
+void TextureCache::uploadLoFiTexture(GLint id, bool resize, const SkBitmap* bitmap,
         uint32_t width, uint32_t height) {
     SkBitmap rgbaBitmap;
     rgbaBitmap.allocPixels(SkImageInfo::MakeN32(width, height, bitmap->alphaType()));
@@ -353,11 +373,11 @@ void TextureCache::uploadLoFiTexture(bool resize, const SkBitmap* bitmap,
     SkCanvas canvas(rgbaBitmap);
     canvas.drawBitmap(*bitmap, 0.0f, 0.0f, NULL);
 
-    uploadToTexture(resize, GL_RGBA, rgbaBitmap.rowBytesAsPixels(), rgbaBitmap.bytesPerPixel(),
+    uploadToTexture(id, resize, GL_RGBA, rgbaBitmap.rowBytesAsPixels(), rgbaBitmap.bytesPerPixel(),
             width, height, GL_UNSIGNED_BYTE, rgbaBitmap.getPixels());
 }
 
-void TextureCache::uploadToTexture(bool resize, GLenum format, GLsizei stride, GLsizei bpp,
+void TextureCache::uploadToTexture(GLint id, bool resize, GLenum format, GLsizei stride, GLsizei bpp,
         GLsizei width, GLsizei height, GLenum type, const GLvoid * data) {
     const bool useStride = stride != width && Extensions::getInstance().hasUnpackRowLength();
     if ((stride == width) || useStride) {
@@ -367,6 +387,7 @@ void TextureCache::uploadToTexture(bool resize, GLenum format, GLsizei stride, G
 
         if (resize) {
             glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, type, data);
+            TT_ADD(id, width, height, format, type, String8("texture"), "[TextureCache.cpp] uploadToTexture +");
         } else {
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, data);
         }
@@ -391,6 +412,7 @@ void TextureCache::uploadToTexture(bool resize, GLenum format, GLsizei stride, G
 
         if (resize) {
             glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, type, temp);
+            TT_ADD(id, width, height, format, type, String8("texture"), "[TextureCache.cpp] uploadToTexture +");
         } else {
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, temp);
         }

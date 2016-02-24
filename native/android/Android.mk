@@ -32,7 +32,8 @@ LOCAL_STATIC_LIBRARIES := \
 
 LOCAL_C_INCLUDES += \
     frameworks/base/native/include \
-    frameworks/base/core/jni/android
+    frameworks/base/core/jni/android \
+    $(TOP)/$(MTK_ROOT)/frameworks-ext/native/include
 
 LOCAL_MODULE:= libandroid
 

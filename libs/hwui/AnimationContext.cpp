@@ -44,7 +44,8 @@ void AnimationContext::destroy() {
 }
 
 void AnimationContext::addAnimatingRenderNode(RenderNode& node) {
-    if (!node.animators().hasAnimationHandle()) {
+    /// M: [ALPS01949475] Create AnimationHandle only when there's new animator to be handle.
+    if (!node.animators().hasAnimationHandle() && node.animators().hasNewAnimators()) {
         AnimationHandle* handle = new AnimationHandle(node, *this);
         addAnimationHandle(handle);
     }

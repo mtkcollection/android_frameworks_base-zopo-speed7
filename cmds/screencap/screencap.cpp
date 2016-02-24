@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +93,13 @@ static status_t vinfoToPixelFormat(const fb_var_screeninfo& vinfo,
 
 int main(int argc, char** argv)
 {
+
+#ifdef MTK_AOSP_ENHANCEMENT
+    // work around for SIGPIPE NE caused by abnormal system status
+    signal(SIGPIPE, SIG_IGN);
+    ALOGD("[Screencap] main");
+#endif
+
     ProcessState::self()->startThreadPool();
 
     const char* pname = argv[0];
@@ -148,6 +160,9 @@ int main(int argc, char** argv)
         s = screenshot.getStride();
         f = screenshot.getFormat();
         size = screenshot.getSize();
+#ifdef MTK_AOSP_ENHANCEMENT      
+        ALOGD("[Screencap] screenshot w:%d h:%d s:%d f:%d", w, h, s, f);
+#endif
     } else {
         const char* fbpath = "/dev/graphics/fb0";
         int fb = open(fbpath, O_RDONLY);
@@ -156,10 +171,18 @@ int main(int argc, char** argv)
             if (ioctl(fb, FBIOGET_VSCREENINFO, &vinfo) == 0) {
                 uint32_t bytespp;
                 if (vinfoToPixelFormat(vinfo, &bytespp, &f) == NO_ERROR) {
+#ifdef MTK_AOSP_ENHANCEMENT
+                    size_t offset = (vinfo.xoffset + vinfo.yoffset*vinfo.xres_virtual) * bytespp;
+                    w = vinfo.xres;
+                    h = vinfo.yres;
+                    s = vinfo.xres_virtual;
+                    ALOGD("[Screencap] VSCREENINFO w:%d h:%d s:%d f:%d", w, h, s, f);
+#else
                     size_t offset = (vinfo.xoffset + vinfo.yoffset*vinfo.xres) * bytespp;
                     w = vinfo.xres;
                     h = vinfo.yres;
                     s = vinfo.xres;
+#endif
                     size = w*h*bytespp;
                     mapsize = offset + size;
                     mapbase = mmap(0, mapsize, PROT_READ, MAP_PRIVATE, fb, 0);

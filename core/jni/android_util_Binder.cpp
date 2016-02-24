@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -260,6 +265,11 @@ protected:
         uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags = 0)
     {
         JNIEnv* env = javavm_to_jnienv(mVM);
+	if (NULL == env)
+	{
+		ALOGE("onTransact() on %p calling object %p fail because env=NULL vm=%p \n", this, mObject, mVM);
+		return -EPIPE;
+	}
 
         ALOGV("onTransact() on %p calling object %p in env %p vm %p\n", this, mObject, env, mVM);
 

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +19,7 @@
  * limitations under the License.
  */
 
- 
+
 package com.android.server.power;
 
 import android.app.ActivityManagerNative;
@@ -24,6 +29,7 @@ import android.app.IActivityManager;
 import android.app.ProgressDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.IBluetoothManager;
+import android.hardware.display.DisplayManager;
 import android.media.AudioAttributes;
 import android.nfc.NfcAdapter;
 import android.nfc.INfcAdapter;
@@ -42,13 +48,32 @@ import android.os.UserHandle;
 import android.os.Vibrator;
 import android.os.SystemVibrator;
 import android.os.storage.IMountService;
+import android.os.storage.StorageManager;
 import android.os.storage.IMountShutdownObserver;
+import android.view.Surface;
+import android.net.ConnectivityManager;
 
 import com.android.internal.telephony.ITelephony;
 import com.android.server.pm.PackageManagerService;
 
 import android.util.Log;
 import android.view.WindowManager;
+import android.view.IWindowManager;
+
+/* Vanzo:songlixin on: Thu, 10 Apr 2014 14:14:59 +0800
+ */
+import java.io.File;
+// End of Vanzo: songlixin
+// Wakelock
+import android.os.PowerManager.WakeLock;
+
+// For IPO
+import com.android.internal.app.ShutdownManager;
+
+import android.provider.Settings;
+
+import com.mediatek.common.bootanim.IBootAnimExt;
+import com.mediatek.common.MPlugin;
 
 public final class ShutdownThread extends Thread {
     // constants
@@ -61,11 +86,11 @@ public final class ShutdownThread extends Thread {
 
     // length of vibration before shutting down
     private static final int SHUTDOWN_VIBRATE_MS = 500;
-    
+
     // state tracking
     private static Object sIsStartedGuard = new Object();
     private static boolean sIsStarted = false;
-    
+
     private static boolean mReboot;
     private static boolean mRebootSafeMode;
     private static String mRebootReason;
@@ -92,11 +117,48 @@ public final class ShutdownThread extends Thread {
     private PowerManager.WakeLock mScreenWakeLock;
     private Handler mHandler;
 
-    private static AlertDialog sConfirmDialog;
-    
+    private static AlertDialog sConfirmDialog = null;
+
+    // IPO
+    private static ProgressDialog pd = null;
+    private static Object mShutdownThreadSync = new Object();
+    private ShutdownManager mShutdownManager = ShutdownManager.getInstance();
+
+    // Shutdown Flow Settings
+    private static final int NORMAL_SHUTDOWN_FLOW = 0x0;
+    private static final int IPO_SHUTDOWN_FLOW = 0x1;
+    private static int mShutdownFlow;
+
+    // Shutdown Animation
+    private static final int MIN_SHUTDOWN_ANIMATION_PLAY_TIME = 5*1000; // CU/CMCC operator require 3-5s
+    private static long beginAnimationTime = 0;
+    private static long endAnimationTime = 0;
+    private static boolean bConfirmForAnimation = true;
+    private static boolean bPlayaudio = true;
+
+    private static final Object mEnableAnimatingSync = new Object();
+    private static boolean mEnableAnimating = true;
+
+    // length of waiting for memory dump if Modem Exception occurred
+    private static final int MAX_MEMORY_DUMP_TIME = 60 * 1000;
+
+    private static String command;  //for bypass radioOff
+    /* M: comes from sys.ipo.pwrdncap 1: bypass MountService, 2: bypass radio off, 3: bypass both */
+    private static int screen_turn_off_time = 5 * 1000;   //after 5sec  the screen become OFF, you can change the time delay
+
+    private static final boolean mSpew = true;   //debug enable
+
+    private static IBootAnimExt mIBootAnim = null; // for boot animation 
+
     private ShutdownThread() {
     }
- 
+
+    public static void EnableAnimating(boolean enable) {
+        synchronized (mEnableAnimatingSync) {
+            mEnableAnimating = enable;
+        }
+    }
+
     /**
      * Request a clean shutdown, waiting for subsystems to clean up their
      * state etc.  Must be called from a Looper thread in which its UI
@@ -108,6 +170,24 @@ public final class ShutdownThread extends Thread {
     public static void shutdown(final Context context, boolean confirm) {
         mReboot = false;
         mRebootSafeMode = false;
+
+        Log.d(TAG, "!!! Request to shutdown !!!");
+
+        ShutdownManager.startFtraceCapture();
+
+        if (mSpew) {
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            for (StackTraceElement element : stack)
+            {
+                Log.d(TAG, " 	|----" + element.toString());
+            }
+        }
+
+        if (SystemProperties.getBoolean("ro.monkey", false)) {
+            Log.d(TAG, "Cannot request to shutdown when Monkey is running, returning.");
+            return;
+        }
+
         shutdownInner(context, confirm);
     }
 
@@ -121,13 +201,37 @@ public final class ShutdownThread extends Thread {
             }
         }
 
+        Log.d(TAG, "Notifying thread to start radio shutdown");
+        bConfirmForAnimation = confirm;
         final int longPressBehavior = context.getResources().getInteger(
                         com.android.internal.R.integer.config_longPressOnPowerBehavior);
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 14:32:18 +0800
+ * Power Reboot
         final int resourceId = mRebootSafeMode
                 ? com.android.internal.R.string.reboot_safemode_confirm
                 : (longPressBehavior == 2
                         ? com.android.internal.R.string.shutdown_confirm_question
                         : com.android.internal.R.string.shutdown_confirm);
+ */
+        final int resourceId1 = mRebootSafeMode
+                ? com.android.internal.R.string.reboot_safemode_confirm
+                : (longPressBehavior == 2
+                        ? com.android.internal.R.string.shutdown_confirm_question
+                        : com.android.internal.R.string.shutdown_confirm);
+        final int resourceId2 = mRebootSafeMode
+                ? com.android.internal.R.string.reboot_safemode_confirm
+                : (longPressBehavior == 2
+                        ? com.android.internal.R.string.reboot_confirm_question
+                        : com.android.internal.R.string.reboot_confirm);
+        final int resourceId = (mReboot && !mRebootSafeMode) ? resourceId2 : resourceId1;
+        final int titleId1 = mRebootSafeMode
+                ? com.android.internal.R.string.reboot_safemode_title
+                : com.android.internal.R.string.power_off;
+        final int titleId2 = mRebootSafeMode
+                ? com.android.internal.R.string.reboot_safemode_title
+                : com.android.internal.R.string.global_action_reboot;
+        final int titleId = (mReboot && !mRebootSafeMode) ? titleId2: titleId1;
+// End of Vanzo:tanglei
 
         Log.d(TAG, "Notifying thread to start shutdown longPressBehavior=" + longPressBehavior);
 
@@ -136,24 +240,116 @@ public final class ShutdownThread extends Thread {
             if (sConfirmDialog != null) {
                 sConfirmDialog.dismiss();
             }
+
+            Log.d(TAG, "PowerOff dialog doesn't exist. Create it first");
             sConfirmDialog = new AlertDialog.Builder(context)
-                    .setTitle(mRebootSafeMode
-                            ? com.android.internal.R.string.reboot_safemode_title
-                            : com.android.internal.R.string.power_off)
-                    .setMessage(resourceId)
-                    .setPositiveButton(com.android.internal.R.string.yes, new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface dialog, int which) {
-                            beginShutdownSequence(context);
+/* Vanzo:tanglei on: Wed, 21 Jan 2015 14:41:38 +0800
+ * Power Reboot
+                .setTitle(mRebootSafeMode
+                        ? com.android.internal.R.string.reboot_safemode_title
+                        : com.android.internal.R.string.power_off)
+ */
+                .setTitle(titleId)
+// End of Vanzo:tanglei
+                .setMessage(resourceId)
+                .setPositiveButton(com.android.internal.R.string.yes, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        beginShutdownSequence(context);
+                        if (sConfirmDialog != null) {
+                            sConfirmDialog = null;
                         }
-                    })
-                    .setNegativeButton(com.android.internal.R.string.no, null)
-                    .create();
+                    }
+                })
+                .setNegativeButton(com.android.internal.R.string.no, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        synchronized (sIsStartedGuard) {
+                            sIsStarted = false;
+                        }
+                        if (sConfirmDialog != null) {
+                            sConfirmDialog = null;
+/* Vanzo:songlixin on: Mon, 02 Jul 2012 11:33:07 +0800
+ * Fix Bug #14299
+ */
+                                mReboot = false;
+// End of Vanzo:songlixin
+                        }
+                    }
+                })
+                .create();
+            sConfirmDialog.setCancelable(false);//blocking back key
+            sConfirmDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+
+            /* To fix video+UI+blur flick issue */
+            sConfirmDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+
             closer.dialog = sConfirmDialog;
             sConfirmDialog.setOnDismissListener(closer);
-            sConfirmDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
-            sConfirmDialog.show();
+
+            if (!sConfirmDialog.isShowing()) {
+                sConfirmDialog.show();
+            }
         } else {
             beginShutdownSequence(context);
+        }
+    }
+
+    /**
+     * [Smart Book] Re-draw power off dialog
+     */
+    public static void powerOffDialogRedrawForSmartBook(final Context context) {
+        if (sConfirmDialog != null) {
+            sConfirmDialog.dismiss();
+
+            Log.d(TAG, "SmartBook: Re-sraw power off dialog");
+
+            final CloseDialogReceiver closer = new CloseDialogReceiver(context);
+
+            final int longPressBehavior = context.getResources().getInteger(
+                        com.android.internal.R.integer.config_longPressOnPowerBehavior);
+            final int resourceId = mRebootSafeMode
+                    ? com.android.internal.R.string.reboot_safemode_confirm
+                    : (longPressBehavior == 2
+                            ? com.android.internal.R.string.shutdown_confirm_question
+                            : com.android.internal.R.string.shutdown_confirm);
+
+            Log.d(TAG, "Notifying thread to start shutdown longPressBehavior=" + longPressBehavior);
+
+            sConfirmDialog = new AlertDialog.Builder(context)
+                .setTitle(mRebootSafeMode
+                        ? com.android.internal.R.string.reboot_safemode_title
+                        : com.android.internal.R.string.power_off)
+                .setMessage(resourceId)
+                .setPositiveButton(com.android.internal.R.string.yes, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        beginShutdownSequence(context);
+                        if (sConfirmDialog != null) {
+                            sConfirmDialog = null;
+                        }
+                    }
+                })
+                .setNegativeButton(com.android.internal.R.string.no, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        synchronized (sIsStartedGuard) {
+                            sIsStarted = false;
+                        }
+                        if (sConfirmDialog != null) {
+                            sConfirmDialog = null;
+                        }
+                    }
+                })
+                .create();
+            sConfirmDialog.setCancelable(false);//blocking back key
+            sConfirmDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+
+            /* To fix video+UI+blur flick issue */
+            sConfirmDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+
+            closer.dialog = sConfirmDialog;
+            sConfirmDialog.setOnDismissListener(closer);
+
+            if (!sConfirmDialog.isShowing()) {
+                sConfirmDialog.show();
+            }
         }
     }
 
@@ -170,6 +366,7 @@ public final class ShutdownThread extends Thread {
 
         @Override
         public void onReceive(Context context, Intent intent) {
+            Log.d(TAG, "CloseDialogReceiver: onReceive");
             dialog.cancel();
         }
 
@@ -177,6 +374,17 @@ public final class ShutdownThread extends Thread {
             mContext.unregisterReceiver(this);
         }
     }
+
+    private static Runnable mDelayDim = new Runnable() {   //use for animation, add by how.wang
+        public void run() {
+            Log.d(TAG, "setBacklightBrightness: Off");
+            if (sInstance.mScreenWakeLock != null && sInstance.mScreenWakeLock.isHeld()) {
+                sInstance.mScreenWakeLock.release();
+                sInstance.mScreenWakeLock = null;
+            }
+            sInstance.mPowerManager.goToSleep(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SHUTDOWN, 0);
+        }
+    };
 
     /**
      * Request a clean shutdown, waiting for subsystems to clean up their
@@ -191,6 +399,16 @@ public final class ShutdownThread extends Thread {
         mReboot = true;
         mRebootSafeMode = false;
         mRebootReason = reason;
+        Log.d(TAG, "reboot");
+
+        if (mSpew) {
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            for (StackTraceElement element : stack)
+            {
+                Log.d(TAG, " 	|----" + element.toString());
+            }
+        }
+
         shutdownInner(context, confirm);
     }
 
@@ -205,6 +423,7 @@ public final class ShutdownThread extends Thread {
         mReboot = true;
         mRebootSafeMode = true;
         mRebootReason = null;
+        Log.d(TAG, "rebootSafeMode");
         shutdownInner(context, confirm);
     }
 
@@ -217,19 +436,82 @@ public final class ShutdownThread extends Thread {
             sIsStarted = true;
         }
 
-        // throw up an indeterminate system dialog to indicate radio is
-        // shutting down.
-        ProgressDialog pd = new ProgressDialog(context);
-        pd.setTitle(context.getText(com.android.internal.R.string.power_off));
-        pd.setMessage(context.getText(com.android.internal.R.string.shutdown_progress));
-        pd.setIndeterminate(true);
-        pd.setCancelable(false);
-        pd.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
-
-        pd.show();
-
+        // start the thread that initiates shutdown
         sInstance.mContext = context;
         sInstance.mPowerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
+        sInstance.mHandler = new Handler() {
+        };    
+
+        bPlayaudio = true;
+        if (!bConfirmForAnimation) {
+            if (!sInstance.mPowerManager.isScreenOn()) {
+                bPlayaudio = false;
+            }
+        }
+
+        // throw up an indeterminate system dialog to indicate radio is
+        // shutting down.
+        beginAnimationTime = 0;
+        boolean mShutOffAnimation = false;
+        int screenTurnOffTime = 0;
+
+        try {
+            if (mIBootAnim == null)
+                mIBootAnim = MPlugin.createInstance(IBootAnimExt.class.getName(), context);
+            if (mIBootAnim == null)
+                Log.e(TAG, "Fail to create mIBootAnim");
+            else {
+                screenTurnOffTime = mIBootAnim.getScreenTurnOffTime();
+                mShutOffAnimation = mIBootAnim.isCustBootAnim();
+                Log.e(TAG, "mIBootAnim get screenTurnOffTime : " + screenTurnOffTime);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+/* Vanzo:songlixin on: Fri, 31 Aug 2012 15:07:27 +0800
+        mShutOffAnimation = mIBootAnim.isCustBootAnim();
+ */
+         File file1 = new File("/system/media/shutanimation.zip");
+         if (file1.exists()) {
+            mShutOffAnimation = true;
+        } else {
+             file1 = new File("/system/media/shutaudio.mp3");
+             if (file1.exists()) {
+                mShutOffAnimation = true;
+            }
+        }
+// End of Vanzo: songlixin
+        String cust = SystemProperties.get("ro.operator.optr");
+
+        if (cust != null) {
+            if (cust.equals("CUST")) {
+                mShutOffAnimation = true;
+            }
+        }
+
+        synchronized (mEnableAnimatingSync) {
+
+            if(!mEnableAnimating) {
+                //sInstance.mPowerManager.setBacklightBrightness(PowerManager.BRIGHTNESS_DIM);
+            } else {
+                if (mShutOffAnimation) {
+                    Log.e(TAG, "mIBootAnim.isCustBootAnim() is true");
+                    bootanimCust();
+                } else {
+                    pd = new ProgressDialog(context);
+                    pd.setTitle(context.getText(com.android.internal.R.string.power_off));
+                    pd.setMessage(context.getText(com.android.internal.R.string.shutdown_progress));
+                    pd.setIndeterminate(true);
+                    pd.setCancelable(false);
+                    pd.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+                    /* To fix video+UI+blur flick issue */
+                    pd.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                    pd.show();
+                }
+                sInstance.mHandler.postDelayed(mDelayDim, screenTurnOffTime); 
+            }
+        }
 
         // make sure we never fall asleep again
         sInstance.mCpuWakeLock = null;
@@ -242,6 +524,7 @@ public final class ShutdownThread extends Thread {
             Log.w(TAG, "No permission to acquire wake lock", e);
             sInstance.mCpuWakeLock = null;
         }
+        Log.d(TAG, "shutdown acquire partial WakeLock: cpu");
 
         // also make sure the screen stays on for better user experience
         sInstance.mScreenWakeLock = null;
@@ -258,9 +541,79 @@ public final class ShutdownThread extends Thread {
         }
 
         // start the thread that initiates shutdown
-        sInstance.mHandler = new Handler() {
-        };
-        sInstance.start();
+        if (sInstance.getState() != Thread.State.NEW || sInstance.isAlive()) {
+            if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+                Log.d(TAG, "ShutdownThread exists already");
+                checkShutdownFlow();
+                synchronized (mShutdownThreadSync) {
+                    mShutdownThreadSync.notify();
+                }
+            } else {
+                Log.e(TAG, "Thread state is not normal! froce to shutdown!");
+                delayForPlayAnimation();
+                //unmout data/cache partitions while performing shutdown    
+                //Power.shutdown();
+                sInstance.mPowerManager.goToSleep(SystemClock.uptimeMillis(), PowerManager.GO_TO_SLEEP_REASON_SHUTDOWN, 0);
+                PowerManagerService.lowLevelShutdown();
+                //SystemProperties.set("ctl.start", "shutdown");
+            }
+        } else {
+            sInstance.start();
+        }
+    }
+
+    private static void bootanimCust() {
+        // [MTK] fix shutdown animation timing issue
+        //==================================================================
+        SystemProperties.set("service.shutanim.running","0");
+        Log.i(TAG, "set service.shutanim.running to 0");
+        //==================================================================
+        boolean isRotaionEnabled = false;
+        try {
+            isRotaionEnabled = Settings.System.getInt(sInstance.mContext.getContentResolver(),
+                    Settings.System.ACCELEROMETER_ROTATION, 1) != 0;
+            if (isRotaionEnabled) {
+                final IWindowManager wm = IWindowManager.Stub.asInterface(
+                        ServiceManager.getService(Context.WINDOW_SERVICE));
+                if (wm != null) {
+                    wm.freezeRotation(Surface.ROTATION_0);
+                }
+                Settings.System.putInt(sInstance.mContext.getContentResolver(),
+                        Settings.System.ACCELEROMETER_ROTATION, 0);
+                Settings.System.putInt(sInstance.mContext.getContentResolver(),
+                        Settings.System.ACCELEROMETER_ROTATION_RESTORE, 1);
+            }
+        } catch (NullPointerException ex) {
+            Log.e(TAG, "check Rotation: sInstance.mContext object is null when get Rotation");
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+        beginAnimationTime = SystemClock.elapsedRealtime() + MIN_SHUTDOWN_ANIMATION_PLAY_TIME;
+        // +MediaTek 2012-02-25 Disable key dispatch
+        try {
+            final IWindowManager wm = IWindowManager.Stub.asInterface(
+                    ServiceManager.getService(Context.WINDOW_SERVICE));
+            if (wm != null) {
+                wm.setEventDispatching(false);
+            }
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+        // -MediaTek 2012-02-25 Disable key dispatch
+        startBootAnimation();
+    }
+
+    private static void startBootAnimation() {
+        Log.d(TAG, "Set 'service.bootanim.exit' = 0).");
+        SystemProperties.set("service.bootanim.exit","0");
+
+        if (bPlayaudio) {
+            SystemProperties.set("ctl.start","bootanim:shut mp3");
+            Log.d(TAG, "bootanim:shut mp3" );
+        } else {
+            SystemProperties.set("ctl.start","bootanim:shut nomp3");
+            Log.d(TAG, "bootanim:shut nomp3" );
+        }
     }
 
     void actionDone() {
@@ -270,11 +623,120 @@ public final class ShutdownThread extends Thread {
         }
     }
 
+    private static void delayForPlayAnimation() {
+        if (beginAnimationTime <= 0) {
+            return;
+        }
+        endAnimationTime = beginAnimationTime - SystemClock.elapsedRealtime();
+        if (endAnimationTime > 0) {
+            try {
+                Thread.currentThread().sleep(endAnimationTime);
+            } catch (InterruptedException e) {
+                Log.e(TAG, "Shutdown stop bootanimation Thread.currentThread().sleep exception!");
+            }
+        }
+    }
+
+    /*
+     * Please make sure that context object is already instantiated already before calling this method.
+     * However, we'll still catch null pointer exception here in case.
+     */
+    private static void checkShutdownFlow() {
+        // IPO shutdown will be disable if sys.ipo.disable==1
+        String IPODisableProp = SystemProperties.get("sys.ipo.disable");
+        boolean isIPOEnabled = !IPODisableProp.equals("1");
+        boolean isIPOsupport = SystemProperties.get("ro.mtk_ipo_support").equals("1");
+        final boolean passIPOEncryptionCondition = checkEncryptionCondition();
+        boolean isSafeMode = false;
+        boolean isSmartBookSupport = SystemProperties.get("ro.mtk_smartbook_support").equals("1");
+        boolean isSmartBookPluggedIn  = false;
+
+        if (isSmartBookSupport) {
+            DisplayManager dm = (DisplayManager)
+                sInstance.mContext.getSystemService(Context.DISPLAY_SERVICE);
+            isSmartBookPluggedIn = dm.isSmartBookPluggedIn();
+        }
+
+        try {
+            final IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.getService(Context.WINDOW_SERVICE));
+            if (wm != null)
+                isSafeMode = wm.isSafeModeEnabled();
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+
+        Log.d(TAG, "checkShutdownFlow: IPO_Support=" + isIPOsupport +
+                " mReboot=" + mReboot +
+                " sys.ipo.disable=" + IPODisableProp +
+                " isSafeMode=" + isSafeMode +
+                " passEncryptionCondition=" + passIPOEncryptionCondition +
+                " Smartbook MHL PluggedIn=" + isSmartBookPluggedIn);
+        
+        if (isIPOsupport == false || mReboot == true || isIPOEnabled == false ||
+                isSafeMode == true || passIPOEncryptionCondition == false ||
+                isSmartBookPluggedIn == true) {
+            mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+            return;
+        }
+
+        try {
+            isIPOEnabled = Settings.System.getInt(sInstance.mContext.getContentResolver(),
+                    Settings.System.IPO_SETTING, 1) == 1;
+        } catch (NullPointerException ex) {
+            Log.e(TAG, "checkShutdownFlow: sInstance.mContext object is null when get IPO enable/disable Option");
+            mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+            return;
+        }
+
+        if (isIPOEnabled == true) {
+            if ("1".equals(SystemProperties.get("sys.ipo.battlow")))
+                mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+            else
+                mShutdownFlow = IPO_SHUTDOWN_FLOW;
+        } else {
+            mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+        }
+
+        // power off auto test, don't modify
+        Log.d(TAG, "checkShutdownFlow: isIPOEnabled=" + isIPOEnabled + " mShutdownFlow=" + mShutdownFlow);
+        return;
+    }
+
+    private void switchToLauncher() {
+        // start launcher to improve shutdown performance and
+        // make the original top activity enter pause.
+        // pausing high-cpu-usage foreground activity to make shutting down smoother
+        Log.i(TAG, "IPO switch to launcher");
+        Intent intent1 = new Intent(Intent.ACTION_MAIN);
+        intent1.addCategory(Intent.CATEGORY_HOME);
+        intent1.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        mContext.startActivity(intent1);
+    }
+
     /**
      * Makes sure we handle the shutdown gracefully.
      * Shuts off power regardless of radio and bluetooth state if the alloted time has passed.
      */
     public void run() {
+        checkShutdownFlow();
+        while (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+            mShutdownManager.saveStates(mContext);
+            mShutdownManager.enterShutdown(mContext);
+         
+            switchToLauncher();
+            running();
+        }
+        if (mShutdownFlow != IPO_SHUTDOWN_FLOW) {
+            mShutdownManager.enterShutdown(mContext);
+            
+            switchToLauncher();
+            running();
+        }
+    }
+
+    public void running() {
+        command = SystemProperties.get("sys.ipo.pwrdncap");
+
         BroadcastReceiver br = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 // We don't allow apps to cancel this, so ignore the result.
@@ -301,20 +763,28 @@ public final class ShutdownThread extends Thread {
         }
 
         Log.i(TAG, "Sending shutdown broadcast...");
-        
+
         // First send the high-level shut down broadcast.
         mActionDone = false;
+        /// M: 2012-05-20 ALPS00286063 @{
+        mContext.sendBroadcast(new Intent("android.intent.action.ACTION_PRE_SHUTDOWN"));
+        /// @} 2012-05-20
         Intent intent = new Intent(Intent.ACTION_SHUTDOWN);
+        intent.putExtra("_mode", mShutdownFlow);
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
         mContext.sendOrderedBroadcastAsUser(intent,
-                UserHandle.ALL, null, br, mHandler, 0, null, null);
-        
+            UserHandle.ALL, null, br, mHandler, 0, null, null);
+
         final long endTime = SystemClock.elapsedRealtime() + MAX_BROADCAST_TIME;
         synchronized (mActionDoneSync) {
             while (!mActionDone) {
                 long delay = endTime - SystemClock.elapsedRealtime();
                 if (delay <= 0) {
-                    Log.w(TAG, "Shutdown broadcast timed out");
+                    Log.w(TAG, "Shutdown broadcast ACTION_SHUTDOWN timed out");
+                    if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+                        Log.d(TAG, "change shutdown flow from ipo to normal: ACTION_SHUTDOWN timeout");
+                        mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+                    }
                     break;
                 }
                 try {
@@ -323,18 +793,48 @@ public final class ShutdownThread extends Thread {
                 }
             }
         }
-        
-        Log.i(TAG, "Shutting down activity manager...");
-        
-        final IActivityManager am =
-            ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
-        if (am != null) {
-            try {
-                am.shutdown(MAX_BROADCAST_TIME);
-            } catch (RemoteException e) {
+
+        // Also send ACTION_SHUTDOWN_IPO in IPO shut down flow
+        if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+            mActionDone = false;
+            mContext.sendOrderedBroadcast(
+                    (new Intent("android.intent.action.ACTION_SHUTDOWN_IPO")).addFlags(Intent.FLAG_RECEIVER_FOREGROUND),
+                    null, br, mHandler, 0, null, null);
+            final long endTimeIPO = SystemClock.elapsedRealtime() + MAX_BROADCAST_TIME;
+            synchronized (mActionDoneSync) {
+                while (!mActionDone) {
+                    long delay = endTimeIPO - SystemClock.elapsedRealtime();
+                    if (delay <= 0) {
+                        Log.w(TAG, "Shutdown broadcast ACTION_SHUTDOWN_IPO timed out");
+                        if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+                            Log.d(TAG, "change shutdown flow from ipo to normal: ACTION_SHUTDOWN_IPO timeout");
+                            mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+                        }
+                        break;
+                    }
+                    try {
+                        mActionDoneSync.wait(delay);
+                    } catch (InterruptedException e) {
+                    }
+                }
             }
         }
 
+        if (mShutdownFlow != IPO_SHUTDOWN_FLOW) {
+            // power off auto test, don't modify
+            Log.i(TAG, "Shutting down activity manager...");
+
+            final IActivityManager am =
+                ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
+            if (am != null) {
+                try {
+                    am.shutdown(MAX_BROADCAST_TIME);
+                } catch (RemoteException e) {
+                }
+            }
+        }
+
+        // power off auto test, don't modify
         Log.i(TAG, "Shutting down package manager...");
 
         final PackageManagerService pm = (PackageManagerService)
@@ -344,77 +844,178 @@ public final class ShutdownThread extends Thread {
         }
 
         // Shutdown radios.
+        Log.i(TAG, "Shutting down radios...");
         shutdownRadios(MAX_RADIO_WAIT_TIME);
 
-        // Shutdown MountService to ensure media is in a safe state
-        IMountShutdownObserver observer = new IMountShutdownObserver.Stub() {
-            public void onShutDownComplete(int statusCode) throws RemoteException {
-                Log.w(TAG, "Result code " + statusCode + " from MountService.shutdown");
-                actionDone();
-            }
-        };
-
-        Log.i(TAG, "Shutting down MountService");
-
-        // Set initial variables and time out time.
-        mActionDone = false;
-        final long endShutTime = SystemClock.elapsedRealtime() + MAX_SHUTDOWN_WAIT_TIME;
-        synchronized (mActionDoneSync) {
-            try {
-                final IMountService mount = IMountService.Stub.asInterface(
-                        ServiceManager.checkService("mount"));
-                if (mount != null) {
-                    mount.shutdown(observer);
-                } else {
-                    Log.w(TAG, "MountService unavailable for shutdown");
+        // power off auto test, don't modify
+        Log.i(TAG, "Shutting down MountService...");
+        if ( (mShutdownFlow == IPO_SHUTDOWN_FLOW) && (command.equals("1")||command.equals("3")) ) {
+            Log.i(TAG, "bypass MountService!");
+        } else {
+            // Shutdown MountService to ensure media is in a safe state
+            IMountShutdownObserver observer = new IMountShutdownObserver.Stub() {
+                public void onShutDownComplete(int statusCode) throws RemoteException {
+                    Log.w(TAG, "Result code " + statusCode + " from MountService.shutdown");
+                    if (statusCode < 0) {
+                        mShutdownFlow = NORMAL_SHUTDOWN_FLOW; 
+                    }
+                    actionDone();
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "Exception during MountService shutdown", e);
-            }
-            while (!mActionDone) {
-                long delay = endShutTime - SystemClock.elapsedRealtime();
-                if (delay <= 0) {
-                    Log.w(TAG, "Shutdown wait timed out");
-                    break;
-                }
+            };
+
+            // Set initial variables and time out time.
+            mActionDone = false;
+            final long endShutTime = SystemClock.elapsedRealtime() + MAX_SHUTDOWN_WAIT_TIME;
+            synchronized (mActionDoneSync) {
                 try {
-                    mActionDoneSync.wait(delay);
-                } catch (InterruptedException e) {
+                    final IMountService mount = IMountService.Stub.asInterface(
+                            ServiceManager.checkService("mount"));
+                    if (mount != null) {
+                        mount.shutdown(observer);
+                    } else {
+                        Log.w(TAG, "MountService unavailable for shutdown");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Exception during MountService shutdown", e);
+                }
+                while (!mActionDone) {
+                    long delay = endShutTime - SystemClock.elapsedRealtime();
+                    if (delay <= 0) {
+                        Log.w(TAG, "Shutdown wait timed out");
+                        if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+                            Log.d(TAG, "change shutdown flow from ipo to normal: MountService");
+                            mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+                        }
+                        break;
+                    }
+                    try {
+                        mActionDoneSync.wait(delay);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
                 }
             }
         }
 
-        rebootOrShutdown(mReboot, mRebootReason);
+        Log.i(TAG, "MountService shut done...");
+
+        // [MTK] fix shutdown animation timing issue
+        Log.i(TAG, "set service.shutanim.running to 1");
+        SystemProperties.set("service.shutanim.running", "1");
+
+        if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+            if (SHUTDOWN_VIBRATE_MS > 0) {
+                // vibrate before shutting down
+                Vibrator vibrator = new SystemVibrator();
+                try {
+/* Vanzo:wangyi on: Thu, 26 Sep 2013 12:36:14 +0800
+ * add prop for poweroff vibrate
+                    vibrator.vibrate(SHUTDOWN_VIBRATE_MS, VIBRATION_ATTRIBUTES);
+ */
+                    if (SystemProperties.getBoolean("ro.init.vibrate_poweroff", true)) {
+                        vibrator.vibrate(SHUTDOWN_VIBRATE_MS, VIBRATION_ATTRIBUTES);
+                    }
+// End of Vanzo: wangyi
+                } catch (Exception e) {
+                    // Failure to vibrate shouldn't interrupt shutdown.  Just log it.
+                    Log.w(TAG, "Failed to vibrate during shutdown.", e);
+                }
+
+                // vibrator is asynchronous so we need to wait to avoid shutting down too soon.
+                try {
+                    Thread.sleep(SHUTDOWN_VIBRATE_MS);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            // Shutdown power
+            // power off auto test, don't modify
+            Log.i(TAG, "Performing ipo low-level shutdown...");
+
+            delayForPlayAnimation();
+
+            if (sInstance.mScreenWakeLock != null && sInstance.mScreenWakeLock.isHeld()) {
+                sInstance.mScreenWakeLock.release();
+                sInstance.mScreenWakeLock = null;
+            }
+
+            sInstance.mHandler.removeCallbacks(mDelayDim);
+            mShutdownManager.shutdown(mContext);
+            mShutdownManager.finishShutdown(mContext);
+            ShutdownManager.stopFtraceCapture();
+
+            //To void previous UI flick caused by shutdown animation stopping before BKL turning off
+            if (pd != null) {
+                pd.dismiss();
+                pd = null;
+            } else if (beginAnimationTime > 0) {
+                Log.i(TAG, "set 'service.bootanim.exit' = 1).");
+                SystemProperties.set("service.bootanim.exit","1");
+            }
+
+            synchronized (sIsStartedGuard) {
+                sIsStarted = false;
+            }
+
+            sInstance.mPowerManager.wakeUpByReason(SystemClock.uptimeMillis(), PowerManager.WAKE_UP_REASON_SHUTDOWN);
+            sInstance.mCpuWakeLock.acquire(2000); 
+
+            synchronized (mShutdownThreadSync) {
+                try {
+                    mShutdownThreadSync.wait();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        } else {
+            /* play animation and turn off backlight before shutdown*/
+            if ((mReboot == true && mRebootReason != null && mRebootReason.equals("recovery")) ||
+                    (mReboot == false)) {
+                delayForPlayAnimation();
+            }
+            sInstance.mPowerManager.goToSleep(SystemClock.uptimeMillis(),
+                    PowerManager.GO_TO_SLEEP_REASON_SHUTDOWN, 0);
+            ShutdownManager.stopFtraceCapture();
+            rebootOrShutdown(mReboot, mRebootReason);
+        }
     }
 
     private void shutdownRadios(int timeout) {
+        ConnectivityManager cm = (ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+        final boolean bypassRadioOff = cm.isNetworkSupported(ConnectivityManager.TYPE_MOBILE) == false ||
+            ( (mShutdownFlow == IPO_SHUTDOWN_FLOW) && (command.equals("2")||command.equals("3")) );
+
         // If a radio is wedged, disabling it may hang so we do this work in another thread,
         // just in case.
         final long endTime = SystemClock.elapsedRealtime() + timeout;
-        final boolean[] done = new boolean[1];
+        /* M: [0]: off indicator for nfc, BT and radio, [1] for radio */
+        final boolean[] done = new boolean[2];
         Thread t = new Thread() {
             public void run() {
                 boolean nfcOff;
                 boolean bluetoothOff;
                 boolean radioOff;
 
+                Log.w(TAG, "task run");
+
                 final INfcAdapter nfc =
-                        INfcAdapter.Stub.asInterface(ServiceManager.checkService("nfc"));
+                    INfcAdapter.Stub.asInterface(ServiceManager.checkService("nfc"));
                 final ITelephony phone =
-                        ITelephony.Stub.asInterface(ServiceManager.checkService("phone"));
+                    ITelephony.Stub.asInterface(ServiceManager.checkService("phone"));
                 final IBluetoothManager bluetooth =
                         IBluetoothManager.Stub.asInterface(ServiceManager.checkService(
                                 BluetoothAdapter.BLUETOOTH_MANAGER_SERVICE));
 
                 try {
                     nfcOff = nfc == null ||
-                             nfc.getState() == NfcAdapter.STATE_OFF;
+                        nfc.getState() == NfcAdapter.STATE_OFF;
                     if (!nfcOff) {
                         Log.w(TAG, "Turning off NFC...");
                         nfc.disable(false); // Don't persist new state
                     }
                 } catch (RemoteException ex) {
-                Log.e(TAG, "RemoteException during NFC shutdown", ex);
+                    Log.e(TAG, "RemoteException during NFC shutdown", ex);
                     nfcOff = true;
                 }
 
@@ -432,57 +1033,66 @@ public final class ShutdownThread extends Thread {
                 try {
                     radioOff = phone == null || !phone.needMobileRadioShutdown();
                     if (!radioOff) {
-                        Log.w(TAG, "Turning off cellular radios...");
-                        phone.shutdownMobileRadios();
+                        if (mShutdownFlow != IPO_SHUTDOWN_FLOW) {
+                            Log.w(TAG, "Turning off cellular radios...");
+                            phone.shutdownMobileRadios();
+                        }
                     }
                 } catch (RemoteException ex) {
                     Log.e(TAG, "RemoteException during radio shutdown", ex);
                     radioOff = true;
                 }
+                done[1] = radioOff;
 
                 Log.i(TAG, "Waiting for NFC, Bluetooth and Radio...");
 
-                while (SystemClock.elapsedRealtime() < endTime) {
-                    if (!bluetoothOff) {
-                        try {
-                            bluetoothOff = !bluetooth.isEnabled();
-                        } catch (RemoteException ex) {
-                            Log.e(TAG, "RemoteException during bluetooth shutdown", ex);
-                            bluetoothOff = true;
+                if (bypassRadioOff) {
+                    done[0] = true;
+                    Log.i(TAG, "bypass RadioOff!");
+                } else {
+                    while (SystemClock.elapsedRealtime() < endTime) {
+                        if (!bluetoothOff) {
+                            try {
+                                bluetoothOff = !bluetooth.isEnabled();
+                            } catch (RemoteException ex) {
+                                Log.e(TAG, "RemoteException during bluetooth shutdown", ex);
+                                bluetoothOff = true;
+                            }
+                            if (bluetoothOff) {
+                                Log.i(TAG, "Bluetooth turned off.");
+                            }
                         }
-                        if (bluetoothOff) {
-                            Log.i(TAG, "Bluetooth turned off.");
+                        if (!radioOff) {
+                            try {
+                                radioOff = !phone.needMobileRadioShutdown();
+                            } catch (RemoteException ex) {
+                                Log.e(TAG, "RemoteException during radio shutdown", ex);
+                                radioOff = true;
+                            }
+                            done[1] = radioOff;
+                            if (radioOff) {
+                                Log.i(TAG, "Radio turned off.");
+                            }
                         }
-                    }
-                    if (!radioOff) {
-                        try {
-                            radioOff = !phone.needMobileRadioShutdown();
-                        } catch (RemoteException ex) {
-                            Log.e(TAG, "RemoteException during radio shutdown", ex);
-                            radioOff = true;
+                        if (!nfcOff) {
+                            try {
+                                nfcOff = nfc.getState() == NfcAdapter.STATE_OFF;
+                            } catch (RemoteException ex) {
+                                Log.e(TAG, "RemoteException during NFC shutdown", ex);
+                                nfcOff = true;
+                            }
+                            if (nfcOff) {
+                                Log.i(TAG, "NFC turned off.");
+                            }
                         }
-                        if (radioOff) {
-                            Log.i(TAG, "Radio turned off.");
-                        }
-                    }
-                    if (!nfcOff) {
-                        try {
-                            nfcOff = nfc.getState() == NfcAdapter.STATE_OFF;
-                        } catch (RemoteException ex) {
-                            Log.e(TAG, "RemoteException during NFC shutdown", ex);
-                            nfcOff = true;
-                        }
-                        if (nfcOff) {
-                            Log.i(TAG, "NFC turned off.");
-                        }
-                    }
 
-                    if (radioOff && bluetoothOff && nfcOff) {
-                        Log.i(TAG, "NFC, Radio and Bluetooth shutdown complete.");
-                        done[0] = true;
-                        break;
+                        if (radioOff && bluetoothOff && nfcOff) {
+                            Log.i(TAG, "NFC, Radio and Bluetooth shutdown complete.");
+                            done[0] = true;
+                            break;
+                        }
+                        SystemClock.sleep(PHONE_STATE_POLL_SLEEP_MSEC);
                     }
-                    SystemClock.sleep(PHONE_STATE_POLL_SLEEP_MSEC);
                 }
             }
         };
@@ -494,6 +1104,15 @@ public final class ShutdownThread extends Thread {
         }
         if (!done[0]) {
             Log.w(TAG, "Timed out waiting for NFC, Radio and Bluetooth shutdown.");
+            if (mShutdownFlow == IPO_SHUTDOWN_FLOW) {
+                Log.d(TAG, "change shutdown flow from ipo to normal: BT/MD");
+                mShutdownFlow = NORMAL_SHUTDOWN_FLOW;
+            }
+            if (!done[1] && SystemProperties.get("debug.mdlogger.Running").equals("1")) {
+                Log.d(TAG, "mdlogger is running now, so wait for memory dump");
+                //SystemClock.sleep(Integer.MAX_VALUE);     /* endless wait */
+                SystemClock.sleep(MAX_MEMORY_DUMP_TIME);
+            }
         }
     }
 
@@ -513,7 +1132,14 @@ public final class ShutdownThread extends Thread {
             // vibrate before shutting down
             Vibrator vibrator = new SystemVibrator();
             try {
+/* Vanzo:wangyi on: Thu, 26 Sep 2013 12:37:51 +0800
+ * add prop for poweroff vibrate
                 vibrator.vibrate(SHUTDOWN_VIBRATE_MS, VIBRATION_ATTRIBUTES);
+ */
+                if (SystemProperties.getBoolean("ro.init.vibrate_poweroff", true)) {
+                    vibrator.vibrate(SHUTDOWN_VIBRATE_MS, VIBRATION_ATTRIBUTES);
+                }
+// End of Vanzo: wangyi
             } catch (Exception e) {
                 // Failure to vibrate shouldn't interrupt shutdown.  Just log it.
                 Log.w(TAG, "Failed to vibrate during shutdown.", e);
@@ -527,7 +1153,46 @@ public final class ShutdownThread extends Thread {
         }
 
         // Shutdown power
+        // power off auto test, don't modify
         Log.i(TAG, "Performing low-level shutdown...");
+
+        //unmout data/cache partitions while performing shutdown
+
         PowerManagerService.lowLevelShutdown();
+        /* sleep for a long time, prevent start another service */
+        try {
+            Thread.currentThread().sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            Log.e(TAG, "Shutdown rebootOrShutdown Thread.currentThread().sleep exception!");
+        }
+    }
+
+    /*
+     * return true to enter IPO shutdown
+     * 1) encryption NOT in progress, and
+     * 2) unencrypted or encrypted with default type
+     */
+    static private boolean checkEncryptionCondition(){
+
+        final String encryptionProgress = SystemProperties.get("vold.encrypt_progress");
+        if((!encryptionProgress.equals("100") && !encryptionProgress.equals(""))) {
+            Log.e(TAG, "encryption in progress");
+            return false;
+        }
+
+        if(!SystemProperties.get("ro.crypto.state").equals("encrypted"))
+            return true;
+        try {
+            final IMountService service = IMountService.Stub.asInterface(
+                    ServiceManager.checkService("mount"));
+            if(service != null) {
+                int type = service.getPasswordType();
+                Log.d(TAG, "phone encrypted type: " + type);
+                return type == StorageManager.CRYPT_TYPE_DEFAULT;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error calling mount service " + e);
+        }
+        return false;
     }
 }

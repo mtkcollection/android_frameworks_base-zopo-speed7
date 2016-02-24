@@ -27,6 +27,8 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
+/// M: Modify statusbar style for LCA
+import android.os.SystemProperties;
 import android.util.Log;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
@@ -61,7 +63,8 @@ public class BarTransitions {
         mTag = "BarTransitions." + view.getClass().getSimpleName();
         mView = view;
         mBarBackground = new BarBackgroundDrawable(mView.getContext(), gradientResourceId);
-        if (HIGH_END) {
+        /// M: Modify statusbar style for LCA
+        if (HIGH_END || SystemProperties.getBoolean("ro.config.low_ram", true)) {
             mView.setBackground(mBarBackground);
         }
     }
@@ -71,12 +74,15 @@ public class BarTransitions {
     }
 
     public void transitionTo(int mode, boolean animate) {
+        /// M: Modify statusbar style for LCA
         // low-end devices do not support translucent modes, fallback to opaque
         if (!HIGH_END && (mode == MODE_SEMI_TRANSPARENT || mode == MODE_TRANSLUCENT
-                || mode == MODE_TRANSPARENT)) {
+                || mode == MODE_TRANSPARENT)
+                && !SystemProperties.getBoolean("ro.config.low_ram", true)) {
             mode = MODE_OPAQUE;
         }
-        if (!HIGH_END && (mode == MODE_LIGHTS_OUT_TRANSPARENT)) {
+        if (!HIGH_END && (mode == MODE_LIGHTS_OUT_TRANSPARENT)
+                && !SystemProperties.getBoolean("ro.config.low_ram", true)) {
             mode = MODE_LIGHTS_OUT;
         }
         if (mMode == mode) return;
@@ -88,7 +94,8 @@ public class BarTransitions {
     }
 
     protected void onTransition(int oldMode, int newMode, boolean animate) {
-        if (HIGH_END) {
+        /// M: Modify statusbar style for LCA
+        if (HIGH_END || SystemProperties.getBoolean("ro.config.low_ram", true)) {
             applyModeBackground(oldMode, newMode, animate);
         }
     }

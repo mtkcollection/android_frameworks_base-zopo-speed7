@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,7 +44,7 @@ import java.util.LinkedList;
 public class NotificationPlayer implements OnCompletionListener {
     private static final int PLAY = 1;
     private static final int STOP = 2;
-    private static final boolean mDebug = false;
+    private static final boolean mDebug = true;
 
     private static final class Command {
         int code;
@@ -91,11 +96,13 @@ public class NotificationPlayer implements OnCompletionListener {
                                 if (mAudioManagerWithAudioFocus == null) {
                                     if (mDebug) Log.d(mTag, "requesting AudioFocus");
                                     if (mCmd.looping) {
-                                        audioManager.requestAudioFocus(null,
+                                        /// M: Fix music can adjust to original volume when SMS end ring.
+                                        audioManager.requestAudioFocus(mAudioFocusChangeListener,
                                                 AudioAttributes.toLegacyStreamType(mCmd.attributes),
                                                 AudioManager.AUDIOFOCUS_GAIN);
                                     } else {
-                                        audioManager.requestAudioFocus(null,
+                                        /// M: Fix music can adjust to original volume when SMS end ring.
+                                        audioManager.requestAudioFocus(mAudioFocusChangeListener,
                                                 AudioAttributes.toLegacyStreamType(mCmd.attributes),
                                                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
                                     }
@@ -113,10 +120,14 @@ public class NotificationPlayer implements OnCompletionListener {
                     //  command are issued, and on which it receives the completion callbacks.
                     player.setOnCompletionListener(NotificationPlayer.this);
                     player.start();
-                    if (mPlayer != null) {
-                        mPlayer.release();
+                    ///M: lock mPlayer @{
+                    synchronized (mPlayerLock) {
+                        if (mPlayer != null) {
+                            mPlayer.release();
+                        }
+                        mPlayer = player;
                     }
-                    mPlayer = player;
+                    ///M: lock mPlayer @}
                 }
                 catch (Exception e) {
                     Log.w(mTag, "error loading sound for " + mCmd.uri, e);
@@ -183,26 +194,34 @@ public class NotificationPlayer implements OnCompletionListener {
                     break;
                 case STOP:
                     if (mDebug) Log.d(mTag, "STOP");
-                    if (mPlayer != null) {
-                        long delay = SystemClock.uptimeMillis() - cmd.requestTime;
-                        if (delay > 1000) {
-                            Log.w(mTag, "Notification stop delayed by " + delay + "msecs");
-                        }
-                        mPlayer.stop();
-                        mPlayer.release();
-                        mPlayer = null;
-                        synchronized(mQueueAudioFocusLock) {
-                            if (mAudioManagerWithAudioFocus != null) {
-                                mAudioManagerWithAudioFocus.abandonAudioFocus(null);
-                                mAudioManagerWithAudioFocus = null;
+                    ///M: [ALPS01459390] Lock STOP section to prevent from race condition
+                    synchronized (mCompletionHandlingLock) {
+                        if (mPlayer != null) {
+                            long delay = SystemClock.uptimeMillis() - cmd.requestTime;
+                            if (delay > 1000) {
+                                Log.w(mTag, "Notification stop delayed by " + delay + "msecs");
                             }
+                            ///M: lock mPlayer
+                            synchronized (mPlayerLock) {
+                                mPlayer.stop();
+                                mPlayer.release();
+                                mPlayer = null;
+                                synchronized (mQueueAudioFocusLock) {
+                                    if (mAudioManagerWithAudioFocus != null) {
+                                        /// M: Fix music can adjust to original volume when SMS end ring.
+                                        mAudioManagerWithAudioFocus.abandonAudioFocus(mAudioFocusChangeListener);
+                                        mAudioManagerWithAudioFocus = null;
+                                    }
+                                }
+                            }
+
+                            if ((mLooper != null)
+                                    && (mLooper.getThread().getState() != Thread.State.TERMINATED)) {
+                                mLooper.quit();
+                            }
+                        } else {
+                            Log.w(mTag, "STOP command without a player");
                         }
-                        if((mLooper != null)
-                                && (mLooper.getThread().getState() != Thread.State.TERMINATED)) {
-                            mLooper.quit();
-                        }
-                    } else {
-                        Log.w(mTag, "STOP command without a player");
                     }
                     break;
                 }
@@ -226,7 +245,8 @@ public class NotificationPlayer implements OnCompletionListener {
         synchronized(mQueueAudioFocusLock) {
             if (mAudioManagerWithAudioFocus != null) {
                 if (mDebug) Log.d(mTag, "onCompletion() abandonning AudioFocus");
-                mAudioManagerWithAudioFocus.abandonAudioFocus(null);
+                /// M: Fix music can adjust to original volume when SMS end ring.
+                mAudioManagerWithAudioFocus.abandonAudioFocus(mAudioFocusChangeListener);
                 mAudioManagerWithAudioFocus = null;
             } else {
                 if (mDebug) Log.d(mTag, "onCompletion() no need to abandon AudioFocus");
@@ -389,4 +409,50 @@ public class NotificationPlayer implements OnCompletionListener {
             mWakeLock.release();
         }
     }
+
+    ///M: set AudioFocusChangeListener  @{
+    private Object mPlayerLock = new Object();
+    private AudioManager.OnAudioFocusChangeListener mAudioFocusChangeListener =
+            new AudioManager.OnAudioFocusChangeListener() {
+        @Override
+        public void onAudioFocusChange(int focusChange) {
+            if (mPlayer == null) {
+                return;
+            }
+            switch (focusChange) {
+                case AudioManager.AUDIOFOCUS_GAIN :
+                    synchronized (mCompletionHandlingLock) {
+                        synchronized (mPlayerLock) {
+                            if (mPlayer != null && !mPlayer.isPlaying()) {
+                                mPlayer.start();
+                            }
+                        }
+                    }
+                    break;
+                case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                    synchronized (mCompletionHandlingLock) {
+                        synchronized (mPlayerLock) {
+                            if (mPlayer != null && mPlayer.isLooping() && mPlayer.isPlaying()) {
+                                // only looping situation need to pause playing
+                                mPlayer.pause();
+                            }
+                        }
+                    }
+                    break;
+                case AudioManager.AUDIOFOCUS_LOSS:
+                    synchronized (mCompletionHandlingLock) {
+                        synchronized (mPlayerLock) {
+                            if (mPlayer != null) {
+                                mPlayer.stop();
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    break;
+           }
+        }
+    };
+    /// @}
 }

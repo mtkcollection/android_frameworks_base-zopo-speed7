@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +48,7 @@ import java.util.List;
 public final class BluetoothPan implements BluetoothProfile {
     private static final String TAG = "BluetoothPan";
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
 
     /**
      * Intent used to broadcast the change in connection state of the Pan
@@ -132,6 +137,7 @@ public final class BluetoothPan implements BluetoothProfile {
         mServiceListener = l;
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         try {
+            if (VDBG) Log.d(TAG, "Register mBluetoothStateChangeCallback = " + mStateChangeCallback);
             mAdapter.getBluetoothManager().registerStateChangeCallback(mStateChangeCallback);
         } catch (RemoteException re) {
             Log.w(TAG,"Unable to register BluetoothStateChangeCallback",re);
@@ -159,6 +165,7 @@ public final class BluetoothPan implements BluetoothProfile {
         IBluetoothManager mgr = mAdapter.getBluetoothManager();
         if (mgr != null) {
             try {
+                if (VDBG) Log.d(TAG, "Unregister mBluetoothStateChangeCallback = " + mStateChangeCallback);
                 mgr.unregisterStateChangeCallback(mStateChangeCallback);
             } catch (RemoteException re) {
                 Log.w(TAG,"Unable to unregister BluetoothStateChangeCallback",re);
@@ -352,19 +359,23 @@ public final class BluetoothPan implements BluetoothProfile {
 
     private final ServiceConnection mConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder service) {
-            if (DBG) Log.d(TAG, "BluetoothPAN Proxy object connected");
-            mPanService = IBluetoothPan.Stub.asInterface(service);
+            synchronized (mConnection) {
+                if (DBG) Log.d(TAG, "BluetoothPAN Proxy object connected");
+                mPanService = IBluetoothPan.Stub.asInterface(service);
 
-            if (mServiceListener != null) {
-                mServiceListener.onServiceConnected(BluetoothProfile.PAN,
-                                                    BluetoothPan.this);
+                if (mServiceListener != null) {
+                    mServiceListener.onServiceConnected(BluetoothProfile.PAN,
+                                                        BluetoothPan.this);
+                }
             }
         }
         public void onServiceDisconnected(ComponentName className) {
-            if (DBG) Log.d(TAG, "BluetoothPAN Proxy object disconnected");
-            mPanService = null;
-            if (mServiceListener != null) {
-                mServiceListener.onServiceDisconnected(BluetoothProfile.PAN);
+            synchronized (mConnection) {
+                if (DBG) Log.d(TAG, "BluetoothPAN Proxy object disconnected");
+                mPanService = null;
+                if (mServiceListener != null) {
+                    mServiceListener.onServiceDisconnected(BluetoothProfile.PAN);
+                }
             }
         }
     };

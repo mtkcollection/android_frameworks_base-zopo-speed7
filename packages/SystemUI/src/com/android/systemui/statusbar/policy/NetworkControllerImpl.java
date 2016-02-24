@@ -37,6 +37,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Messenger;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
@@ -58,6 +59,17 @@ import com.android.internal.telephony.cdma.EriInfo;
 import com.android.internal.util.AsyncChannel;
 import com.android.systemui.DemoMode;
 import com.android.systemui.R;
+import com.mediatek.systemui.ext.BehaviorSet;
+import com.mediatek.systemui.ext.DataType;
+import com.mediatek.systemui.ext.FeatureOptionUtils;
+import com.mediatek.systemui.ext.INetworkControllerExt;
+import com.mediatek.systemui.ext.IconIdWrapper;
+import com.mediatek.systemui.ext.NetworkType;
+import com.mediatek.systemui.ext.PhoneHelper;
+import com.mediatek.systemui.ext.PluginFactory;
+import com.mediatek.systemui.ext.SvLteController;
+import com.mediatek.systemui.statusbar.util.SIMHelper;
+import com.mediatek.xlog.Xlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -76,9 +88,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
         implements NetworkController, DemoMode {
     // debug
     static final String TAG = "NetworkController";
-    static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    static final boolean DEBUG = true; //Log.isLoggable(TAG, Log.DEBUG);
     // additional diagnostics, but not logspew
-    static final boolean CHATTY =  Log.isLoggable(TAG + ".Chat", Log.DEBUG);
+    static final boolean CHATTY = true; // Log.isLoggable(TAG + ".Chat", Log.DEBUG);
     // Save the previous SignalController.States of all SignalControllers for dumps.
     static final boolean RECORD_HISTORY = true;
     // If RECORD_HISTORY how many to save, must be a power of 2.
@@ -140,6 +152,20 @@ public class NetworkControllerImpl extends BroadcastReceiver
     // The current user ID.
     private int mCurrentUserId;
 
+    /// M: config for show the ! icon or not
+    static final boolean mShowNormalIcon = true;
+
+    /// M: Support "SystemUI - VoLTE icon".
+    private boolean mVoLTEState = false;
+    /// M: Support "SystemUI - Used VoLTE SubID".
+    private int mUsedVoLTESubID;
+    /// M: Support "SystemUI - VoLTE icon".
+    private static int mIMSState;
+
+    ///: M: Support for PLMN
+    String[] mNetworkName;
+    int mSlotCount = 0;
+
     /**
      * Construct this controller object and register for updates.
      */
@@ -166,6 +192,17 @@ public class NetworkControllerImpl extends BroadcastReceiver
         mHasMobileDataFeature =
                 mConnectivityManager.isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
 
+        /// M: config for show the ! icon or not . @{
+        TelephonyIcons.initTelephonyIcon();
+        WifiIcons.initWifiIcon();
+        /// M: config for show the ! icon or not . @}
+
+        /// M: Support "Operator plugin - Data activity/type, strength icon". @{
+        mNetworkControllerExt = new NetworkControllerExt(mConfig);
+        mSlotCount = SIMHelper.getSlotCount();
+        mNetworkName = new String[mSlotCount];
+        /// M: Support "Operator plugin - Data activity/type, strength icon". @}
+
         // telephony
         mPhone = (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
 
@@ -187,7 +224,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 mSignalsChangedCallbacks, mSignalClusters, this);
 
         // AIRPLANE_MODE_CHANGED is sent at boot; we've probably already missed it
-        updateAirplaneMode(true /* force callback */);
+        updateAirplaneMode(null, true /* force callback */);
         mAccessPoints.setNetworkController(this);
     }
 
@@ -210,10 +247,22 @@ public class NetworkControllerImpl extends BroadcastReceiver
         filter.addAction(ConnectivityManager.INET_CONDITION_ACTION);
         filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
         filter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+
+        /// M: Support "IPO". @{
+        filter.addAction("android.intent.action.ACTION_PREBOOT_IPO");
+        filter.addAction("android.intent.action.ACTION_SHUTDOWN_IPO");
+        /// M: Support "IPO". @}
+
+        /// M: Support "SystemUI - VoLTE icon".
+        filter.addAction(TelephonyIntents.ACTION_IMS_STATE_CHANGED);
+        /// M: Support "subinfo record update".
+        filter.addAction(TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED);
+
         mContext.registerReceiver(this, filter);
         mListening = true;
 
-        updateMobileControllers();
+        /// M: Support "subinfo record update".
+        updateMobileControllers(null);
     }
 
     private void unregisterListeners() {
@@ -261,6 +310,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
     }
 
     public boolean hasVoiceCallingFeature() {
+        if (DEBUG) {
+            Log.d(TAG, "mPhone.getPhoneType(): " + mPhone.getPhoneType());
+        }
         return mPhone.getPhoneType() != TelephonyManager.PHONE_TYPE_NONE;
     }
 
@@ -293,6 +345,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
         }
         if (mMobileSignalControllers.containsKey(voiceSubId)) {
+            if (DEBUG) {
+                Log.d(TAG, "Check isEmergencyOnly, voiceSubId: " + voiceSubId);
+            }
             return mMobileSignalControllers.get(voiceSubId).isEmergencyOnly();
         }
         if (DEBUG) Log.e(TAG, "Cannot find controller for voice sub: " + voiceSubId);
@@ -306,6 +361,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
      */
     void recalculateEmergency() {
         final boolean emergencyOnly = isEmergencyOnly();
+        if (DEBUG) {
+            Log.d(TAG, "recalculateEmergency: " + emergencyOnly);
+        }
         final int length = mEmergencyListeners.size();
         for (int i = 0; i < length; i++) {
             mEmergencyListeners.get(i).setEmergencyCallsOnly(emergencyOnly);
@@ -382,7 +440,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
             handleConfigurationChanged();
         } else if (action.equals(Intent.ACTION_AIRPLANE_MODE_CHANGED)) {
             refreshLocale();
-            updateAirplaneMode(false);
+            updateAirplaneMode(intent, false);
             refreshCarrierLabel();
         } else if (action.equals(TelephonyIntents.ACTION_DEFAULT_VOICE_SUBSCRIPTION_CHANGED)) {
             // We are using different subs now, we might be able to make calls.
@@ -395,7 +453,59 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
         } else if (action.equals(TelephonyIntents.ACTION_SIM_STATE_CHANGED)) {
             // Might have different subscriptions now.
-            updateMobileControllers();
+            /// M: Support "subinfo record update".
+            updateMobileControllers(null);
+            /// M: [ALPS01967373] set EmergencyCallsOnly text @{
+            recalculateEmergency();
+            /// M: [ALPS01967373] set EmergencyCallsOnly text @}
+            /// M: Support "subinfo record update". @{
+        } else if (action.equals(TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED)) {
+            updateMobileControllers(intent);
+            /// M: Support "subinfo record update". @}
+        } else if (action.equals("android.intent.action.ACTION_PREBOOT_IPO")) {
+            /// M: Support "IPO". @{
+            refreshLocale();
+            updateAirplaneMode(null, false);
+        } else if (action.equals("android.intent.action.ACTION_SHUTDOWN_IPO")) {
+            for (MobileSignalController controller : mMobileSignalControllers.values()) {
+                controller.handleBroadcast(intent);
+            }
+            /// M: Support "IPO". @}
+        /// M: Support "SystemUI - VoLTE icon". @{
+        } else if (action.equals(TelephonyIntents.ACTION_IMS_STATE_CHANGED)) {
+            // TelephonyIntents.ACTION_IMS_STATE_CHANGED = "android.intent.action.IMS_SERVICE_STATE"
+            // TelephonyIntents.EXTRA_IMS_REG_STATE_KEY = "regState"
+            int reg = intent.getIntExtra(TelephonyIntents.EXTRA_IMS_REG_STATE_KEY, -1);
+            // PhoneConstants.SUBSCRIPTION_KEY = "subscription"
+            int subId = intent.getIntExtra(PhoneConstants.SUBSCRIPTION_KEY, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+            /// M: Support "SystemUI - Used VoLTE SubID".
+            mUsedVoLTESubID = subId;
+            Xlog.d(TAG, "onReceive from TelephonyIntents.ACTION_IMS_STATE_CHANGED: reg=" + reg + ", subId=" + subId);
+            if (reg == -1) {
+                return;
+            }
+            if (SubscriptionManager.isValidSubscriptionId(subId)) {
+                if (mMobileSignalControllers.containsKey(subId)) {
+                    mMobileSignalControllers.get(subId).setIMSState(reg);
+                }
+            }
+        /// M: Support "SystemUI - VoLTE icon". @}
+        ///M: Support APIRAT SVLTE.@{
+        } else if (action.equals(SvLteController.ACTION_IRAT_PS_TYPE_CHANGED)) {
+            final int psType = intent.getIntExtra(SvLteController.EXTRA_PS_TYPE,
+                    SvLteController.PS_SERVICE_UNKNOWN);
+            Xlog.d(TAG, "received broadcast, action = " + action + " psType = " + psType);
+            if (psType != SvLteController.PS_SERVICE_UNKNOWN) {
+                for (MobileSignalController controller : mMobileSignalControllers.values()) {
+                    final int slotId = controller.mSubscriptionInfo.getSimSlotIndex();
+                    if (SvLteController.isMediatekSVLteDcSupport(slotId)) {
+                        controller.mSvLteController.setPsType(psType);
+                        controller.updateNetworkType();
+                        controller.updateTelephony();
+                    }
+                }
+            }
+        ///M: Support APIRAT SVLTE.@}
         } else {
             int subId = intent.getIntExtra(PhoneConstants.SUBSCRIPTION_KEY,
                     SubscriptionManager.INVALID_SUBSCRIPTION_ID);
@@ -403,8 +513,19 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 if (mMobileSignalControllers.containsKey(subId)) {
                     mMobileSignalControllers.get(subId).handleBroadcast(intent);
                 } else {
+                    if (DEBUG) {
+                        Log.d(TAG, "The controller of the sub Id " + subId + " not found");
+                    }
+
                     // Can't find this subscription...  We must be out of date.
-                    updateMobileControllers();
+                    /// M: Support "subinfo record update".
+                    updateMobileControllers(null);
+
+                    /// M: Use updated subinfo @{
+                    if (mMobileSignalControllers.containsKey(subId)) {
+                        mMobileSignalControllers.get(subId).handleBroadcast(intent);
+                    }
+                    /// M: Use updated subinfo @}
                 }
             } else {
                 // No sub id, must be for the wifi.
@@ -422,16 +543,51 @@ public class NetworkControllerImpl extends BroadcastReceiver
         refreshCarrierLabel();
     }
 
-    private void updateMobileControllers() {
+    /// M: "SystemUI - VoLTE icon plug out". @{
+    private void modifyVoLTE() {
+        int slotID = SubscriptionManager.getSlotId(mUsedVoLTESubID);
+        Log.d(TAG, "[modifyVoLTE] mUsedVoLTESubID: " + mUsedVoLTESubID + ", slotID: " + slotID);
+        if (slotID < 0) { // slot id < 0 means this SIM is not inserted
+            Log.d(TAG, " mUsedVoLTESubID: " + mUsedVoLTESubID + " have been removed");
+            if (SubscriptionManager.isValidSubscriptionId(mUsedVoLTESubID)) {
+                if (mMobileSignalControllers.containsKey(mUsedVoLTESubID)) {
+                    mMobileSignalControllers.get(mUsedVoLTESubID).setIMSState(0);
+                }
+            }
+        }
+    }
+    /// M: "SystemUI - VoLTE icon plug out". @}
+
+    private void updateMobileControllers(Intent intent) {
+        /// M: SIMHelper update Active SubscriptionInfo
+        SIMHelper.updateSIMInfos(mContext);
+
+        /// M: Support "subinfo record update".
+        int detectedType = SubscriptionManager.EXTRA_VALUE_NOCHANGE;
         if (!mListening) {
+            if (DEBUG) {
+                Log.d(TAG, "updateMobileControllers: it's not lostening");
+            }
             return;
         }
         List<SubscriptionInfo> subscriptions = mSubscriptionManager.getActiveSubscriptionInfoList();
         if (subscriptions == null) {
             subscriptions = Collections.emptyList();
         }
+
+        /// M: "SystemUI - VoLTE icon plug out".
+        modifyVoLTE();
+
+        /// M: Support "subinfo record update". @{
+        if (intent != null) {
+            detectedType = intent.getIntExtra(SubscriptionManager.INTENT_KEY_DETECT_STATUS, 0);
+            Log.d(TAG, "updateMobileControllers detectedType: " + detectedType);
+        }
+        /// M: Support "subinfo record update". @}
+        /// M: Support "subinfo record update".
         // If there have been no relevant changes to any of the subscriptions, we can leave as is.
-        if (hasCorrectMobileControllers(subscriptions)) {
+        if (hasCorrectMobileControllers(subscriptions) &&
+            detectedType != SubscriptionManager.EXTRA_VALUE_REPOSITION_SIM) {
             // Even if the controllers are correct, make sure we have the right no sims state.
             // Such as on boot, don't need any controllers, because there are no sims,
             // but we still need to update the no sim state.
@@ -445,7 +601,12 @@ public class NetworkControllerImpl extends BroadcastReceiver
     @VisibleForTesting
     protected void updateNoSims() {
         boolean hasNoSims = mHasMobileDataFeature && mMobileSignalControllers.size() == 0;
+        if (DEBUG) {
+            Log.d(TAG, "updateNoSims: mMobileSignalControllers.size() = "
+            + mMobileSignalControllers.size());
+        }
         if (hasNoSims != mHasNoSims) {
+            Log.d(TAG, "updateNoSims hasNoSims != mHasNoSims");
             mHasNoSims = hasNoSims;
             notifyListeners();
         }
@@ -453,6 +614,10 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
     @VisibleForTesting
     void setCurrentSubscriptions(List<SubscriptionInfo> subscriptions) {
+        if (DEBUG) {
+            Log.d(TAG, "setCurrentSubscriptions: " + subscriptions);
+        }
+
         Collections.sort(subscriptions, new Comparator<SubscriptionInfo>() {
             @Override
             public int compare(SubscriptionInfo lhs, SubscriptionInfo rhs) {
@@ -470,6 +635,17 @@ public class NetworkControllerImpl extends BroadcastReceiver
         HashMap<Integer, MobileSignalController> cachedControllers =
                 new HashMap<Integer, MobileSignalController>(mMobileSignalControllers);
         mMobileSignalControllers.clear();
+        if (DEBUG) {
+            Log.d(TAG, "setCurrentSubscriptions: mMobileSignalControllers.clear()");
+        }
+
+        /// M: [ALPS01967373] set EmergencyCallsOnly text @{
+        final int emergencyLength = mEmergencyListeners.size();
+        for (int i = 0; i < emergencyLength; i++) {
+            mEmergencyListeners.get(i).setEmergencyCallsOnly(false);
+        }
+        /// M: [ALPS01967373] set EmergencyCallsOnly text @}
+
         final int num = subscriptions.size();
         for (int i = 0; i < num; i++) {
             int subId = subscriptions.get(i).getSubscriptionId();
@@ -496,33 +672,59 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 }
                 cachedControllers.get(key).unregisterListener();
             }
+            if (DEBUG) {
+               Log.d(TAG, "setCurrentSubscriptions: cachedControllers.get(key).unregisterListener()");
+            }
         }
+        /// M: [ALPS01794897] refresh view when subinfo change. @{
+        for (MobileSignalController controller : mMobileSignalControllers.values()) {
+            controller.setInvalid(true);
+        }
+        /// M: [ALPS01794897] refresh view when subinfo change. @}
         // There may be new MobileSignalControllers around, make sure they get the current
         // inet condition and airplane mode.
         pushConnectivityToSignals();
-        updateAirplaneMode(true /* force */);
+        updateAirplaneMode(null, true /* force */);
     }
 
     @VisibleForTesting
     boolean hasCorrectMobileControllers(List<SubscriptionInfo> allSubscriptions) {
         if (allSubscriptions.size() != mMobileSignalControllers.size()) {
+            if (DEBUG) {
+                Log.d(TAG, "hasCorrectMobileControllers: check  : " + allSubscriptions);
+                Log.d(TAG, "hasCorrectMobileControllers: current: " + mMobileSignalControllers);
+            }
             return false;
         }
         for (SubscriptionInfo info : allSubscriptions) {
             if (!mMobileSignalControllers.containsKey(info.getSubscriptionId())) {
+                if (DEBUG) {
+                    Log.d(TAG, "hasCorrectMobileControllers: can not found "
+                        + info + " in " + mMobileSignalControllers);
+                }
                 return false;
             }
         }
         return true;
     }
+    private void updateAirplaneMode(Intent intent, boolean force) {
+        boolean airplaneMode = false;
 
-    private void updateAirplaneMode(boolean force) {
-        boolean airplaneMode = (Settings.Global.getInt(mContext.getContentResolver(),
+        /// M: [ALPS01794897] Get the airplane mode from intent to avoid DB delay.
+        if (intent != null) {
+            airplaneMode = intent.getBooleanExtra("state", false);
+            Xlog.d(TAG, "updateAirplaneMode: intent state= " + airplaneMode);
+        } else {
+            airplaneMode = (Settings.Global.getInt(mContext.getContentResolver(),
                 Settings.Global.AIRPLANE_MODE_ON, 0) == 1);
+        }
         if (airplaneMode != mAirplaneMode || force) {
             mAirplaneMode = airplaneMode;
             for (MobileSignalController mobileSignalController : mMobileSignalControllers.values()) {
                 mobileSignalController.setAirplaneMode(mAirplaneMode);
+            }
+            if (DEBUG) {
+                Log.d(TAG, "updateAirplaneMode: notifyListeners");
             }
             notifyListeners();
             refreshCarrierLabel();
@@ -556,6 +758,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
      */
     private void notifyListeners() {
         int length = mSignalClusters.size();
+        if (DEBUG) {
+            Log.d(TAG, "notifyListeners: mSignalClusters.size() = " + length);
+        }
         for (int i = 0; i < length; i++) {
             mSignalClusters.get(i).setIsAirplaneMode(mAirplaneMode, TelephonyIcons.FLIGHT_MODE_ICON,
                     R.string.accessibility_airplane_mode);
@@ -657,12 +862,58 @@ public class NetworkControllerImpl extends BroadcastReceiver
         for (int i = 0; i < length; i++) {
             mCarrierListeners.get(i).setCarrierLabel(label);
         }
+
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @{
+        for (int i = 0; i < mSlotCount; i++) {
+            boolean found = false;
+            for (Map.Entry<Integer, MobileSignalController> entry : mMobileSignalControllers
+                    .entrySet()) {
+                int subId = entry.getKey();
+                MobileSignalController controller = entry.getValue();
+
+                int slotId = controller.mSubscriptionInfo.getSimSlotIndex();
+                // int slotId = SubscriptionManager.getSlotId(subId);
+
+                if (i == slotId) {
+                    mNetworkName[slotId] = controller.mCurrentState.networkName;
+                    PluginFactory.getStatusBarPlmnPlugin(context).updateCarrierLabel(i, true,
+                            controller.hasService(), mNetworkName);
+                    found = true;
+                    break;
+                }
+            }
+            // not have sub
+            if (!found) {
+                mNetworkName[i] = mContext
+                        .getString(com.android.internal.R.string.lockscreen_carrier_default);
+                PluginFactory.getStatusBarPlmnPlugin(context).updateCarrierLabel(i, false, false,
+                        mNetworkName);
+            }
+        }
+        /// M: Support "Operator plugin - Customize Carrier Label for PLMN". @}
     }
 
     private boolean isMobileDataConnected() {
         MobileSignalController controller = getDataController();
         return controller != null ? controller.getState().dataConnected : false;
     }
+
+    /// M: Support "SystemUI - VoLTE icon". @{
+    boolean getVoLTEState() {
+        Xlog.d(TAG, "mVoLTEState=" + mVoLTEState);
+        return mVoLTEState;
+    }
+
+    void setVoLTEState(boolean volteState) {
+        Xlog.d(TAG, "old VoLTEState=" + mVoLTEState + ", new VoLTEState=" + volteState);
+        mVoLTEState = volteState;
+    }
+    /// M: Support "SystemUI - VoLTE icon". @}
+    /// M: Support "SystemUI - Used VoLTE SubID". @{
+    int getVoLTESubID() {
+        return mUsedVoLTESubID;
+    }
+    /// M: Support "SystemUI - Used VoLTE SubID". @}
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("NetworkController state:");
@@ -710,7 +961,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
             mDemoMode = false;
             // Update what MobileSignalControllers, because they may change
             // to set the number of sim slots.
-            updateMobileControllers();
+            /// M: Support "subinfo record update".
+            updateMobileControllers(null);
             for (MobileSignalController controller : mMobileSignalControllers.values()) {
                 controller.resetLastState();
             }
@@ -817,7 +1069,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
             new OnSubscriptionsChangedListener() {
         @Override
         public void onSubscriptionsChanged() {
-            updateMobileControllers();
+            if (DEBUG) {
+                Log.d(TAG, " onSubscriptionsChanged");
+            }
+            /// M: Support "subinfo record update".
+            updateMobileControllers(null);
         };
     };
 
@@ -827,6 +1083,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
         private final WifiManager mWifiManager;
         private final AsyncChannel mWifiChannel;
         private final boolean mHasMobileData;
+
+        /// M: Wifi activity icon
+        private int mWifiActivity;
 
         public WifiSignalController(Context context, boolean hasMobileData,
                 List<NetworkSignalChangedCallback> signalCallbacks,
@@ -853,6 +1112,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
                     WifiIcons.QS_WIFI_NO_NETWORK,
                     AccessibilityContentDescriptions.WIFI_NO_CONNECTION
                     );
+
+            /// M: Wifi activity icon
+            mWifiActivity = WifiManager.DATA_ACTIVITY_NONE;
         }
 
         @Override
@@ -878,8 +1140,16 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
             int signalClustersLength = mSignalClusters.size();
             for (int i = 0; i < signalClustersLength; i++) {
-                mSignalClusters.get(i).setWifiIndicators(wifiVisible, getCurrentIconId(),
-                        contentDescription);
+                /// M: Wifi activity icon @{
+                Xlog.d(mTag, "Wifi notifyListeners: level= " + mCurrentState.level + ", wifiActivity= " + mWifiActivity);
+                if (mCurrentState.activityIn != false || mCurrentState.activityOut != false) {
+                    mSignalClusters.get(i).setWifiIndicators(wifiVisible, WifiIcons.WIFI_SIGNAL_STRENGTH_INOUT[mCurrentState.level][mWifiActivity],
+                            contentDescription);
+                } else {
+                /// M: Wifi activity icon @}
+                    mSignalClusters.get(i).setWifiIndicators(wifiVisible, getCurrentIconId(),
+                            contentDescription);
+                }
             }
         }
 
@@ -937,6 +1207,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
         @VisibleForTesting
         void setActivity(int wifiActivity) {
+            /// M: Wifi activity icon @{
+            Xlog.d(mTag, "setActivity: wifiActivity= " + wifiActivity);
+            mWifiActivity = wifiActivity;
+            /// M: Wifi activity icon @}
+
             mCurrentState.activityIn = wifiActivity == WifiManager.DATA_ACTIVITY_INOUT
                     || wifiActivity == WifiManager.DATA_ACTIVITY_IN;
             mCurrentState.activityOut = wifiActivity == WifiManager.DATA_ACTIVITY_INOUT
@@ -1018,6 +1293,13 @@ public class NetworkControllerImpl extends BroadcastReceiver
         private MobileIconGroup mDefaultIcons;
         private Config mConfig;
 
+        /// M: Support "Service Network Type on Statusbar".
+        private NetworkType mNetworkType = null;
+
+        ///M: Support SVLTE. @{
+        private SvLteController mSvLteController;
+        ///M: Support SVLTE. @}
+
         // TODO: Reduce number of vars passed in, if we have the NetworkController, probably don't
         // need listener lists anymore.
         public MobileSignalController(Context context, Config config, boolean hasMobileData,
@@ -1035,6 +1317,10 @@ public class NetworkControllerImpl extends BroadcastReceiver
             mNetworkNameSeparator = getStringIfExists(R.string.status_bar_network_name_separator);
             mNetworkNameDefault = getStringIfExists(
                     com.android.internal.R.string.lockscreen_carrier_default);
+
+            ///M: Support SVLTE. @{
+            mSvLteController = new SvLteController(mContext, info);
+            ///M: Support SVLTE. @}
 
             mapIconSets();
 
@@ -1113,6 +1399,14 @@ public class NetworkControllerImpl extends BroadcastReceiver
             setInetCondition(inetCondition);
         }
 
+        /// M: Support "SystemUI - VoLTE icon". @{
+        public void setIMSState(int imsState) {
+            Xlog.d(mTag, "old IMSState=" + mIMSState + ", new IMSState=" + imsState);
+            mIMSState = imsState;
+            updateVoLTE();
+        }
+        /// M: Support "SystemUI - VoLTE icon". @}
+
         /**
          * Start listening for phone state changes.
          */
@@ -1166,13 +1460,28 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
 
             MobileIconGroup hGroup = TelephonyIcons.THREE_G;
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:55:36 +0800
+ * support h plus show
+ */
+            MobileIconGroup hPlusGroup = TelephonyIcons.THREE_G;
+// End of Vanzo:tanglei
             if (mConfig.hspaDataDistinguishable) {
                 hGroup = TelephonyIcons.H;
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:51:49 +0800
+ * support h plus show
+ */
+                hPlusGroup = TelephonyIcons.H_PLUS;
+// End of Vanzo:tanglei
             }
             mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_HSDPA, hGroup);
             mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_HSUPA, hGroup);
             mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_HSPA, hGroup);
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:51:56 +0800
+ * support h plus show
             mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_HSPAP, hGroup);
+ */
+            mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_HSPAP, hPlusGroup);
+// End of Vanzo:tanglei
 
             if (mConfig.show4gForLte) {
                 mNetworkToIconLookup.put(TelephonyManager.NETWORK_TYPE_LTE, TelephonyIcons.FOUR_G);
@@ -1188,7 +1497,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
             String contentDescription = getStringIfExists(getContentDescription());
             String dataContentDescription = getStringIfExists(icons.mDataContentDescription);
 
-            boolean showDataIcon = mCurrentState.dataConnected && mCurrentState.inetForNetwork != 0
+            /// M: config for show the ! icon or not
+            boolean showDataIcon = mCurrentState.dataConnected
+                    && (mCurrentState.inetForNetwork != 0 || mShowNormalIcon)
                     || mCurrentState.iconGroup == TelephonyIcons.ROAMING;
 
             // Only send data sim callbacks to QS.
@@ -1208,9 +1519,33 @@ public class NetworkControllerImpl extends BroadcastReceiver
                             icons.mIsWide && qsTypeIcon != 0);
                 }
             }
+
             int typeIcon = showDataIcon ? icons.mDataType : 0;
+
+            /// M: Add roaming data nework type icon @{
+            if (typeIcon != 0 && typeIcon == TelephonyIcons.ROAMING_ICON) {
+                if (mCurrentState.dataConnected &&
+                    (mCurrentState.inetForNetwork != 0 || mShowNormalIcon)) {
+                    if (mNetworkToIconLookup.indexOfKey(mDataNetType) >= 0) {
+                        typeIcon = TelephonyIcons.getRoamingDataTypeIcon(
+                            mNetworkToIconLookup.get(mDataNetType).mDataType);
+                        Log.d(mTag, "getRoamingDataTypeIcon=" + typeIcon +
+                            ", mDataNetType=" + mDataNetType);
+                    } else {
+                        typeIcon = TelephonyIcons.getRoamingDataTypeIcon(mDefaultIcons.mDataType);
+                        Log.d(mTag, "getRoamingDataTypeIcon=" + typeIcon +
+                            ", mDataNetType=" + mDataNetType + ", mDefaultIcons=" + mDefaultIcons);
+                    }
+                }
+            }
+            /// M: Add roaming data nework type icon @}
+
             int signalClustersLength = mSignalClusters.size();
             for (int i = 0; i < signalClustersLength; i++) {
+                /// M: Support "Service Network Type on Statusbar".
+                mSignalClusters.get(i).setNetworkType(mNetworkType,
+                        mSubscriptionInfo.getSubscriptionId());
+
                 mSignalClusters.get(i).setMobileDataIndicators(
                         mCurrentState.enabled && !mCurrentState.airplaneMode,
                         getCurrentIconId(),
@@ -1229,6 +1564,12 @@ public class NetworkControllerImpl extends BroadcastReceiver
         }
 
         private boolean hasService() {
+            ///M: Support SVLTE. @{
+            if (SvLteController.isMediatekSVLteDcSupport(mSubscriptionInfo)) {
+                return mSvLteController.hasService();
+            }
+            ///M: Support SVLTE. @}
+
             if (mServiceState != null) {
                 // Consider the device to be in service if either voice or data
                 // service is available. Some SIM cards are marketed as data-only
@@ -1251,20 +1592,45 @@ public class NetworkControllerImpl extends BroadcastReceiver
         }
 
         private boolean isCdma() {
+            if (DEBUG) {
+                Log.d(mTag, "isCdma: mSignalStrength = " + mSignalStrength);
+            }
             return (mSignalStrength != null) && !mSignalStrength.isGsm();
         }
 
         public boolean isEmergencyOnly() {
+            ///M: Support SVLTE. @{
+            if (SvLteController.isMediatekSVLteDcSupport(mSubscriptionInfo)) {
+                Xlog.d(mTag, "isEmergencyOnly(), will return mSvLteController.isEmergencyOnly()");
+                return mSvLteController.isEmergencyOnly();
+            }
+            ///M: Support SVLTE. @}
+            Xlog.d(mTag, "isEmergencyOnly(), will return mServiceState.isEmergencyOnly()");
             return (mServiceState != null && mServiceState.isEmergencyOnly());
         }
 
         private boolean isRoaming() {
             if (isCdma()) {
+                /// M: [ALPS02013362] NullPointerException @{
+                if (mServiceState == null) {
+                    if (DEBUG) {
+                        Log.d(mTag, "isRoaming: mServiceState is null");
+                    }
+                    return false;
+                }
+                /// M: [ALPS02013362] NullPointerException @}
                 final int iconMode = mServiceState.getCdmaEriIconMode();
-                return mServiceState.getCdmaEriIconIndex() != EriInfo.ROAMING_INDICATOR_OFF
+                final int iconIndex = mServiceState.getCdmaEriIconIndex();
+                if (DEBUG) {
+                    Log.d(mTag, "isRoaming: CDMA mode " + iconMode + " index " + iconIndex);
+                }
+                return iconIndex != EriInfo.ROAMING_INDICATOR_OFF
                         && (iconMode == EriInfo.ROAMING_ICON_MODE_NORMAL
                             || iconMode == EriInfo.ROAMING_ICON_MODE_FLASH);
             } else {
+                if (DEBUG) {
+                    Log.d(mTag, "isRoaming: mServiceState = " + mServiceState);
+                }
                 return mServiceState != null && mServiceState.getRoaming();
             }
         }
@@ -1279,6 +1645,12 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 notifyListenersIfNecessary();
             } else if (action.equals(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED)) {
                 updateDataSim();
+            } else if (action.equals("android.intent.action.ACTION_SHUTDOWN_IPO")) {
+                /// M: [ALPS01900068] Reset Phone State when IPO Shutdown
+                cleanPhoneState();
+                updateNetworkType();
+                updateTelephony();
+                updateVoLTE();
             }
         }
 
@@ -1305,7 +1677,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
         void updateNetworkName(boolean showSpn, String spn, boolean showPlmn, String plmn) {
             if (CHATTY) {
                 Log.d("CarrierLabel", "updateNetworkName showSpn=" + showSpn + " spn=" + spn
-                        + " showPlmn=" + showPlmn + " plmn=" + plmn);
+                        + " showPlmn=" + showPlmn + " plmn=" + plmn + " for " + mTag);
             }
             StringBuilder str = new StringBuilder();
             if (showPlmn && plmn != null) {
@@ -1324,6 +1696,109 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
         }
 
+        /// M: Support "Service Network Type on Statusbar". @{
+        private final int getNWTypeByPriority(int cs, int ps) {
+            /// By Network Class.
+            if (TelephonyManager.getNetworkClass(cs) > TelephonyManager.getNetworkClass(ps)) {
+                return cs;
+            } else {
+                return ps;
+            }
+        }
+
+        private final void updateNetworkType() {
+            int tempNetworkType; //Big - switch
+
+            if (mServiceState != null) {
+                int networkTypeData = mDataNetType; //Big - Data
+                if ((mDataState == TelephonyManager.DATA_UNKNOWN ||
+                     mDataState == TelephonyManager.DATA_DISCONNECTED)) {
+                    Xlog.d(mTag, "updateNetworkType: DataState= " + mDataState
+                           + ", getDataNetworkType= " + mServiceState.getDataNetworkType());
+                    networkTypeData = mServiceState.getDataNetworkType();
+                }
+                tempNetworkType = getNWTypeByPriority(mServiceState.getVoiceNetworkType(),
+                                                      networkTypeData);
+            } else {
+                tempNetworkType = mDataNetType;
+            }
+
+            ///M: Support SVLTE. @{
+            if (SvLteController.isMediatekSVLteDcSupport(mSubscriptionInfo)) {
+                tempNetworkType = mSvLteController.getDataNetTypeWithLTEService(tempNetworkType);
+            }
+            ///M: Support SVLTE. @}
+
+            Xlog.d(mTag, "updateNetworkType: DataNetType=" + mDataNetType +
+                " / " + tempNetworkType);
+            switch (tempNetworkType) {
+                case TelephonyManager.NETWORK_TYPE_UNKNOWN:
+                    if (!mConfig.showAtLeast3G) {
+                        mNetworkType = NetworkType.Type_G;
+                        break;
+                    }
+                case TelephonyManager.NETWORK_TYPE_EDGE:
+                    if (!mConfig.showAtLeast3G) {
+                        mNetworkType = NetworkType.Type_E;
+                        break;
+                    }
+                case TelephonyManager.NETWORK_TYPE_UMTS:
+                    mNetworkType = NetworkType.Type_3G;
+                    break;
+                case TelephonyManager.NETWORK_TYPE_HSDPA:
+                case TelephonyManager.NETWORK_TYPE_HSUPA:
+                case TelephonyManager.NETWORK_TYPE_HSPA:
+                case TelephonyManager.NETWORK_TYPE_HSPAP:
+                    mNetworkType = NetworkType.Type_3G;
+                    break;
+                case TelephonyManager.NETWORK_TYPE_CDMA:
+                case TelephonyManager.NETWORK_TYPE_1xRTT:
+                    mNetworkType = NetworkType.Type_1X;
+                    break;
+                case TelephonyManager.NETWORK_TYPE_EVDO_0: //fall through
+                case TelephonyManager.NETWORK_TYPE_EVDO_A:
+                case TelephonyManager.NETWORK_TYPE_EVDO_B:
+                case TelephonyManager.NETWORK_TYPE_EHRPD:
+                    mNetworkType = NetworkType.Type_1X3G;
+                    break;
+                case TelephonyManager.NETWORK_TYPE_LTE:
+                    mNetworkType = NetworkType.Type_4G;
+                    break;
+                default:
+                    if (!mConfig.showAtLeast3G) {
+                        mNetworkType = NetworkType.Type_G;
+                    } else {
+                        mNetworkType = NetworkType.Type_3G;
+                    }
+                    break;
+            }
+            if (!hasService()) {
+                mNetworkType = null;
+            }
+
+            Xlog.d(mTag, "updateNetworkType: mNetworkType= " + mNetworkType);
+        }
+        /// M: Support "Service Network Type on Statusbar". @}
+
+        /// M: Update data network type when DATA_UNKNOWN or DATA_DISCONNECTED @{
+        private int getDataNetworkTypeFromService() {
+            int dataNetType = mDataNetType;
+            if (mServiceState != null) {
+                final int cs = mServiceState.getVoiceNetworkType();
+                final int ps = mServiceState.getDataNetworkType();
+                dataNetType = getNWTypeByPriority(cs, ps);
+
+                if (DEBUG) {
+                    Log.d(mTag, "getDataNetworkTypeFromService: mNetworkType= " + mNetworkType +
+                        ", DataNetType= " + mDataNetType + " / " + dataNetType +
+                        ", CS=" + cs + ", PS=" + ps + ", mDataState " + mDataState);
+                }
+            }
+
+            return dataNetType;
+        }
+        /// M: Update data network type when DATA_UNKNOWN or DATA_DISCONNECTED @}
+
         /**
          * Updates the current state based on mServiceState, mSignalStrength, mDataNetType,
          * mDataState, and mSimState.  It should be called any time one of these is updated.
@@ -1331,7 +1806,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
          */
         private final void updateTelephony() {
             if (DEBUG) {
-                Log.d(TAG, "updateTelephonySignalStrength: hasService=" + hasService()
+                Log.d(mTag, "updateTelephonySignalStrength: hasService=" + hasService()
                         + " ss=" + mSignalStrength);
             }
             mCurrentState.connected = hasService() && mSignalStrength != null;
@@ -1341,6 +1816,13 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 } else {
                     mCurrentState.level = mSignalStrength.getLevel();
                 }
+
+                /// M: Support SVLTE. @{
+                if (SvLteController.isMediatekSVLteDcSupport(mSubscriptionInfo)) {
+                    mCurrentState.level = mSvLteController.getSignalStrengthLevel(
+                        mNetworkType, mConfig.alwaysShowCdmaRssi);
+                }
+                /// @}
             }
             if (mNetworkToIconLookup.indexOfKey(mDataNetType) >= 0) {
                 mCurrentState.iconGroup = mNetworkToIconLookup.get(mDataNetType);
@@ -1350,6 +1832,13 @@ public class NetworkControllerImpl extends BroadcastReceiver
             mCurrentState.dataConnected = mCurrentState.connected
                     && mDataState == TelephonyManager.DATA_CONNECTED;
 
+            ///M: Support SVLTE. @{
+            if (SvLteController.isMediatekSVLteDcSupport(mSubscriptionInfo)) {
+                mCurrentState.dataConnected = mCurrentState.dataConnected
+                        || mSvLteController.isDataConnected();
+            }
+            ///M: Support SVLTE. @}
+
             if (isRoaming()) {
                 mCurrentState.iconGroup = TelephonyIcons.ROAMING;
             }
@@ -1357,13 +1846,131 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 mCurrentState.isEmergency = isEmergencyOnly();
                 mNetworkController.recalculateEmergency();
             }
+
+            /// M: change network name to alpha long @{
             // Fill in the network name if we think we have it.
             if (mCurrentState.networkName == mNetworkNameDefault && mServiceState != null
-                    && mServiceState.getOperatorAlphaShort() != null) {
-                mCurrentState.networkName = mServiceState.getOperatorAlphaShort();
+                    && mServiceState.getOperatorAlphaLong() != null) {
+                /// M: Do not use operator alpha long as network name when there is no service @{
+                if (hasService() == true) {
+                    mCurrentState.networkName = mServiceState.getOperatorAlphaLong();
+                    if (DEBUG) {
+                        Log.d(mTag, "change network name to alpha long = " +
+                            mCurrentState.networkName);
+                    }
+                } else {
+                    if (DEBUG) {
+                        Log.d(mTag, "hasService() == false, alpha long = " +
+                            mServiceState.getOperatorAlphaLong());
+                    }
+                }
+                /// M: Do not use operator alpha long as network name when there is no service @}
             }
+            /// M: change network name to alpha long @}
+
+            /// M: Support "Network Type on state".  @{
+            mCurrentState.networkType = mNetworkType;
+            if (mCurrentState.networkType != mLastState.networkType) {
+                Xlog.d(mTag, "[NetworkType change] " + "mCurrentState.networkType:"
+                        + mCurrentState.networkType + ", mLastState.networkType:"
+                        + mLastState.networkType);
+            }
+            /// M: Support "Network Type on state". @}
+
+            /// M: Support "ServiceState on state".  @{
+            if (PluginFactory.getStatusBarPlugin(mContext).customizeBehaviorSet()
+                    == BehaviorSet.OP09_BS) {
+                mCurrentState.serviceState = mServiceState;
+            }
+            /// M: Support "ServiceState on state".  @}
+
+            /// M: Update data sim for the callbacks to QS @{
+            int defaultDataSub = SubscriptionManager.getDefaultDataSubId();
+            if (SubscriptionManager.isValidSubscriptionId(defaultDataSub)) {
+                mCurrentState.dataSim = defaultDataSub == mSubscriptionInfo.getSubscriptionId();
+            } else {
+                // There doesn't seem to be a data sim selected, however if
+                // there isn't a MobileSignalController with dataSim set, then
+                // QS won't get any callbacks and will be blank.  Instead
+                // lets just assume we are the data sim (which will basically
+                // show one at random) in QS until one is selected.  The user
+                // should pick one soon after, so we shouldn't be in this state
+                // for long.
+                mCurrentState.dataSim = true;
+            }
+            /// M: Update data sim for the callbacks to QS @}
+
+            /// M: Support "CMCC Performance test on SystemUI Statusbar". @{
+            if (mCurrentState.connected) {
+                Log.i(mTag, "[CMCC Performance test][SystemUI][Statusbar] show signal end ["
+                        + SystemClock.elapsedRealtime() + "]");
+            }
+            /// M: Support "CMCC Performance test on SystemUI Statusbar". @}
+
             notifyListenersIfNecessary();
         }
+
+        /// M: [ALPS01856198] Reset the phonestate info to avoid keeping the wrong state@{
+        private void cleanPhoneState() {
+            Log.d(mTag, "cleanPhoneState");
+            // onSignalStrengthsChanged
+            mSignalStrength = null;
+            // onServiceStateChanged
+            mServiceState = null;
+            // onDataConnectionStateChanged
+            mDataNetType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            mDataState = TelephonyManager.DATA_DISCONNECTED;
+            // Network Type
+            mNetworkType = null;
+            // IMS state
+            mIMSState = 0;
+
+            ///M: Support SVLTE. @{
+            mSvLteController.cleanPhoneState();
+            ///M: Support SVLTE. @}
+        }
+        /// M: [ALPS01856198] Reset the phonestate info to avoid keeping the wrong state@}
+
+        /// M: Support "SystemUI - VoLTE icon". @{
+        private final void updateVoLTE() {
+            Xlog.d(mTag, "updateVoLTE: DataNetType=" + mDataNetType +
+                   ",DataState=" + mDataState +
+                   ",IMSState=" + mIMSState +
+                   ",mUsedVoLTESubID=" + mNetworkController.getVoLTESubID());
+
+            /// M: Support "SystemUI - Used VoLTE SubID". @{
+            if (mNetworkController.getVoLTESubID() != mSubscriptionInfo.getSubscriptionId()) {
+                Log.d(mTag, "Used VoLTE SubID = " + mNetworkController.getVoLTESubID()  +
+                   ",not SubID = " +  mSubscriptionInfo.getSubscriptionId());
+                return;
+            }
+            /// M: Support "SystemUI - Used VoLTE SubID". @}
+
+            // VoLTE on : 4G + IMS reg
+            if (mDataNetType == TelephonyManager.NETWORK_TYPE_LTE &&
+                mDataState == TelephonyManager.DATA_CONNECTED &&
+                mIMSState == 1) {
+                // previous VoLTE = off, then redraw it
+                if (mNetworkController.getVoLTEState() == false) {
+                    mNetworkController.setVoLTEState(true);
+                    int length = mSignalClusters.size();
+                    for (int i = 0; i < length; i++) {
+                        mSignalClusters.get(i).setVoLTE(true);
+                    }
+                }
+                return;
+            }
+
+            // VoLTE off case
+            if (mNetworkController.getVoLTEState() == true) {
+                mNetworkController.setVoLTEState(false);
+                int length = mSignalClusters.size();
+                for (int i = 0; i < length; i++) {
+                    mSignalClusters.get(i).setVoLTE(false);
+                }
+            }
+        }
+        /// M: Support "SystemUI - VoLTE icon". @}
 
         @VisibleForTesting
         void setActivity(int activity) {
@@ -1396,6 +2003,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
                             ((signalStrength == null) ? "" : (" level=" + signalStrength.getLevel())));
                 }
                 mSignalStrength = signalStrength;
+                ///M: Support SVLTE. @{
+                mSvLteController.onSignalStrengthsChanged(signalStrength);
+                ///M: Support SVLTE. @}
                 updateTelephony();
             }
 
@@ -1406,7 +2016,20 @@ public class NetworkControllerImpl extends BroadcastReceiver
                             + " dataState=" + state.getDataRegState());
                 }
                 mServiceState = state;
+                /// M: Update data network type when DATA_UNKNOWN or DATA_DISCONNECTED @{
+                if (mDataState == TelephonyManager.DATA_UNKNOWN ||
+                    mDataState == TelephonyManager.DATA_DISCONNECTED) {
+                    mDataNetType = getDataNetworkTypeFromService();
+                }
+                /// M: Update data network type when DATA_UNKNOWN or DATA_DISCONNECTED @}
+                ///M: Support SVLTE. @{
+                mSvLteController.onServiceStateChanged(state);
+                ///M: Support SVLTE. @}
+                /// M: Support "Service Network Type on Statusbar".
+                updateNetworkType();
                 updateTelephony();
+                /// M: Support "SystemUI - VoLTE icon".
+                updateVoLTE();
             }
 
             @Override
@@ -1417,7 +2040,14 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 }
                 mDataState = state;
                 mDataNetType = networkType;
+                ///M: Support SVLTE. @{
+                mSvLteController.onDataConnectionStateChanged(state, networkType);
+                ///M: Support SVLTE. @}
+                /// M: Support "Service Network Type on Statusbar".
+                updateNetworkType();
                 updateTelephony();
+                /// M: Support "SystemUI - VoLTE icon".
+                updateVoLTE();
             }
 
             @Override
@@ -1425,7 +2055,24 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 if (DEBUG) {
                     Log.d(mTag, "onDataActivity: direction=" + direction);
                 }
+                ///M: Support SVLTE. @{
+                mSvLteController.onDataActivity(direction);
+                ///M: Support SVLTE. @}
                 setActivity(direction);
+
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:10:28 +0800
+ * add signal up and down icon
+ */
+                if (com.android.featureoption.FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_SIGNAL_UP_DOWN_ICON) {
+                    int signalClustersLength = mSignalClusters.size();
+                    for (int i = 0; i < signalClustersLength; i++) {
+                        mSignalClusters.get(i).setDataActivityMTK(
+                                mCurrentState.dataConnected && mCurrentState.activityIn,
+                                mCurrentState.dataConnected && mCurrentState.activityOut,
+                                mSubscriptionInfo.getSubscriptionId());
+                    }
+                }
+// End of Vanzo:qiukai
             }
         };
 
@@ -1456,6 +2103,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
             boolean airplaneMode;
             int inetForNetwork;
 
+            /// M: Support "ServiceState on state".
+            ServiceState serviceState;
+
             @Override
             public void copyFrom(State s) {
                 super.copyFrom(s);
@@ -1466,6 +2116,13 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 inetForNetwork = state.inetForNetwork;
                 isEmergency = state.isEmergency;
                 airplaneMode = state.airplaneMode;
+
+                /// M: Support "ServiceState on state".
+                if (state.serviceState != null) {
+                    serviceState = new ServiceState(state.serviceState);
+                } else {
+                    serviceState = null;
+                }
             }
 
             @Override
@@ -1488,7 +2145,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
                         && ((MobileState) o).dataConnected == dataConnected
                         && ((MobileState) o).isEmergency == isEmergency
                         && ((MobileState) o).airplaneMode == airplaneMode
-                        && ((MobileState) o).inetForNetwork == inetForNetwork;
+                        && ((MobileState) o).inetForNetwork == inetForNetwork
+                        /// M: Support "ServiceState on state".
+                        && equalsHandlesNulls(((MobileState) o).serviceState, serviceState);
             }
         }
     }
@@ -1514,6 +2173,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
         private final State[] mHistory;
         // Where to copy the next state into.
         private int mHistoryIndex;
+
+        /// M: [ALPS01794897] refresh view when subinfo change.
+        boolean mInvalid = false;
 
         public SignalController(String tag, Context context, int type,
                 List<NetworkSignalChangedCallback> signalCallbacks,
@@ -1563,15 +2225,24 @@ public class NetworkControllerImpl extends BroadcastReceiver
          * needs to trigger callbacks related to it.
          */
         public boolean isDirty() {
-            if (!mLastState.equals(mCurrentState)) {
+            Xlog.d(mTag, "isDirty : " + mInvalid);
+            if (!mLastState.equals(mCurrentState) || mInvalid) {
                 if (DEBUG) {
                     Log.d(mTag, "Change in state from: " + mLastState + "\n"
                             + "\tto: " + mCurrentState);
                 }
+                mInvalid = false;
                 return true;
             }
+            mInvalid = false;
             return false;
         }
+
+        /// M: [ALPS01794897] refresh view when subinfo change. @{
+        void setInvalid(boolean isValid) {
+            mInvalid = isValid;
+        }
+        /// M: [ALPS01794897] refresh view when subinfo change. @}
 
         public void saveLastState() {
             if (RECORD_HISTORY) {
@@ -1723,6 +2394,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
             IconGroup iconGroup;
             int inetCondition;
             int rssi; // Only for logging.
+            /// M: Support "Network Type on state".
+            NetworkType networkType;
 
             // Not used for comparison, just used for logging.
             long time;
@@ -1737,6 +2410,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 activityOut = state.activityOut;
                 rssi = state.rssi;
                 time = state.time;
+                /// M: Support "Network Type on state".
+                networkType =  state.networkType;
             }
 
             @Override
@@ -1759,6 +2434,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
                         .append("activityIn=").append(activityIn).append(',')
                         .append("activityOut=").append(activityOut).append(',')
                         .append("rssi=").append(rssi).append(',')
+                        /// M: Support "Network Type on state".
+                        .append("networkType=").append(networkType).append(',')
                         .append("lastModified=").append(DateFormat.format("MM-dd hh:mm:ss", time));
             }
 
@@ -1775,7 +2452,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
                         && other.iconGroup == iconGroup
                         && other.activityIn == activityIn
                         && other.activityOut == activityOut
-                        && other.rssi == rssi;
+                        && other.rssi == rssi
+                        /// M: Support "Network Type on state".
+                        && other.networkType == networkType;
             }
         }
     }
@@ -1790,6 +2469,37 @@ public class NetworkControllerImpl extends BroadcastReceiver
         void setNoSims(boolean show);
 
         void setIsAirplaneMode(boolean is, int airplaneIcon, int contentDescription);
+
+        /**
+         * M: setNetworkType For Network icon.
+         * @param networkType : Network Type
+         * @param subId : SubID
+         */
+        void setNetworkType(NetworkType networkType, int subId);
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:11:08 +0800
+ * add signal up and down icon
+ */
+        void setDataActivityMTK(boolean in, boolean out,int subId);
+// End of Vanzo:qiukai
+
+        /// M: Support "SystemUI - VoLTE icon".
+        void setVoLTE(boolean isShowed);
+
+        /**
+         * M: Set Default SIM Indicator.
+         * @param showSimIndicator : Show SIM indicator or not
+         * @param subID : subID
+         */
+        public void setShowSimIndicator(boolean showSimIndicator, int subID);
+        /**
+         * M: Set AlwaysAsk Or InternetCall icon.
+         * @param selectID : AlwaysAsk or InternetCall
+         */
+        public void setShowAlwaysAskOrInternetCall(long selectID);
+        /**
+         * M: hide AlwaysAsk Or InternetCall icon.
+         */
+        public void setHideAlwaysAskOrInternetCall();
     }
 
     public interface EmergencyListener {
@@ -1820,4 +2530,311 @@ public class NetworkControllerImpl extends BroadcastReceiver
             return config;
         }
     }
+
+    /// M: Support "Default SIM Indicator". @{
+    /**
+        * show SimIndicator.
+        * @param subId : subID
+        */
+    public void showSimIndicator(int subId) {
+        Xlog.d(TAG, "showSimIndicator: subID= " + subId);
+        if (mMobileSignalControllers.size() > 1 &&
+            SubscriptionManager.isValidSubscriptionId(subId)) {
+            if (mMobileSignalControllers.containsKey(subId)) {
+                for (int i = 0; i < mSignalClusters.size(); i++) {
+                    mSignalClusters.get(i).setShowSimIndicator(
+                       true, subId);
+                }
+            }
+        }
+    }
+    /**
+        * hide SimIndicator.
+        */
+    public void hideSimIndicator() {
+        for (MobileSignalController controller : mMobileSignalControllers.values()) {
+           int subId = controller.mSubscriptionInfo.getSubscriptionId();
+           for (int i = 0; i < mSignalClusters.size(); i++) {
+              mSignalClusters.get(i).setShowSimIndicator(
+                        false, subId);
+           }
+        }
+        for (int i = 0; i < mSignalClusters.size(); i++) {
+          mSignalClusters.get(i).setHideAlwaysAskOrInternetCall();
+        }
+    }
+    /**
+        * show AlwaysAsk Or InternetCall.
+        * @param selectID : AlwaysAsk or InternetCall
+        */
+    public void showAlwaysAskOrInternetCall(long selectID) {
+        Xlog.d(TAG, "showAlwaysAskOrInternetCall= " + selectID);
+        hideSimIndicator();
+        for (int i = 0; i < mSignalClusters.size(); i++) {
+          mSignalClusters.get(i).setShowAlwaysAskOrInternetCall(selectID);
+        }
+    }
+    /// M: Support "Default SIM Indicator". }@
+
+    /// M: Support "Operator plugin - Data activity/type, strength icon". @{
+    private final NetworkControllerExt mNetworkControllerExt;
+
+    private final boolean isMobileDataConnected(int subId) {
+        MobileSignalController controller = getMobileSignalController(subId);
+        return controller != null ? controller.getState().dataConnected : false;
+    }
+
+    private final MobileSignalController getMobileSignalController(int subId) {
+        if (mMobileSignalControllers.containsKey(subId)) {
+            return mMobileSignalControllers.get(subId);
+        }
+
+        Log.e(TAG, "Cannot find controller for sub: " + subId);
+        return null;
+    }
+
+    /**
+     * Get a INetworkControllerExt instance.
+     *
+     * @return INetworkControllerExt.
+     */
+    public final NetworkControllerExt getNetworkControllerExt() {
+        return mNetworkControllerExt;
+    }
+
+    /**
+     * Test whether two objects hold the same data values or both are null.
+     *
+     * @param a first obj
+     * @param b second obj
+     * @return true if two objects equal or both are null
+     */
+    private static final boolean equalsHandlesNulls(Object a, Object b) {
+        return (a == null) ? (b == null) : a.equals(b);
+    }
+
+    /**
+     * M: Operator INetworkControllerExt implements.
+     */
+    private class NetworkControllerExt implements INetworkControllerExt {
+        private static final String TAG = "StatusBar.NetworkControllerExt";
+        private boolean mDebug = !FeatureOptionUtils.isUserLoad();
+
+        private final Config mConfig;
+
+        public NetworkControllerExt(final Config config) {
+            this.mConfig = config;
+            config.hspaDataDistinguishable = PluginFactory.getStatusBarPlugin(mContext)
+                    .customizeHspaDistinguishable(config.hspaDataDistinguishable);
+
+            DataType.mapDataTypeSets(config.showAtLeast3G, config.show4gForLte,
+                    config.hspaDataDistinguishable);
+            NetworkType.mapNetworkTypeSets(config.showAtLeast3G, config.show4gForLte,
+                    config.hspaDataDistinguishable);
+        }
+
+        @Override
+        public boolean isShowAtLeast3G() {
+            return mConfig.showAtLeast3G;
+        }
+
+        @Override
+        public boolean isHspaDataDistinguishable() {
+            return mConfig.hspaDataDistinguishable;
+        }
+
+        @Override
+        public boolean hasMobileDataFeature() {
+            return mHasMobileDataFeature;
+        }
+
+        @Override
+        public Resources getResources() {
+            return mContext.getResources();
+        }
+
+        @Override
+        public void getDefaultSignalNullIcon(IconIdWrapper icon) {
+            icon.setResources(mContext.getResources());
+            icon.setIconId(TelephonyIcons.TELEPHONY_NO_NETWORK);
+        }
+
+        @Override
+        public void getDefaultRoamingIcon(IconIdWrapper icon) {
+            icon.setResources(mContext.getResources());
+            icon.setIconId(TelephonyIcons.ROAMING_ICON);
+        }
+
+        @Override
+        public boolean hasService(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            final boolean hasService = controller != null ? controller.hasService() : false;
+            return hasService;
+        }
+
+        @Override
+        public boolean isDataConnected(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            return controller != null ? controller.getState().dataConnected : false;
+        }
+
+        @Override
+        public boolean isRoaming(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            final boolean isRoaming = controller != null ? controller.isRoaming() : false;
+            return isRoaming;
+        }
+
+        @Override
+        public int getSignalStrengthLevel(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            final int level = controller != null ? controller.mCurrentState.level
+                    : SignalStrength.SIGNAL_STRENGTH_NONE_OR_UNKNOWN;
+            return level;
+        }
+
+        @Override
+        public NetworkType getNetworkType(int subId) {
+            final int dataNetType = getDataNetworkType(subId);
+            return NetworkType.get(dataNetType);
+        }
+
+        @Override
+        public DataType getDataType(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            final int dataNetType = controller != null ? controller.mDataNetType
+                    : TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            return DataType.get(dataNetType);
+        }
+
+        @Override
+        public int getDataActivity(int subId) {
+            int activity = TelephonyManager.DATA_ACTIVITY_NONE;
+            final MobileSignalController controller = getMobileSignalController(subId);
+            if (controller != null && controller.mCurrentState.dataConnected) {
+                if (controller.mCurrentState.activityIn
+                        && controller.mCurrentState.activityOut) {
+                    activity = TelephonyManager.DATA_ACTIVITY_INOUT;
+                } else if (controller.mCurrentState.activityIn) {
+                    activity = TelephonyManager.DATA_ACTIVITY_OUT;
+                } else if (controller.mCurrentState.activityOut) {
+                    activity = TelephonyManager.DATA_ACTIVITY_OUT;
+                }
+            }
+            return activity;
+        }
+
+        @Override
+        public boolean isLteTddSingleDataMode(int subId) {
+            return false;
+        }
+
+        @Override
+        public SvLteController getSvLteController(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            return controller != null ? controller.mSvLteController : null;
+        }
+
+        @Override
+        public boolean isEmergencyOnly(int subId) {
+            final MobileSignalController controller = getMobileSignalController(subId);
+            boolean isOnlyEmergency = controller != null ? controller.isEmergencyOnly() : false;
+            return isOnlyEmergency;
+        }
+
+        @Override
+        public boolean isOffline(int subId) {
+            boolean isOffline = false;
+            final MobileSignalController controller = getMobileSignalController(subId);
+            if (controller != null) {
+                if (SvLteController.isMediatekSVLteDcSupport(controller.mSubscriptionInfo)) {
+                    isOffline = controller.mSvLteController.isOffline(getNetworkType(subId));
+                } else {
+                    isOffline = controller.isEmergencyOnly();
+                }
+            }
+            return isOffline;
+        }
+
+        @Override
+        public boolean isRoamingGGMode() {
+            boolean isRoamingGGMode = false;
+            if (isBehaviorSet(BehaviorSet.OP09_BS)) {
+                final SubscriptionInfo info = SIMHelper.getSubInfoBySlot(mContext,
+                        PhoneConstants.SIM_ID_1);
+                if (info != null) {
+                    final MobileSignalController controller = getMobileSignalController(info
+                            .getSubscriptionId());
+                    isRoamingGGMode = controller != null ? !controller.isCdma() : false;
+                }
+            }
+            if (mDebug) {
+                Log.d(TAG, "isRoamingGGMode, slotId = " + PhoneConstants.SIM_ID_1
+                        + ", isRoamingGGMode = " + isRoamingGGMode);
+            }
+            return isRoamingGGMode;
+        }
+
+        private final int getDataNetworkType(int subId) {
+            // Big - Data
+            int dataNetType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            final MobileSignalController controller = getMobileSignalController(subId);
+            if (controller != null) {
+                if (mDebug) {
+                    Log.d(TAG, "getDataNetworkType()"
+                            + ", DataState = " + controller.mDataState
+                            + ", ServiceState = " + controller.mServiceState);
+                }
+
+                int networkTypeData = controller.mDataNetType;
+                final ServiceState serviceState = controller.mServiceState;
+                if (serviceState != null) {
+                    if (mDebug) {
+                        Log.d(TAG, "getDataNetworkType: DataNetType = "
+                                + controller.mDataNetType + " / "
+                                + serviceState.getDataNetworkType());
+                    }
+
+                    if (controller.mDataState == TelephonyManager.DATA_UNKNOWN
+                            || controller.mDataState == TelephonyManager.DATA_DISCONNECTED) {
+                        networkTypeData = serviceState.getDataNetworkType();
+                    }
+
+                    final int cs = serviceState.getVoiceNetworkType();
+                    final int ps = networkTypeData;
+                    if (mDebug) {
+                        Log.d(TAG, "getNWTypeByPriority(), CS = " + cs + ", PS = " + ps);
+                    }
+                    dataNetType = getNWTypeByPriority(cs, ps);
+                } else {
+                    dataNetType = networkTypeData;
+                }
+
+                // Support SVLTE.
+                if (SvLteController.isMediatekSVLteDcSupport(controller.mSubscriptionInfo)) {
+                    dataNetType = controller.mSvLteController
+                            .getDataNetTypeWithLTEService(dataNetType);
+                }
+
+                Log.d(TAG, "getDataNetworkType: DataNetType="
+                        + controller.mDataNetType + " / " + dataNetType);
+            }
+
+            return dataNetType;
+        }
+
+        private final int getNWTypeByPriority(int cs, int ps) {
+            if (TelephonyManager.getNetworkClass(cs) > TelephonyManager.getNetworkClass(ps)) {
+                return cs;
+            } else {
+                return ps;
+            }
+        }
+
+        private final boolean isBehaviorSet(BehaviorSet behaviorSet) {
+            return PluginFactory.getStatusBarPlugin(mContext).customizeBehaviorSet() == behaviorSet;
+        }
+    }
+
+    /// M: Support "Operator plugin - Data activity/type, strength icon". @}
 }

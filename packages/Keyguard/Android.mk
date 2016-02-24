@@ -1,3 +1,8 @@
+#
+# Copyright (C) 2014 MediaTek Inc.
+# Modification based on code covered by the mentioned copyright
+# and/or permission notice(s).
+#
 # Copyright (C) 2013 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +27,8 @@ LOCAL_MODULE := Keyguard
 
 LOCAL_CERTIFICATE := platform
 
+LOCAL_STATIC_JAVA_LIBRARIES := com.mediatek.keyguard.ext
+
 LOCAL_PRIVILEGED_MODULE := true
 
 LOCAL_PROGUARD_FLAG_FILES := proguard.flags
@@ -30,4 +37,4 @@ LOCAL_RESOURCE_DIR := $(LOCAL_PATH)/res
 
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
-#include $(call all-makefiles-under,$(LOCAL_PATH))
+include $(call all-makefiles-under,$(LOCAL_PATH))

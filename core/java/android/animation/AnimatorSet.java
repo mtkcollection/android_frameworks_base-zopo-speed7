@@ -896,6 +896,10 @@ public final class AnimatorSet extends Animator {
                 int numRoots = roots.size();
                 for (int i = 0; i < numRoots; ++i) {
                     Node root = roots.get(i);
+                    // M : nodes are 'done' by default; they become un-done when
+                    // started, and done again when ended
+                    root.done = false;
+
                     mSortedNodes.add(root);
                     if (root.nodeDependents != null) {
                         int numDependents = root.nodeDependents.size();

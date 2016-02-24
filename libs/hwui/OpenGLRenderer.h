@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -195,6 +200,9 @@ public:
             DrawOpMode drawOpMode = kDrawOpMode_Immediate);
     virtual status_t drawRects(const float* rects, int count, const SkPaint* paint);
 
+    /// M: performance enhancement, draw multi mergable color rects
+    status_t drawRects(Vertex* vertices, int count, const SkPaint* paint);
+
     status_t drawShadow(float casterAlpha,
             const VertexBuffer* ambientShadowVertexBuffer, const VertexBuffer* spotShadowVertexBuffer);
 
@@ -331,7 +339,11 @@ public:
         bool stencilWasEnabled = mCaches.stencil.isTestEnabled();
         mCaches.stencil.disable();
 
-        drawColorRect(left, top, right, bottom, color, SkXfermode::kSrcOver_Mode, true);
+        /// M: drawColorRect changed interface
+        SkPaint paint;
+        paint.setColor(color);
+        paint.setXfermodeMode(SkXfermode::kSrcOver_Mode);
+        drawColorRect(left, top, right, bottom, &paint, true);
 
         if (stencilWasEnabled) mCaches.stencil.enableTest();
     }
@@ -346,6 +358,11 @@ public:
         SkPath* path = new SkPath();
         mTempPaths.push_back(path);
         return path;
+    }
+
+    /// M: log and dump enhancements
+    int getFrameCount() {
+        return mFrameCount;
     }
 
 protected:
@@ -1019,6 +1036,9 @@ private:
     float mLightRadius;
     uint8_t mAmbientShadowAlpha;
     uint8_t mSpotShadowAlpha;
+    
+    /// M: frame count to sync displayList and dump image
+    int mFrameCount;
 
     // Paths kept alive for the duration of the frame
     std::vector<SkPath*> mTempPaths;
@@ -1027,6 +1047,9 @@ private:
     friend class TextSetupFunctor;
     friend class DrawBitmapOp;
     friend class DrawPatchOp;
+
+    /// M: let DrawRectOp be able to call dirtyLayer
+    friend class DrawRectOp;
 
 }; // class OpenGLRenderer
 

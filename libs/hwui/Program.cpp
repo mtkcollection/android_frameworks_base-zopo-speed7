@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +20,6 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
-#define ATRACE_TAG ATRACE_TAG_VIEW
 
 #include <utils/Trace.h>
 
@@ -30,6 +34,8 @@ namespace uirenderer {
 ///////////////////////////////////////////////////////////////////////////////
 
 Program::Program(const ProgramDescription& description, const char* vertex, const char* fragment) {
+    ATRACE_NAME_L2("Program by building");
+    description.log("Program by building");
     mInitialized = false;
     mHasColorUniform = false;
     mHasSampler = false;
@@ -82,16 +88,66 @@ Program::Program(const ProgramDescription& description, const char* vertex, cons
     }
 }
 
+Program::Program(const ProgramDescription& description, void* binary, GLint length, GLenum format) {
+    /// M: [ProgramBinaryAtlas] Creates a new program with the specified binary
+    ATRACE_NAME_L2("Program by binary");
+    description.log("Program by binary");
+    uint64_t start = systemTime(SYSTEM_TIME_MONOTONIC);
+    programid key = description.key();
+
+    mInitialized = false;
+    mHasColorUniform = false;
+    mHasSampler = false;
+    mUse = false;
+    mVertexShader = 0;
+    mFragmentShader = 0;
+
+    //
+    //  Load the binary into the program object -- no need to link!
+    //
+    mProgramId = glCreateProgram();
+    ATRACE_BEGIN_L1("glProgramBinaryOES");
+    glProgramBinaryOES(mProgramId, format, binary, length);
+    ATRACE_END_L1();
+
+    GLint success;
+    glGetProgramiv(mProgramId, GL_LINK_STATUS, &success);
+    if (success) {
+
+        uint64_t end = systemTime(SYSTEM_TIME_MONOTONIC);
+        PROGRAM_LOGD("createProgram 0x%.8x%.8x, binary %p, length %d, format %d within %dns", uint32_t(key >> 32),
+            uint32_t(key & 0xffffffff), binary, length, format, (int) ((end - start) / 1000));
+
+        mInitialized = true;
+        position = addAttrib("position");
+        if (description.hasTexture || description.hasExternalTexture) {
+            texCoords = addAttrib("texCoords");
+        } else {
+            texCoords = -1;
+        }
+
+        transform = addUniform("transform");
+        projection = addUniform("projection");
+    } else {
+        PROGRAM_LOGD("createProgram 0x%.8x%.8x by binary but failed", uint32_t(key >> 32), uint32_t(key & 0xffffffff));
+
+        glDeleteProgram(mProgramId);
+        mProgramId = 0;
+    }
+}
+
 Program::~Program() {
     if (mInitialized) {
-        // This would ideally happen after linking the program
-        // but Tegra drivers, especially when perfhud is enabled,
-        // sometimes crash if we do so
-        glDetachShader(mProgramId, mVertexShader);
-        glDetachShader(mProgramId, mFragmentShader);
+        if (mVertexShader != 0 && mFragmentShader != 0) {
+            // This would ideally happen after linking the program
+            // but Tegra drivers, especially when perfhud is enabled,
+            // sometimes crash if we do so
+            glDetachShader(mProgramId, mVertexShader);
+            glDetachShader(mProgramId, mFragmentShader);
 
-        glDeleteShader(mVertexShader);
-        glDeleteShader(mFragmentShader);
+            glDeleteShader(mVertexShader);
+            glDeleteShader(mFragmentShader);
+        }
 
         glDeleteProgram(mProgramId);
     }
@@ -136,7 +192,9 @@ GLuint Program::buildShader(const char* source, GLenum type) {
 
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, 0);
+    ATRACE_BEGIN_L2("glCompileShader");
     glCompileShader(shader);
+    ATRACE_END_L2();
 
     GLint status;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);

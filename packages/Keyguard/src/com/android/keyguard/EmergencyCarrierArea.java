@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,7 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import com.mediatek.keyguard.Telephony.MediatekCarrierText ;
 
 public class EmergencyCarrierArea extends AlphaOptimizedLinearLayout {
 
@@ -38,7 +44,7 @@ public class EmergencyCarrierArea extends AlphaOptimizedLinearLayout {
     protected void onFinishInflate() {
         super.onFinishInflate();
         mCarrierText = (CarrierText) findViewById(R.id.carrier_text);
-        mEmergencyButton = (EmergencyButton) findViewById(R.id.emergency_call_button);
+        mEmergencyButton = (EmergencyButton) findViewById(R.id.bouncer_emergency_call_button);
 
         // The emergency button overlaps the carrier text, only noticeable when highlighted.
         // So temporarily hide the carrier text while the emergency button is pressed.
@@ -60,5 +66,14 @@ public class EmergencyCarrierArea extends AlphaOptimizedLinearLayout {
 
     public void setCarrierTextVisible(boolean visible) {
         mCarrierText.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * M: Set the carrier text gravity.
+     *
+     * @param gravity the customized gravity value.
+     */
+    public void setCarrierTextGravity(int gravity) {
+        mCarrierText.setGravity(gravity);
     }
 }

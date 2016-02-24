@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -807,4 +812,17 @@ public class TextureView extends View {
 
     private static native boolean nLockCanvas(long nativeWindow, Canvas canvas, Rect dirty);
     private static native void nUnlockCanvasAndPost(long nativeWindow, Canvas canvas);
+
+    /**
+     * M: hacher for used within {@link android.view#AbsListView} on low memory.
+     * device
+     * @hide
+     */
+    protected void destroySurfaceSafely() {
+        post(new Runnable() {
+            public void run() {
+                destroySurface();
+            }
+        });
+    }
 }

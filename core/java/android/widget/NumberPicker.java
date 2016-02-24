@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,7 @@ import android.annotation.IntDef;
 import android.annotation.Widget;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -478,6 +484,11 @@ public class NumberPicker extends LinearLayout {
     private int mLastHandledDownDpadKeyCode = -1;
 
     /**
+     * M: The current orientation.
+     */
+    private int mCurrentOrientation;
+
+    /**
      * If true then the selector wheel is hidden until the picker has focus.
      */
     private boolean mHideWheelUntilFocused;
@@ -753,6 +764,9 @@ public class NumberPicker extends LinearLayout {
         if (getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
         }
+
+        /// M: save current orientation
+        mCurrentOrientation = context.getResources().getConfiguration().orientation;
     }
 
     @Override
@@ -775,7 +789,11 @@ public class NumberPicker extends LinearLayout {
 
         if (changed) {
             // need to do all this when we know our size
-            initializeSelectorWheel();
+            /// M: As the numberpicker flings and layout changes occur at the same time,
+            /// we should skip initializeSelectorWheel() operation to avoid abnormal display. @{
+            if (mFlingScroller.isFinished() && mAdjustScroller.isFinished()) {
+                initializeSelectorWheel();
+            } /// @}
             initializeFadingEdges();
             mTopSelectionDividerTop = (getHeight() - mSelectionDividersDistance) / 2
                     - mSelectionDividerHeight;
@@ -812,6 +830,18 @@ public class NumberPicker extends LinearLayout {
      */
     private boolean moveToFinalScrollerPosition(Scroller scroller) {
         scroller.forceFinished(true);
+        /// M: In some operatings, the scroller's currentY won't be updated. In order to
+        /// solve this issue, we need to update it by calling scroller.abortAnimation(). @{
+        final int scrollerFinalY = scroller.getFinalY();
+        final int scrollerCurrY = scroller.getCurrY();
+        final int scrollerStartY = scroller.getStartY();
+        final boolean increment = scrollerFinalY < scrollerStartY;
+        if ((increment && (scrollerCurrY > scrollerStartY || scrollerCurrY < scrollerFinalY))
+                || (!increment &&
+                    (scrollerCurrY > scrollerFinalY || scrollerCurrY < scrollerStartY))) {
+            scroller.abortAnimation();
+        }
+        /// @}
         int amountToScroll = scroller.getFinalY() - scroller.getCurrY();
         int futureScrollOffset = (mCurrentScrollOffset + amountToScroll) % mSelectorElementHeight;
         int overshootAdjustment = mInitialScrollOffset - futureScrollOffset;
@@ -941,6 +971,10 @@ public class NumberPicker extends LinearLayout {
                                 changeValueByOne(false);
                                 mPressedStateHelper.buttonTapped(
                                         PressedStateHelper.BUTTON_DECREMENT);
+                            } else {
+                                /// M: Adjust wheel's position or the text will display abnormally
+                                /// when tap on middle part of numberpicker after fling.
+                                ensureScrollWheelAdjusted();
                             }
                         }
                     } else {
@@ -2035,6 +2069,19 @@ public class NumberPicker extends LinearLayout {
                 CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
             if (mDisplayedValues == null) {
                 CharSequence filtered = super.filter(source, start, end, dest, dstart, dend);
+                /// M: don't filter out digit numbers
+                if (filtered != null) {
+                    int i;
+                    for (i = start; i < end; i++) {
+                        if (!Character.isDigit(source.charAt(i))) {
+                            break;
+                        }
+                    }
+                    if (i == end) {
+                        /// the characters in source are all digit.
+                        filtered = null;
+                    }
+                }
                 if (filtered == null) {
                     filtered = source.subSequence(start, end);
                 }
@@ -2062,6 +2109,13 @@ public class NumberPicker extends LinearLayout {
             } else {
                 CharSequence filtered = String.valueOf(source.subSequence(start, end));
                 if (TextUtils.isEmpty(filtered)) {
+                    /// M: Change language will cause onRestoreInstanceState bring previous state
+                    /// into mInputText, it leads the string comparsion between source and
+                    /// mDisplayedValues being difference. It should remove selection command
+                    /// if the string is empty after the comparsion.
+                    if (mSetSelectionCommand != null) {
+                        removeCallbacks(mSetSelectionCommand);
+                    }
                     return "";
                 }
                 String result = String.valueOf(dest.subSequence(0, dstart)) + filtered
@@ -2073,6 +2127,13 @@ public class NumberPicker extends LinearLayout {
                         postSetSelectionCommand(result.length(), val.length());
                         return val.subSequence(dstart, val.length());
                     }
+                }
+                /// M: Change language will cause onRestoreInstanceState bring previous state
+                /// into mInputText, it leads the string comparsion between source and
+                /// mDisplayedValues being difference. It should remove selection command
+                /// if the string is empty after the comparsion.
+                if (mSetSelectionCommand != null) {
+                    removeCallbacks(mSetSelectionCommand);
                 }
                 return "";
             }
@@ -2233,6 +2294,21 @@ public class NumberPicker extends LinearLayout {
         @Override
         public void run() {
             performLongClick();
+        }
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        /// M: it needs to finish scroller when orientation changed
+        if (newConfig.orientation != mCurrentOrientation) {
+            if (!mFlingScroller.isFinished()) {
+                moveToFinalScrollerPosition(mFlingScroller);
+            }
+            if (!mAdjustScroller.isFinished()) {
+                moveToFinalScrollerPosition(mAdjustScroller);
+            }
+            mCurrentOrientation = newConfig.orientation;
         }
     }
 

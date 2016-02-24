@@ -734,6 +734,19 @@ public final class Display {
     }
 
     /**
+     * Get real state of display no matter whether SmartBook plug in/out.
+     *
+     * @return The real state of the display: one of {@link #STATE_OFF}, {@link #STATE_ON},
+     * {@link #STATE_DOZE}, {@link #STATE_DOZE_SUSPEND}, or {@link #STATE_UNKNOWN}.
+     * @hide
+     */
+    public int getRealState() {
+        synchronized (this) {
+            return mGlobal.getRealState(mDisplayId);
+        }
+    }
+
+    /**
      * Returns true if the specified UID has access to this display.
      * @hide
      */

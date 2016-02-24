@@ -31,6 +31,11 @@ import android.net.DhcpInfo;
 
 import android.os.Messenger;
 import android.os.WorkSource;
+//M:@{
+import android.net.wifi.HotspotClient;
+import android.net.wifi.PPPOEInfo;
+import android.net.wifi.WpsInfo;
+//@}
 
 /**
  * Interface that allows controlling and querying Wi-Fi connectivity.
@@ -156,5 +161,174 @@ interface IWifiManager
     WifiConnectionStatistics getConnectionStatistics();
 
     void disableEphemeralNetwork(String SSID);
+
+    // M: Added functions
+    /**
+     * @hide
+     */ 
+    String[] getAccessPointPreferredChannels();
+    /**
+     * @hide
+     */ 
+    boolean doCtiaTestOn();
+    /**
+     * @hide
+     */ 
+    boolean doCtiaTestOff();
+    /**
+     * @hide
+     */ 
+    boolean doCtiaTestRate(int rate);
+    /**
+     * @hide
+     */ 
+    boolean setTxPowerEnabled(boolean enable);
+    /**
+     * @hide
+     */ 
+    boolean setTxPower(int offset);
+
+    /**
+     * @hide
+     */ 
+    void startApWps(in WpsInfo config);
+    /**
+     * @hide
+     */ 
+    List<HotspotClient> getHotspotClients();
+    /**
+     * @hide
+     */ 
+    String getClientIp(String deviceAddress);
+    /**
+     * @hide
+     */ 
+    boolean blockClient(in HotspotClient client);
+    /**
+     * @hide
+     */ 
+    boolean unblockClient(in HotspotClient client);
+    /**
+     * @hide
+     */ 
+    boolean setApProbeRequestEnabled(boolean enable);
+    /**
+     * @hide
+     */ 
+    boolean setWifiEnabledForIPO(boolean enable);
+    /**
+     * @hide
+     */ 
+    void suspendNotification(int type);
+    /**
+     * @hide
+     */ 
+    boolean hasConnectableAp();
+    /**
+     * @hide
+     */ 
+    int syncGetConnectingNetworkId();
+    /**
+     * @hide
+     */ 
+    double getPoorLinkThreshold(boolean isGood);
+    /**
+     * @hide
+     */ 
+    boolean setPoorLinkThreshold(String key, double value);
+    /**
+     * @hide
+     */ 
+    void setPoorLinkProfilingOn(boolean enable);
+    /**
+     * @hide
+     */ 
+    String getWifiStatus();
+    /**
+     * @hide
+     */ 
+    void setPowerSavingMode(boolean mode);
+    /**
+     * @hide
+     */ 
+    PPPOEInfo getPPPOEInfo();
+    /**
+     *@hide
+    */
+    boolean setWoWlanNormalMode(); 
+    /**
+     *@hide
+    */
+    boolean setWoWlanMagicMode();
+    /**
+     *@hide
+    */
+    boolean is5gBandSupported();
+   /**
+   *@hide
+   */
+   boolean setHotspotOptimization(boolean enable);
+   /**
+   *@hide
+   */
+   boolean setAutoJoinScanWhenConnected(boolean enable);
+    /**
+     * @hide
+     */
+    String getTestEnv(int channel);
+
+    ///M: For Passpoint start
+    /**
+     * @hide
+     */
+    int addHsCredential(String type, String username, String passwd, String imsi,
+            String root_ca, String realm, String fqdn, String client_ca, String milenage,
+            String simslot, String priority, String roamingconsortium, String mcc_mnc);
+
+    /**
+     * @hide
+     */
+    boolean setHsCredential(int index, String name, String value);
+    
+    /**
+     * @hide
+     */
+    String getHsCredential();
+    
+    /**
+     * @hide
+     */
+    boolean delHsCredential(int index);
+
+    /**
+     * @hide
+     */
+    String getHsStatus();
+    
+    /**
+     * @hide
+     */
+    String getHsNetwork();
+    
+    /**
+     * @hide
+     */
+    boolean setHsNetwork(int index, String name, String value);
+    
+    /**
+     * @hide
+     */
+    boolean delHsNetwork(int index);
+    
+    /**
+     * @hide
+     */
+    boolean enableHS(boolean enabled);
+    
+    /**
+     * @hide
+     */
+    boolean setHsPreferredNetwork(int index, int value);
+    ///for passpoint end
 }
 

@@ -401,6 +401,7 @@ final class ProcessRecord {
         curAdj = setAdj = -100;
         persistent = false;
         removed = false;
+        inMaxOrRestore = false;
         lastStateTime = lastPssTime = nextPssTime = SystemClock.uptimeMillis();
     }
 
@@ -640,6 +641,13 @@ final class ProcessRecord {
     }
 
     public void forceProcessStateUpTo(int newState) {
+        /// M: ALPS01934120 Debug for uninitialized state. @{
+        if (curProcState == -1) {
+            Slog.w(ActivityManagerService.TAG,
+                    "Skip forceProcessStateUpTo() to newState " + newState);
+        }
+        /// @}
+
         if (repProcState > newState) {
             curProcState = repProcState = newState;
         }
@@ -690,4 +698,5 @@ final class ProcessRecord {
         }
         return list;
     }
+    boolean inMaxOrRestore;      /// M: BMW, whether this process AP is in max/restore status    
 }

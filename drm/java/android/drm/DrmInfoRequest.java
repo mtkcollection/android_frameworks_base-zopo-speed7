@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +48,11 @@ public class DrmInfoRequest {
      * Acquires the progress of the rights acquisition.
      */
     public static final int TYPE_RIGHTS_ACQUISITION_PROGRESS_INFO = 4;
+
+    /// M: Add the following info types for OMA DRM v1.0 implementation.@{
+    private static final int TYPE_SET_OMA_DRM_INFO = 2021;
+    private static final int TYPE_GET_OMA_DRM_INFO = 2022;
+    /// @}
 
     /**
      * Key that is used to pass the unique session ID for the account or the user.
@@ -154,6 +164,23 @@ public class DrmInfoRequest {
         case TYPE_UNREGISTRATION_INFO:
         case TYPE_RIGHTS_ACQUISITION_INFO:
         case TYPE_RIGHTS_ACQUISITION_PROGRESS_INFO:
+        /// M: Add the following info types for OMA DRM v1.0 implementation.@{
+        // see DrmStore.DrmInfoType
+        case TYPE_SET_OMA_DRM_INFO:
+        case TYPE_GET_OMA_DRM_INFO:
+        /// @}
+        // M: @{ ALPS00809601 sercure time issue patch back (ALPS00420454)
+        case DrmStore.DrmInfoType.TYPE_DRM_UPDATE_CLOCK:
+        case DrmStore.DrmInfoType.TYPE_DRM_UPDATE_TIME_BASE:
+        case DrmStore.DrmInfoType.TYPE_DRM_UPDATE_OFFSET:
+        case DrmStore.DrmInfoType.TYPE_DRM_LOAD_CLOCK:
+        case DrmStore.DrmInfoType.TYPE_DRM_SAVE_CLOCK:
+        case DrmStore.DrmInfoType.TYPE_DRM_CHECK_CLOCK:
+        case DrmStore.DrmInfoType.TYPE_DRM_LOAD_DEVICE_ID:
+        case DrmStore.DrmInfoType.TYPE_DRM_SAVE_DEVICE_ID:
+        case DrmStore.DrmInfoType.TYPE_DRM_LOAD_SECURE_TIME:
+        case DrmStore.DrmInfoType.TYPE_DRM_INSTALL_DRM_MSG:
+        // M: @}
             isValid = true;
             break;
         }

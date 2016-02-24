@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,13 +130,16 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
+import static android.telephony.TelephonyManager.SIM_STATE_READY;
+import android.telephony.SubscriptionManager;
+
 /**
  * Collect and persist detailed network statistics, and provide this data to
  * other system services.
  */
 public class NetworkStatsService extends INetworkStatsService.Stub {
     private static final String TAG = "NetworkStats";
-    private static final boolean LOGV = false;
+    private static final boolean LOGV = true;
 
     private static final int MSG_PERFORM_POLL = 1;
     private static final int MSG_UPDATE_IFACES = 2;
@@ -171,6 +179,14 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     private static final String PREFIX_XT = "xt";
     private static final String PREFIX_UID = "uid";
     private static final String PREFIX_UID_TAG = "uid_tag";
+
+    /**
+      *M: ALPS00118758 we prefer not use it. due to some mobile Internet
+      *can't access the ntp server and always timeout.
+      *The timeout impact device's performance.
+    */
+   public static boolean USE_TRUESTED_TIME = false;
+
 
     /**
      * Settings that can be changed externally.
@@ -238,6 +254,9 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     private long mPersistThreshold = 2 * MB_IN_BYTES;
     private long mGlobalAlertBytes;
 
+    //M:  lower max throughput power consumption under 4g
+    private boolean mIgnoreAlert = false;
+
     public NetworkStatsService(
             Context context, INetworkManagementService networkManager, IAlarmManager alarmManager) {
         this(context, networkManager, alarmManager, NtpTrustedTime.getInstance(context),
@@ -269,6 +288,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mSystemDir = checkNotNull(systemDir);
         mBaseDir = new File(systemDir, "netstats");
         mBaseDir.mkdirs();
+        //M:  lower max throughput power consumption under 4g
+        mIgnoreAlert = false;
     }
 
     public void bindConnectivityManager(IConnectivityManager connManager) {
@@ -321,7 +342,14 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
         // persist stats during clean shutdown
         final IntentFilter shutdownFilter = new IntentFilter(ACTION_SHUTDOWN);
+        /// M: add action
+        shutdownFilter.addAction("android.intent.action.ACTION_SHUTDOWN_IPO");
         mContext.registerReceiver(mShutdownReceiver, shutdownFilter);
+
+        //M:  lower max throughput power consumption under 4g
+        final IntentFilter ignoreAlertFilter = new IntentFilter("android.intent.action.IGNORE_DATA_USAGE_ALERT");
+        ignoreAlertFilter.addAction("android.intent.action.IGNORE_DATA_USAGE_ALERT");
+        mContext.registerReceiver(mIgnoreAlertReceiver, ignoreAlertFilter);
 
         try {
             mNetworkManager.registerObserver(mAlertObserver);
@@ -343,13 +371,21 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     }
 
     private void shutdownLocked() {
+
+        /// M: comment:  Don't unregister due to ACTION_SHUTDOWN_IPO
+        ///systemReady will not be call when IPO power up. @{
+        /*
         mContext.unregisterReceiver(mTetherReceiver);
         mContext.unregisterReceiver(mPollReceiver);
         mContext.unregisterReceiver(mRemovedReceiver);
         mContext.unregisterReceiver(mShutdownReceiver);
+        //M:  lower max throughput power consumption under 4g
+        mContext.unregisterReceiver(mIgnoreAlertReceiver);
 
-        final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
-                : System.currentTimeMillis();
+       */
+        /// @}
+        ///M: add USE_TRUESTED_TIME
+        final long currentTime = (mTime.hasCache() && USE_TRUESTED_TIME)  ? mTime.currentTimeMillis() : System.currentTimeMillis();
 
         // persist any pending stats
         mDevRecorder.forcePersistLocked(currentTime);
@@ -357,6 +393,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mUidRecorder.forcePersistLocked(currentTime);
         mUidTagRecorder.forcePersistLocked(currentTime);
 
+
+        /// M: comment:  Don't unregister due to ACTION_SHUTDOWN_IPO
+        ///systemReady will not be call when IPO power up.  @{
+        /*
         mDevRecorder = null;
         mXtRecorder = null;
         mUidRecorder = null;
@@ -365,6 +405,9 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mXtStatsCached = null;
 
         mSystemReady = false;
+        */
+        /// @}
+
     }
 
     private void maybeUpgradeLegacyStatsLocked() {
@@ -388,7 +431,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 file.delete();
             }
         } catch (IOException e) {
-            Log.wtf(TAG, "problem during legacy upgrade", e);
+            ///M: modefied remove wtf
+            Log.e(TAG, "problem during legacy upgrade", e);
         } catch (OutOfMemoryError e) {
             Log.wtf(TAG, "problem during legacy upgrade", e);
         }
@@ -494,7 +538,54 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 mUidComplete = null;
                 mUidTagComplete = null;
             }
+
+            @Override
+            //M: for MOM
+            public long getMobileTotalBytes(
+                int subSim, long start_time, long end_time) {
+                String subscriberId = null;
+                long totalBytes = 0;
+                NetworkTemplate templete;
+                final TelephonyManager tele = TelephonyManager.from(mContext);
+                if (tele != null) {
+                    try {
+                        if (tele.getSimState(subSim) == SIM_STATE_READY) {
+                            int subId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+                            int[] subIds = SubscriptionManager.getSubId(subSim);
+                            if ((subIds != null) && (subIds.length != 0)) {
+                                subId = subIds[0];
+                            }
+
+                            if (!SubscriptionManager.isValidSubscriptionId(subId)){
+                                //Dual sim fetch fail, always fetch sim1
+                                Log.e(TAG, "Dual sim subSim:" + subSim + " fetch subID fail, always fetch default");
+                                subId = SubscriptionManager.getDefaultDataSubId();
+                            }
+
+                            if (SubscriptionManager.isValidSubscriptionId(subId)) {
+                                subscriberId = tele.getSubscriberId(subId);
+                                templete = NetworkTemplate.buildTemplateMobileAll(subscriberId);
+                                totalBytes = getNetworkTotalBytes(templete, start_time, end_time);
+                            } else {
+                                Log.e(TAG, "getMobileTotalBytes subId not valid");
+                            }
+                        } else {
+                            Log.e(TAG, "getMobileTotalBytes SimState != SIM_STATE_READY");
+                        }
+                    } catch (Exception e) {
+                         Log.e(TAG, "getMobileTotalBytes Exception" + e);
+                    }
+                } else {
+                    Log.e(TAG, "getMobileTotalBytes TelephonyManager is null");
+                }
+                Log.v(TAG, "getMobileTotalBytes subSim=" + subSim + " subscriberId" + subscriberId + " start_time=" + start_time + " end_time" + end_time + " totalBytes=" + totalBytes);
+                return totalBytes;
+            }
         };
+    }
+
+    public static boolean isValidSubscriptionId(long subId) {
+        return subId > SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     }
 
     /**
@@ -594,6 +685,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             final int oldSet = mActiveUidCounterSet.get(uid, SET_DEFAULT);
             if (oldSet != set) {
                 mActiveUidCounterSet.put(uid, set);
+                Slog.v(TAG, "setKernelCounterSet uid=" + uid + " set=" + set);
                 setKernelCounterSet(uid, set);
             }
         }
@@ -638,7 +730,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
 
         // update and persist if beyond new thresholds
-        final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
+       ///M: add USE_TRUESTED_TIME
+        final long currentTime = (mTime.hasCache() && USE_TRUESTED_TIME)? mTime.currentTimeMillis()
                 : System.currentTimeMillis();
         synchronized (mStatsLock) {
             if (!mSystemReady) return;
@@ -732,6 +825,15 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
     };
 
+    //M:  lower max throughput power consumption under 4g
+    private BroadcastReceiver mIgnoreAlertReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.e(TAG, "[powerdebug]ignoreAlertFilter received");
+            mIgnoreAlert = true;
+        }
+    };
+
     private BroadcastReceiver mShutdownReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -751,7 +853,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             // only someone like NMS should be calling us
             mContext.enforceCallingOrSelfPermission(CONNECTIVITY_INTERNAL, TAG);
 
-            if (LIMIT_GLOBAL_ALERT.equals(limitName)) {
+            //M:  lower max throughput power consumption under 4g
+            //if (LIMIT_GLOBAL_ALERT.equals(limitName)) {
+            if (mIgnoreAlert) Log.d(TAG, "[powerdebug]IGNORE_DATA_USAGE_ALERT received, mIgnoreAlert=" + mIgnoreAlert);
+            if (LIMIT_GLOBAL_ALERT.equals(limitName) && !mIgnoreAlert) {
                 // kick off background poll to collect network stats; UID stats
                 // are handled during normal polling interval.
                 final int flags = FLAG_PERSIST_NETWORK;
@@ -813,7 +918,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             if (state.networkInfo.isConnected()) {
                 final boolean isMobile = isNetworkTypeMobile(state.networkInfo.getType());
                 final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, state);
-
+                Slog.i(TAG, "NetworkIdentity: " + ident);
                 // Traffic occurring on the base interface is always counted for
                 // both total usage and UID details.
                 final String baseIface = state.linkProperties.getInterfaceName();
@@ -842,7 +947,20 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             }
         }
 
-        mMobileIfaces = mobileIfaces.toArray(new String[mobileIfaces.size()]);
+        for (int i = 0; i < mActiveIfaces.size(); i++) {
+            Slog.i(TAG, "iface:" + mActiveIfaces.keyAt(i));
+            for( NetworkIdentity id : mActiveIfaces.valueAt(i)) {
+                Slog.i(TAG, "ident:" + id );
+            }
+        }
+
+        //mMobileIfaces = mobileIfaces.toArray(new String[mobileIfaces.size()]);
+        //Bugfix: Any ifaces associated with mobile networks since boot, event disconnected
+        for( String iface : mobileIfaces) {
+            if ( iface != null && !ArrayUtils.contains(mMobileIfaces, iface)) {
+                    mMobileIfaces = ArrayUtils.appendElement(String.class, mMobileIfaces, iface);
+            }
+        }
     }
 
     private static <K> NetworkIdentitySet findOrCreateNetworkIdentitySet(
@@ -860,7 +978,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
      * so we have baseline values without double-counting.
      */
     private void bootstrapStatsLocked() {
-        final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
+        ///M: add USE_TRUESTED_TIME
+        final long currentTime = (mTime.hasCache() && USE_TRUESTED_TIME) ? mTime.currentTimeMillis()
                 : System.currentTimeMillis();
 
         try {
@@ -884,7 +1003,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
     private void performPoll(int flags) {
         // try refreshing time source when stale
-        if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
+        ///M: USE_TRUESTED_TIME
+        if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge() && USE_TRUESTED_TIME ) {
             mTime.forceRefresh();
         }
 
@@ -914,7 +1034,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         final boolean persistForce = (flags & FLAG_PERSIST_FORCE) != 0;
 
         // TODO: consider marking "untrusted" times in historical stats
-        final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
+         ///M: USE_TRUESTED_TIME
+        final long currentTime = (mTime.hasCache() && USE_TRUESTED_TIME)  ? mTime.currentTimeMillis()
                 : System.currentTimeMillis();
 
         try {
@@ -976,7 +1097,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
      */
     private void performSampleLocked() {
         // TODO: migrate trustedtime fixes to separate binary log events
-        final long trustedTime = mTime.hasCache() ? mTime.currentTimeMillis() : -1;
+        ///M: USE_TRUESTED_TIME
+        final long trustedTime = (mTime.hasCache()&& USE_TRUESTED_TIME)  ? mTime.currentTimeMillis() : -1;
 
         NetworkTemplate template;
         NetworkStats.Entry devTotal;
@@ -1166,7 +1288,12 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         try {
             return mNetworkManager.getNetworkStatsTethering();
         } catch (IllegalStateException e) {
-            Log.wtf(TAG, "problem reading network stats", e);
+    /*M:  [MTK40247] don't throw "What a Terrible Failure"
+     * In the tricked timing, Tethering disable nat and then
+     * NetworkStatsService poll tetnering stats from the iptable cause fail.
+     * Of course, it is an illegal State Exception.
+     */
+            Log.e(TAG, "problem reading network stats" + e);
             return new NetworkStats(0L, 10);
         }
     }
@@ -1306,5 +1433,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         public long getUidTagPersistBytes(long def) {
             return getGlobalLong(NETSTATS_UID_TAG_PERSIST_BYTES, def);
         }
+    }
+
+    ///M: MTK add
+    public void setUseTrustedTime(boolean b){
+        USE_TRUESTED_TIME = b;
     }
 }

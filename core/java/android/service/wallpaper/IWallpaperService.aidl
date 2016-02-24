@@ -27,3 +27,5 @@ oneway interface IWallpaperService {
     		IBinder windowToken, int windowType, boolean isPreview,
     		int reqWidth, int reqHeight, in Rect padding);
 }
+
+// For build @todo MTK

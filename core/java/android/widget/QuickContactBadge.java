@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,7 @@ package android.widget;
 
 import com.android.internal.R;
 
+import android.content.ActivityNotFoundException;
 import android.content.AsyncQueryHandler;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -40,11 +46,14 @@ import android.view.View.OnClickListener;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import com.mediatek.xlog.Xlog;
+
 /**
  * Widget used to show an image with the standard QuickContact badge
  * and on-click behavior.
  */
 public class QuickContactBadge extends ImageView implements OnClickListener {
+    private static final String TAG = "QuickContactBadge";
     private Uri mContactUri;
     private String mContactEmail;
     private String mContactPhone;
@@ -385,10 +394,17 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
                 // Prompt user to add this person to contacts
                 final Intent intent = new Intent(Intents.SHOW_OR_CREATE_CONTACT, createUri);
                 if (extras != null) {
-                    extras.remove(EXTRA_URI_CONTENT);
-                    intent.putExtras(extras);
+                    /// M: Construct a new bundle and remove the EXTRA_URI_CONTENT. @{
+                    Bundle bundle = new Bundle(extras);
+                    bundle.remove(EXTRA_URI_CONTENT);
+                    intent.putExtras(bundle);
+                    // @}
                 }
-                getContext().startActivity(intent);
+                try {
+                    getContext().startActivity(intent);
+                } catch (ActivityNotFoundException e) {
+                    Xlog.d(TAG, "Activity not exist");
+                }
             }
         }
     }

@@ -239,6 +239,14 @@ public:
     Rect* clipRect;
 
     /**
+     * M: [ALPS01873597] Previous snapshot's clip rect. Because defer/flush mechanism,
+     * it might be wrong if we access previous snapshot's clip rect during flushing.
+     *
+     * This is a copy from the clip rect calculated by defering.
+     */
+    Rect prevClipRect;
+
+    /**
      * Current clip region. The clip is stored in canvas-space coordinates,
      * (screen-space coordinates in the regular case.)
      *

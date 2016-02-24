@@ -72,6 +72,11 @@ public class LinkAddress implements Parcelable {
     private int scope;
 
     /**
+     * M: add for enhance ipv6
+     */
+    private long valid;
+    
+    /**
      * Utility function to determines the scope of a unicast address. Per RFC 4291 section 2.5 and
      * RFC 6724 section 3.2.
      * @hide
@@ -189,6 +194,23 @@ public class LinkAddress implements Parcelable {
     }
 
     /**
+     * M: for ipv6 enhance.
+     * Constructs a new {@code LinkAddress} from a string such as "192.0.2.5/24" or
+     * "2001:db8::1/64", with the specified flags and scope.
+     * @param string The string to parse.
+     * @param flags The address flags.
+     * @param scope The address scope.
+     * @param valid The address valid.
+     * @hide
+     */
+    public LinkAddress(String address, int flags, int scope, long valid) {
+        // This may throw an IllegalArgumentException; catching it is the caller's responsibility.
+        Pair<InetAddress, Integer> ipAndMask = NetworkUtils.parseIpAndMask(address);
+        init(ipAndMask.first, ipAndMask.second, flags, scope);
+        this.valid = valid;
+    }
+
+    /**
      * Returns a string representation of this address, such as "192.0.2.1/24" or "2001:db8::1/64".
      * The string representation does not contain the flags and scope, just the address and prefix
      * length.
@@ -277,6 +299,14 @@ public class LinkAddress implements Parcelable {
      */
     public int getScope() {
         return scope;
+    }
+
+   /**
+     * M:Returns the valid of this {@code LinkAddress}.
+     * @hide
+     */
+    public long getValid() {
+        return valid;
     }
 
     /**

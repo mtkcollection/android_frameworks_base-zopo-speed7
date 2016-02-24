@@ -20,6 +20,7 @@
 
 #include <cutils/compiler.h>
 #include <utils/StrongPointer.h>
+#include <utils/Mutex.h>
 
 #include "TreeInfo.h"
 #include "utils/Macros.h"
@@ -59,6 +60,9 @@ public:
 
     bool hasAnimators() { return mAnimators.size(); }
 
+    /// M: [ALPS01949475] Return size of mNewAnimators.
+    bool hasNewAnimators() { return mNewAnimators.size(); }
+
 private:
     uint32_t animateCommon(TreeInfo& info);
 
@@ -69,6 +73,9 @@ private:
     // use manual ref counting instead of sp<>.
     std::vector<BaseRenderNodeAnimator*> mNewAnimators;
     std::vector<BaseRenderNodeAnimator*> mAnimators;
+
+    /// M: [ALPS01902992] Main thread and Render thread may process mNewAnimators simultaneously. Add lock to protect it.
+    mutable Mutex mLock;
 };
 
 } /* namespace uirenderer */

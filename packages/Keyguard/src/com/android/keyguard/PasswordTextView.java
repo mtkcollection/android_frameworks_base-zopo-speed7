@@ -33,6 +33,7 @@ import android.provider.Settings;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
@@ -239,7 +240,11 @@ public class PasswordTextView extends View {
     }
 
     public void reset(boolean animated) {
+        Log.d("PasswordTextView", "reset() is called, set PwEntry true.") ;
+        setEnabled(true);
+
         String textbefore = mText;
+
         mText = "";
         int length = mTextChars.size();
         int middleIndex = (length - 1) / 2;

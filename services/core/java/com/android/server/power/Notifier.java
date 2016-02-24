@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +74,7 @@ import android.view.WindowManagerPolicy;
 final class Notifier {
     private static final String TAG = "PowerManagerNotifier";
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
 
     private static final int INTERACTIVE_STATE_UNKNOWN = 0;
     private static final int INTERACTIVE_STATE_AWAKE = 1;
@@ -300,6 +305,9 @@ final class Notifier {
                         @Override
                         public void run() {
                             EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 1, 0, 0, 0);
+                            if (DEBUG) {
+                                Slog.d(TAG, "onInteractiveChangeStarted: mPolicy.wakingUp()");
+                            }
                             mPolicy.wakingUp();
                         }
                     });
@@ -330,8 +338,14 @@ final class Notifier {
                                 case PowerManager.GO_TO_SLEEP_REASON_TIMEOUT:
                                     why = WindowManagerPolicy.OFF_BECAUSE_OF_TIMEOUT;
                                     break;
+                                case PowerManager.GO_TO_SLEEP_REASON_PROXIMITY:
+                                    why = WindowManagerPolicy.OFF_BECAUSE_OF_PROX_SENSOR;
+                                    break;
                             }
                             EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 0, why, 0, 0);
+                            if (DEBUG) {
+                                Slog.d(TAG, "mPolicy.goingToSleep: " + why);
+                            }
                             mPolicy.goingToSleep(why);
                         }
                     });
@@ -387,6 +401,12 @@ final class Notifier {
     }
 
     private void updatePendingBroadcastLocked() {
+        if (DEBUG) {
+            Slog.d(TAG, "updatePendingBroadcastLocked mBroadcastInProgress = " + mBroadcastInProgress
+                        + ", mPendingGoToSleepBroadcast = " + mPendingGoToSleepBroadcast + ", mPendingWakeUpBroadcast = " + mPendingWakeUpBroadcast
+                        + ", mActualInteractiveState = " + mActualInteractiveState + ", mBroadcastedInteractiveState = " + mBroadcastedInteractiveState);
+        }
+
         if (!mBroadcastInProgress
                 && mActualInteractiveState != INTERACTIVE_STATE_UNKNOWN
                 && (mPendingWakeUpBroadcast || mPendingGoToSleepBroadcast
@@ -400,6 +420,10 @@ final class Notifier {
     }
 
     private void finishPendingBroadcastLocked() {
+        if (DEBUG) {
+            Slog.d(TAG, "finishPendingBroadcastLocked");
+        }
+
         mBroadcastInProgress = false;
         mSuspendBlocker.release();
     }
@@ -417,6 +441,11 @@ final class Notifier {
 
     private void sendNextBroadcast() {
         final int powerState;
+
+        if (DEBUG) {
+            Slog.d(TAG, "sendNextBroadcast, mBroadcastedInteractiveState = " + mBroadcastedInteractiveState + ", mActualInteractiveState = " + mActualInteractiveState);
+        }
+
         synchronized (mLock) {
             if (mBroadcastedInteractiveState == INTERACTIVE_STATE_UNKNOWN) {
                 // Broadcasted power state is unknown.  Send wake up.
@@ -459,10 +488,13 @@ final class Notifier {
 
     private void sendWakeUpBroadcast() {
         if (DEBUG) {
-            Slog.d(TAG, "Sending wake up broadcast.");
+            Slog.d(TAG, "sendWakeUpBroadcast");
         }
 
         if (ActivityManagerNative.isSystemReady()) {
+            if (DEBUG) {
+                Slog.d(TAG, "sendWakeUpBroadcast - sendOrderedBroadcastAsUser");
+            }
             mContext.sendOrderedBroadcastAsUser(mScreenOnIntent, UserHandle.ALL, null,
                     mWakeUpBroadcastDone, mHandler, 0, null, null);
         } else {
@@ -474,6 +506,9 @@ final class Notifier {
     private final BroadcastReceiver mWakeUpBroadcastDone = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (DEBUG) {
+                Slog.d(TAG, "mWakeUpBroadcastDone - sendNextBroadcast");
+            }
             EventLog.writeEvent(EventLogTags.POWER_SCREEN_BROADCAST_DONE, 1,
                     SystemClock.uptimeMillis() - mBroadcastStartTime, 1);
             sendNextBroadcast();
@@ -482,12 +517,26 @@ final class Notifier {
 
     private void sendGoToSleepBroadcast() {
         if (DEBUG) {
-            Slog.d(TAG, "Sending go to sleep broadcast.");
+            Slog.d(TAG, "sendGoToSleepBroadcast");
         }
 
         if (ActivityManagerNative.isSystemReady()) {
+            if (DEBUG) {
+                Slog.d(TAG, "sendGoToSleepBroadcast - sendOrderedBroadcastAsUser");
+            }
             mContext.sendOrderedBroadcastAsUser(mScreenOffIntent, UserHandle.ALL, null,
                     mGoToSleepBroadcastDone, mHandler, 0, null, null);
+/* Vanzo:hanshengpeng on: Thu, 21 May 2015 17:16:26 +0800
+ * fingerprint add by sileadinc
+ */
+            if (com.android.featureoption.FeatureOption.VANZO_FEATURE_ADD_SILEADINC_FP) {
+                String action = "com.silead.fp.lockscreen.fpservice.ACTION";
+                Slog.d(TAG, "before start FpService.");
+                Intent intent = new Intent(action);
+                intent.setPackage("com.silead.fp.lockscreen");
+                mContext.startService(intent);
+            }
+// End of Vanzo:hanshengpeng
         } else {
             EventLog.writeEvent(EventLogTags.POWER_SCREEN_BROADCAST_STOP, 3, 1);
             sendNextBroadcast();
@@ -497,6 +546,9 @@ final class Notifier {
     private final BroadcastReceiver mGoToSleepBroadcastDone = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (DEBUG) {
+                Slog.d(TAG, "mGoToSleepBroadcastDone - sendNextBroadcast");
+            }
             EventLog.writeEvent(EventLogTags.POWER_SCREEN_BROADCAST_DONE, 0,
                     SystemClock.uptimeMillis() - mBroadcastStartTime, 1);
             sendNextBroadcast();

@@ -39,6 +39,8 @@ import android.text.format.DateUtils;
 import android.text.format.Time;
 import android.util.Log;
 
+import com.android.internal.telephony.PhoneConstants;
+
 import java.util.Date;
 import java.util.Locale;
 
@@ -200,6 +202,23 @@ public class MobileDataControllerImpl implements NetworkController.MobileDataCon
     public void setMobileDataEnabled(boolean enabled) {
         Log.d(TAG, "setMobileDataEnabled: enabled=" + enabled);
         mTelephonyManager.setDataEnabled(enabled);
+        /// M: enable the default data SIM and disable another if need.
+        int simCount = TelephonyManager.getDefault().getSimCount();
+        if (simCount > 1 && enabled == true) {
+            int subId = SubscriptionManager.getDefaultDataSubId();
+            if (subId >= 0) {
+                int phoneId = SubscriptionManager.getPhoneId(subId);
+                if (phoneId == PhoneConstants.SIM_ID_1) {
+                    phoneId = PhoneConstants.SIM_ID_2;
+                } else {
+                    phoneId = PhoneConstants.SIM_ID_1;
+                }
+                subId = SubscriptionManager.getSubIdUsingPhoneId(phoneId);
+                if (subId >= 0 && mTelephonyManager.getDataEnabled(subId)) {
+                    mTelephonyManager.setDataEnabled(subId, false);
+                }
+            }
+        }
         if (mCallback != null) {
             mCallback.onMobileDataEnabled(enabled);
         }

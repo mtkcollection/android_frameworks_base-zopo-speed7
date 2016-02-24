@@ -25,6 +25,7 @@ import android.os.UserHandle;
 import android.util.Log;
 import com.android.systemui.recents.RecentsConfiguration;
 import com.android.systemui.recents.misc.SystemServicesProxy;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,7 +43,8 @@ import java.util.List;
  */
 public class RecentsTaskLoadPlan {
     static String TAG = "RecentsTaskLoadPlan";
-    static boolean DEBUG = false;
+    /// M: For Debug
+    static final boolean DEBUG = true;
 
     /** The set of conditions to load tasks. */
     public static class Options {

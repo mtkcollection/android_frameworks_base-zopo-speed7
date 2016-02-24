@@ -9,6 +9,11 @@ LOCAL_SRC_FILES += \
     java/com/android/server/EventLogTags.logtags \
     java/com/android/server/am/EventLogTags.logtags
 
-LOCAL_JAVA_LIBRARIES := android.policy telephony-common
+LOCAL_JAVA_LIBRARIES := android.policy telephony-common mediatek-framework
+LOCAL_STATIC_JAVA_LIBRARIES := anrmanager \
+                               services.ipo
+LOCAL_STATIC_JAVA_LIBRARIES += com_mediatek_amplus
+
+LOCAL_STATIC_JAVA_LIBRARIES += arch_helper
 
 include $(BUILD_STATIC_JAVA_LIBRARY)

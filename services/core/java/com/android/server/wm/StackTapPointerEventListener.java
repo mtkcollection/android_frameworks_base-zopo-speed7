@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +27,8 @@ import android.view.MotionEvent;
 import android.view.WindowManagerPolicy.PointerEventListener;
 
 import com.android.server.wm.WindowManagerService.H;
+/// M: BMW.
+import com.mediatek.multiwindow.MultiWindowProxy;
 
 public class StackTapPointerEventListener implements PointerEventListener {
     private static final int TAP_TIMEOUT_MSEC = 300;
@@ -56,6 +63,14 @@ public class StackTapPointerEventListener implements PointerEventListener {
             case MotionEvent.ACTION_MOVE:
                 if (mPointerId >= 0) {
                     int index = motionEvent.findPointerIndex(mPointerId);
+                    /// M : ALPS01259500, JE at motionEvent.getX
+                    /// The value of index sometimes was less than 0
+                    /// Before using it, need to check the value @{
+                    if (index < 0) {
+                        mPointerId = -1;
+                        break;
+                    }
+                    /// @}
                     if ((motionEvent.getEventTime() - motionEvent.getDownTime()) > TAP_TIMEOUT_MSEC
                             || index < 0
                             || (motionEvent.getX(index) - mDownX) > mMotionSlop
@@ -76,8 +91,18 @@ public class StackTapPointerEventListener implements PointerEventListener {
                             < TAP_TIMEOUT_MSEC
                             && (x - mDownX) < mMotionSlop && (y - mDownY) < mMotionSlop
                             && !mTouchExcludeRegion.contains(x, y)) {
+                        /// M: BMW. For multi window, it causes abnormal focus
+                        /// problem. Therefore, we mark it. @{
+                        if (!MultiWindowProxy.isFeatureSupport()){
+                            mService.mH.obtainMessage(H.TAP_OUTSIDE_STACK, x, y,
+                                    mDisplayContent).sendToTarget();
+                        }
+                        /// Original Google Code.
+/*
                         mService.mH.obtainMessage(H.TAP_OUTSIDE_STACK, x, y,
                                 mDisplayContent).sendToTarget();
+*/
+                        /// @}
                     }
                     mPointerId = -1;
                 }

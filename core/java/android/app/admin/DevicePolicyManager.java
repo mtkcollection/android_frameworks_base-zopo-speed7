@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -611,6 +616,16 @@ public class DevicePolicyManager {
      * Note that quality constants are ordered so that higher values are more restrictive.
      */
     public static final int PASSWORD_QUALITY_BIOMETRIC_WEAK = 0x8000;
+
+    /**
+     * M:
+     * Constant for {@link #setPasswordQuality}: the policy allows for low-security voice
+     * recognition technology. Note that quality constants are ordered so that higher
+     * values are more restrictive.
+     * @hide
+     * @internal
+     */
+    public static final int PASSWORD_QUALITY_VOICE_WEAK = 0x4000;
 
     /**
      * Constant for {@link #setPasswordQuality}: the policy requires some kind
@@ -2698,7 +2713,6 @@ public class DevicePolicyManager {
      * <p>If {@link #KEYGUARD_DISABLE_TRUST_AGENTS} is set and options is not null for all admins,
      * then it's up to the TrustAgent itself to aggregate the values from all device admins.
      * <p>Consult documentation for the specific TrustAgent to determine legal options parameters.
-     * @hide
      */
     public void setTrustAgentConfiguration(ComponentName admin, ComponentName target,
             PersistableBundle configuration) {
@@ -2725,7 +2739,6 @@ public class DevicePolicyManager {
      * for this {@param agent} or calls it with a null configuration, null is returned.
      * @param agent Which component to get enabled features for.
      * @return configuration for the given trust agent.
-     * @hide
      */
     public List<PersistableBundle> getTrustAgentConfiguration(ComponentName admin,
             ComponentName agent) {

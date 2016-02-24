@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +22,7 @@
 package android.telecom;
 
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.RemoteException;
@@ -59,6 +65,21 @@ final class ConnectionServiceAdapterServant {
     private static final int MSG_SET_CONFERENCEABLE_CONNECTIONS = 20;
     private static final int MSG_ADD_EXISTING_CONNECTION = 21;
     private static final int MSG_ON_POST_DIAL_CHAR = 22;
+
+    /* M: CC part start */
+    private static final int MTK_MSG_BASE = 1000;
+    private static final int MSG_NOTIFY_CONNECTION_LOST = MTK_MSG_BASE;
+    private static final int MSG_NOTIFY_ACTION_FAILED = MTK_MSG_BASE + 1;
+    private static final int MSG_NOTIFY_SS_TOAST = MTK_MSG_BASE + 2;
+    private static final int MSG_NOTIFY_NUMBER_UPDATE = MTK_MSG_BASE + 3;
+    private static final int MSG_NOTIFY_INCOMING_INFO_UPDATE = MTK_MSG_BASE + 4;
+    private static final int MSG_NOTIFY_CDMA_CALL_ACCEPTED = MTK_MSG_BASE + 5;
+    /* M: CC part end */
+
+    // M: For Volte @{
+    private static final int MSG_UPDATE_EXTRAS = 180;
+    private static final int MSG_HANDLE_CREATE_CONFERENCE_COMPLETE = 182;
+    /// @}
 
     private final IConnectionServiceAdapter mDelegate;
 
@@ -220,6 +241,57 @@ final class ConnectionServiceAdapterServant {
                     }
                     break;
                 }
+                /* M: CC part start */
+                case MSG_NOTIFY_CONNECTION_LOST: {
+                    mDelegate.notifyConnectionLost((String) msg.obj);
+                    break;
+                }
+                case MSG_NOTIFY_ACTION_FAILED: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    mDelegate.notifyActionFailed((String)args.arg1, (int)args.arg2);
+                    break;
+                }
+                case MSG_NOTIFY_SS_TOAST: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    mDelegate.notifySSNotificationToast(
+                            (String)args.arg1, (int)args.arg2, (int)args.arg3, (int)args.arg4, (String)args.arg5, (int)args.arg6);
+                    break;
+                }
+                case MSG_NOTIFY_NUMBER_UPDATE: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    mDelegate.notifyNumberUpdate((String)args.arg1, (String)args.arg2);
+                    break;
+                }
+                case MSG_NOTIFY_INCOMING_INFO_UPDATE: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    mDelegate.notifyIncomingInfoUpdate((String)args.arg1, (int)args.arg2, (String)args.arg3, (int)args.arg4);
+                    break;
+                }
+                case MSG_NOTIFY_CDMA_CALL_ACCEPTED: {
+                    mDelegate.notifyCdmaCallAccepted((String) msg.obj);
+                    break;
+                }
+                /* M: CC part end */
+
+                /// M: For volte @{
+                case MSG_UPDATE_EXTRAS: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    mDelegate.updateExtras((String) args.arg1, (Bundle) args.arg2);
+                    break;
+                }
+                case MSG_HANDLE_CREATE_CONFERENCE_COMPLETE: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    try {
+                        mDelegate.handleCreateConferenceComplete(
+                                (String) args.arg1,
+                                (ConnectionRequest) args.arg2,
+                                (ParcelableConference) args.arg3);
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                }
+                /// @}
             }
         }
     };
@@ -384,6 +456,78 @@ final class ConnectionServiceAdapterServant {
             args.arg2 = connection;
             mHandler.obtainMessage(MSG_ADD_EXISTING_CONNECTION, args).sendToTarget();
         }
+
+        /* M: CC part start */
+        @Override
+        public void notifyConnectionLost(String connectionId) {
+            mHandler.obtainMessage(MSG_NOTIFY_CONNECTION_LOST, connectionId).sendToTarget();
+        }
+
+        @Override
+        public void notifyActionFailed(String connectionId, int action) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = connectionId;
+            args.arg2 = action;
+            mHandler.obtainMessage(MSG_NOTIFY_ACTION_FAILED, args).sendToTarget();
+        }
+
+        @Override
+        public void notifySSNotificationToast(String callId, int notiType, int type, int code, String number, int index) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = notiType;
+            args.arg3 = type;
+            args.arg4 = code;
+            args.arg5 = number;
+            args.arg6 = index;
+            mHandler.obtainMessage(MSG_NOTIFY_SS_TOAST, args).sendToTarget();
+        }
+
+        @Override
+        public void notifyNumberUpdate(String callId, String number) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = number;
+            mHandler.obtainMessage(MSG_NOTIFY_NUMBER_UPDATE, args).sendToTarget();
+        }
+
+        @Override
+        public void notifyIncomingInfoUpdate(String callId, int type, String alphaid, int cli_validity) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = type;
+            args.arg3 = alphaid;
+            args.arg4 = cli_validity;
+            mHandler.obtainMessage(MSG_NOTIFY_INCOMING_INFO_UPDATE, args).sendToTarget();
+        }
+
+        @Override
+        public void notifyCdmaCallAccepted(String connectionId) {
+            mHandler.obtainMessage(MSG_NOTIFY_CDMA_CALL_ACCEPTED, connectionId).sendToTarget();
+        }
+        /* M: CC part end */
+
+        /// M: For Volte @{
+        @Override
+        public void updateExtras(String callId, Bundle bundle) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = bundle;
+            mHandler.obtainMessage(MSG_UPDATE_EXTRAS, args).sendToTarget();
+        }
+
+        @Override
+        public void handleCreateConferenceComplete(
+                String conferenceId,
+                ConnectionRequest request,
+                ParcelableConference conference) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = conferenceId;
+            args.arg2 = request;
+            args.arg3 = conference;
+            mHandler.obtainMessage(MSG_HANDLE_CREATE_CONFERENCE_COMPLETE, args).sendToTarget();
+        }
+        /// @}
     };
 
     public ConnectionServiceAdapterServant(IConnectionServiceAdapter delegate) {

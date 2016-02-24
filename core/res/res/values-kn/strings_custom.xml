@@ -1,0 +1,32 @@
+﻿<!--
+/* //device/apps/common/assets/res/any/strings.xml
+**
+** Copyright 2006, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- For Power Reboot -->
+  <string name="global_action_reboot">ರೀಬೂಟ್ ಮಾಡಿ</string>
+  <string name="reboot_confirm_question">ನೀವು ರೀಬೂಟ್ ಮಾಡ ಬಯಸುವಿರಾ?</string>
+  <string name="reboot_confirm">ನಿಮ್ಮ ಫೋನ್ ರೀಬೂಟ್ ಮಾಡಲಾಗುತ್ತದೆ.</string>
+  <string name="global_action_shotscreen">ಸ್ಕ್ರೀನ್‌ಶಾಟ್‌</string>
+  <string name="global_actions_toggle_dataconnection_mode">ಡೇಟಾ ನೆಟ್ವರ್ಕ್ ಮೋಡ್</string>
+  <string name="global_actions_dataconnection_mode_on_status">ಡೇಟಾ ಕನೆಕ್ಷನ್ ಆನ್ ಆಗಿದೆ</string>
+  <string name="global_actions_dataconnection_mode_off_status">ಡೇಟಾ ಕನೆಕ್ಷನ್ ಆಫ್ ಆಗಿದೆ</string>
+  <string name="global_actions_toggle_wifi_mode">ವೈಫೈ ಮೋಡ್</string>
+  <string name="global_actions_wifi_mode_on_status">ವೈಫೈ ಆನ್ ಆಗಿದೆ</string>
+  <string name="global_actions_wifi_mode_off_status">ವೈಫೈ ಆಫ್ ಆಗಿದೆ</string>
+  <string name="global_actions_toggle_longclick_notice">ಪ್ರಾಂಪ್ಟ್ :\n ಬಲವಂತದ ಶಟ್ಡೌನ್ : ಫೋನಿನ ಸ್ಕ್ರೀನ್ ಆಫ್ ಆಗುವವರೆಗೆ ಪವರ್ ಬಟನನ್ನು 6 ಸೆಕೆಂಡುಗಳ ಕಾಲ ದೀರ್ಘಕಾಲ ಪ್ರೆಸ್ ಮಾಡಿ.</string>
+</resources>

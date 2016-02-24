@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +31,9 @@ import android.os.Message;
 import android.os.Messenger;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.SystemProperties;
 import android.util.Log;
 import android.util.SparseArray;
 
@@ -35,6 +42,7 @@ import com.android.internal.util.Protocol;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+
 
 
 /**
@@ -290,6 +298,7 @@ public class WifiScanner {
      *                 scans should also not share this object.
      */
     public void startBackgroundScan(ScanSettings settings, ScanListener listener) {
+        Log.d(TAG, "startBackgroundScan, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_START_BACKGROUND_SCAN, 0, putListener(listener), settings);
     }
@@ -299,6 +308,7 @@ public class WifiScanner {
      *  #startBackgroundScan}
      */
     public void stopBackgroundScan(ScanListener listener) {
+        Log.d(TAG, "stopBackgroundScan, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_STOP_BACKGROUND_SCAN, 0, removeListener(listener));
     }
@@ -308,8 +318,28 @@ public class WifiScanner {
     public ScanResult[] getScanResults() {
         validateChannel();
         Message reply = sAsyncChannel.sendMessageSynchronously(CMD_GET_SCAN_RESULTS, 0);
-        ScanResult[] results = (ScanResult[]) reply.obj;
-        return results;
+
+        //M: google issue java.lang.ClassCastException:
+        //android.net.wifi.WifiScanner$OperationResult cannot be
+        //cast to android.net.wifi.ScanResult[]
+        //if success reply.obj = ParcelableScanResults
+        if (SystemProperties.get("wifi.gscan.dbg").equals("1")) {
+
+            ScanResult[] results = (ScanResult[]) reply.obj;
+            return results;
+        } else {
+
+           if(reply.what == WifiScanner.CMD_OP_SUCCEEDED){
+             ScanResult[] results = ((ParcelableScanResults) reply.obj).getResults();
+             return results;            
+             
+           }else{
+           //if fail : reply.obg = android.net.wifi.WifiScanner$OperationResult 
+             // ScanResult[] results = (ScanResult[]) reply.obj;
+              return null;
+           }
+        }
+    
     }
 
     /** specifies information about an access point of interest */
@@ -408,6 +438,7 @@ public class WifiScanner {
             BssidInfo[] bssidInfos                          /* signal thresholds to crosss */
             )
     {
+        Log.d(TAG, "configureWifiChange, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
 
         WifiChangeSettings settings = new WifiChangeSettings();
@@ -441,6 +472,7 @@ public class WifiScanner {
      *                 provided on {@link #stopTrackingWifiChange}
      */
     public void startTrackingWifiChange(WifiChangeListener listener) {
+        Log.d(TAG, "startTrackingWifiChange, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_START_TRACKING_CHANGE, 0, putListener(listener));
     }
@@ -451,6 +483,7 @@ public class WifiScanner {
      * #stopTrackingWifiChange}
      */
     public void stopTrackingWifiChange(WifiChangeListener listener) {
+        Log.d(TAG, "stopTrackingWifiChange, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_STOP_TRACKING_CHANGE, 0, removeListener(listener));
     }
@@ -458,6 +491,7 @@ public class WifiScanner {
     /** @hide */
     @SystemApi
     public void configureWifiChange(WifiChangeSettings settings) {
+        Log.d(TAG, "configureWifiChange, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_CONFIGURE_WIFI_CHANGE, 0, 0, settings);
     }
@@ -533,6 +567,7 @@ public class WifiScanner {
      */
     public void startTrackingBssids(BssidInfo[] bssidInfos,
                                     int apLostThreshold, BssidListener listener) {
+        Log.d(TAG, "startTrackingBssids, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         HotlistSettings settings = new HotlistSettings();
         settings.bssidInfos = bssidInfos;
@@ -544,6 +579,7 @@ public class WifiScanner {
      * @param listener same object provided in {@link #startTrackingBssids}
      */
     public void stopTrackingBssids(BssidListener listener) {
+        Log.d(TAG, "stopTrackingBssids, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         validateChannel();
         sAsyncChannel.sendMessage(CMD_RESET_HOTLIST, 0, removeListener(listener));
     }

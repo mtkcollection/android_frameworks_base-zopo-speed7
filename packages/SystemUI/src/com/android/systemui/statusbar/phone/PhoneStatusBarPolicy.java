@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +28,12 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.display.WifiDisplayStatus;
 import android.media.AudioManager;
+import android.net.wifi.p2p.WifiP2pDevice;
 import android.os.Handler;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.provider.Settings.Global;
 import android.telecom.TelecomManager;
 import android.util.Log;
@@ -36,6 +44,15 @@ import com.android.systemui.R;
 import com.android.systemui.statusbar.policy.CastController;
 import com.android.systemui.statusbar.policy.CastController.CastDevice;
 import com.android.systemui.statusbar.policy.HotspotController;
+import com.mediatek.xlog.Xlog;
+/* Vanzo:yinjun on: Tue, 17 Mar 2015 15:47:57 +0800
+ * add statubar out door icon
+ */
+import com.mediatek.audioprofile.AudioProfileManager;
+import com.mediatek.audioprofile.AudioProfileManager.Scenario;
+import com.mediatek.common.audioprofile.AudioProfileListener;
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
 
 /**
  * This class contains all of the policy about which icons are installed in the status
@@ -57,6 +74,12 @@ public class PhoneStatusBarPolicy {
     private static final String SLOT_VOLUME = "volume";
     private static final String SLOT_CDMA_ERI = "cdma_eri";
     private static final String SLOT_ALARM_CLOCK = "alarm_clock";
+    /// M: [SystemUI] Support "Headset icon". @{
+    private static final String SLOT_HEADSET = "headset";
+    //these two flag for this case of Headset: Headsetphone update to Headset(10->01)
+    private int mic_with_flag = 0;
+    private int mic_no_flag = 0;
+    /// @}
 
     private final Context mContext;
     private final StatusBarManager mService;
@@ -74,12 +97,35 @@ public class PhoneStatusBarPolicy {
     private int mZen;
 
     private boolean mBluetoothEnabled = false;
+/* Vanzo:yinjun on: Tue, 17 Mar 2015 15:48:38 +0800
+ * add statubar out door icon
+ */
+    private AudioProfileManager mProfileManager;
+    private AudioProfileListener mAudioProfileListenr = new AudioProfileListener() {
+        @Override
+        public void onProfileChanged(String profileKey) {
+            if (profileKey != null) {
+                Scenario senario = AudioProfileManager.getScenario(profileKey);
+                Log.d(TAG,"hyh profileKey = " + profileKey);
+                if (senario == Scenario.OUTDOOR) {
+                    Log.d(TAG,"hyh  Scenario.OUTDOOR mService.setIcon");
+                    mService.setIcon("volume", R.drawable.stat_sys_ringer_outdoor, 0, mContext.getString(R.string.accessibility_ringer_outdoor));
+                    mService.setIconVisibility("volume", true);
+                }else if(senario == Scenario.GENERAL){
+                    Log.d(TAG,"hyh Scenario.GENERAL set setIconVisibility false");
+                    mService.setIconVisibility("volume", false);
+                }
+            }
+        }
+    };
+// End of Vanzo: yinjun
 
 
     private BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
+            Xlog.d(TAG, "onReceive:" + action);
             if (action.equals(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)) {
                 updateAlarm();
             }
@@ -98,11 +144,22 @@ public class PhoneStatusBarPolicy {
                 updateSimState(intent);
             }
             else if (action.equals(TelecomManager.ACTION_CURRENT_TTY_MODE_CHANGED)) {
-                updateTTY(intent);
+                int currentTtyMode = intent.getIntExtra(TelecomManager.EXTRA_CURRENT_TTY_MODE,
+                    TelecomManager.TTY_MODE_OFF);
+                updateTTY(currentTtyMode);
             }
             else if (action.equals(Intent.ACTION_USER_SWITCHED)) {
                 updateAlarm();
+                /// M: [Multi-User] register Alarm intent by user @{
+                int newUserId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1);
+                registerAlarmClockChanged(newUserId, true);
+                /// M: [Multi-User] register Alarm intent by user @}
             }
+            /// M: [SystemUI] Support "Headset icon". @{
+            else if (action.equals(Intent.ACTION_HEADSET_PLUG)) {
+                updateHeadSet(intent);
+            }
+            /// @}
         }
     };
 
@@ -112,9 +169,18 @@ public class PhoneStatusBarPolicy {
         mHotspot = hotspot;
         mService = (StatusBarManager)context.getSystemService(Context.STATUS_BAR_SERVICE);
 
+/* Vanzo:yinjun on: Tue, 17 Mar 2015 15:51:33 +0800
+ * add statubar out door icon
+ */
+        if (FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_OUTDOOR_ICON) {
+            mProfileManager = (AudioProfileManager) mContext.getSystemService(Context.AUDIO_PROFILE_SERVICE);
+            mProfileManager.listenAudioProfie(mAudioProfileListenr, AudioProfileListener.LISTEN_PROFILE_CHANGE);
+        }
+// End of Vanzo: yinjun
+
         // listen for broadcasts
         IntentFilter filter = new IntentFilter();
-        filter.addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED);
+        //filter.addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED);
         filter.addAction(Intent.ACTION_SYNC_STATE_CHANGED);
         filter.addAction(AudioManager.RINGER_MODE_CHANGED_ACTION);
         filter.addAction(AudioManager.INTERNAL_RINGER_MODE_CHANGED_ACTION);
@@ -123,11 +189,22 @@ public class PhoneStatusBarPolicy {
         filter.addAction(TelephonyIntents.ACTION_SIM_STATE_CHANGED);
         filter.addAction(TelecomManager.ACTION_CURRENT_TTY_MODE_CHANGED);
         filter.addAction(Intent.ACTION_USER_SWITCHED);
+        /// M: [SystemUI] Support "Headset icon". @{
+        filter.addAction(Intent.ACTION_HEADSET_PLUG);
+        /// @}
         mContext.registerReceiver(mIntentReceiver, filter, null, mHandler);
+        /// M: [Multi-User] register Alarm intent by user
+        registerAlarmClockChanged(UserHandle.USER_OWNER, false);
 
         // TTY status
         mService.setIcon(SLOT_TTY,  R.drawable.stat_sys_tty_mode, 0, null);
         mService.setIconVisibility(SLOT_TTY, false);
+        /// M: [ALPS01870707] Get the TTY status when power on @{
+        int settingsTtyMode = Settings.Secure.getInt(context.getContentResolver(),
+                        Settings.Secure.TTY_MODE_ENABLED,
+                        TelecomManager.TTY_MODE_OFF);
+        updateTTY(settingsTtyMode);
+        /// M: [ALPS01870707] Get the TTY status when power on @}
 
         // Cdma Roaming Indicator, ERI
         mService.setIcon(SLOT_CDMA_ERI, R.drawable.stat_sys_roaming_cdma_0, 0, null);
@@ -155,14 +232,21 @@ public class PhoneStatusBarPolicy {
         updateVolumeZen();
 
         // cast
-        mService.setIcon(SLOT_CAST, R.drawable.stat_sys_cast, 0, null);
-        mService.setIconVisibility(SLOT_CAST, false);
-        mCast.addCallback(mCastCallback);
+        // M: Remove CastTile when WFD is not support in quicksetting
+        if (mCast != null) {
+            mService.setIcon(SLOT_CAST, R.drawable.stat_sys_cast, 0, null);
+            mService.setIconVisibility(SLOT_CAST, false);
+            mCast.addCallback(mCastCallback);
+        }
 
         // hotspot
         mService.setIcon(SLOT_HOTSPOT, R.drawable.stat_sys_hotspot, 0, null);
         mService.setIconVisibility(SLOT_HOTSPOT, mHotspot.isHotspotEnabled());
         mHotspot.addCallback(mHotspotCallback);
+        /// M: [SystemUI] Support "Headset icon". @{
+        mService.setIcon(SLOT_HEADSET, R.drawable.stat_sys_headset_with_mic, 0, null);
+        mService.setIconVisibility(SLOT_HEADSET, false);
+        /// @}
     }
 
     public void setZenMode(int zen) {
@@ -266,20 +350,21 @@ public class PhoneStatusBarPolicy {
                 iconId = R.drawable.stat_sys_data_bluetooth_connected;
                 contentDescription = mContext.getString(R.string.accessibility_bluetooth_connected);
             }
+            Xlog.v(TAG, "updateBluetooth : state = " + adapter.getState() +
+                " / Connected = " + adapter.getConnectionState());
         } else {
             mBluetoothEnabled = false;
         }
 
+        Xlog.d(TAG, "updateBluetooth : BluetoothEnabled = " + mBluetoothEnabled);
         mService.setIcon(SLOT_BLUETOOTH, iconId, 0, contentDescription);
         mService.setIconVisibility(SLOT_BLUETOOTH, mBluetoothEnabled);
     }
 
-    private final void updateTTY(Intent intent) {
-        int currentTtyMode = intent.getIntExtra(TelecomManager.EXTRA_CURRENT_TTY_MODE,
-                TelecomManager.TTY_MODE_OFF);
+    private final void updateTTY(int currentTtyMode) {
         boolean enabled = currentTtyMode != TelecomManager.TTY_MODE_OFF;
 
-        if (DEBUG) Log.v(TAG, "updateTTY: enabled: " + enabled);
+        Log.v(TAG, "updateTTY: enabled: " + enabled);
 
         if (enabled) {
             // TTY is on
@@ -323,5 +408,77 @@ public class PhoneStatusBarPolicy {
         public void onCastDevicesChanged() {
             updateCast();
         }
+
+        /// M: WFD sink support {@
+        @Override
+        public void onWfdStatusChanged(WifiDisplayStatus status,
+                boolean sinkMode) {
+
+        }
+
+        @Override
+        public void onWifiP2pDeviceChanged(WifiP2pDevice device) {
+
+        }
+        /// @}
     };
+
+    /// M: [SystemUI] Support "Headset icon". @{
+    private final void updateHeadSet(Intent intent) {
+        int state = intent.getIntExtra("state", -1);
+        int mic = intent.getIntExtra("microphone", -1);
+        if (DEBUG) Log.v(TAG, "updateHeadSet, state=" + state + ", mic=" + mic + ".");
+
+        if (state == -1 || mic == -1) {
+            return;
+        }
+        if (state == 1) {
+            if (mic == 1) {
+                mic_with_flag = 1;
+                mService.setIcon(SLOT_HEADSET, R.drawable.stat_sys_headset_with_mic, 0, null);
+                mService.setIconVisibility(SLOT_HEADSET, true);
+            } else {
+                mic_no_flag = 1;
+                mService.setIcon(SLOT_HEADSET, R.drawable.stat_sys_headset_without_mic, 0, null);
+                mService.setIconVisibility(SLOT_HEADSET, true);
+            }
+        } else {
+            //This path for Headsetphone update to Headset(10->01)
+            if ((0 == mic) && (1 == mic_with_flag) && (1 == mic_no_flag)) {
+                mic_with_flag = 0;
+                mic_no_flag = 0;
+            } else { //This path for Normal case
+                mService.setIconVisibility(SLOT_HEADSET, false);
+                mic_with_flag = 0;
+                mic_no_flag = 0;
+            }
+        }
+    }
+    /// @}
+
+    /// M: [Multi-User] register Alarm intent by user @{
+    private BroadcastReceiver mAlarmIntentReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            Xlog.d(TAG, "onReceive:" + action);
+            if (action.equals(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)) {
+                updateAlarm();
+            }
+        }
+    };
+
+    private void registerAlarmClockChanged(int newUserId, boolean userSwitch) {
+        if (userSwitch) {
+            mContext.unregisterReceiver(mAlarmIntentReceiver);
+        }
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED);
+
+        Xlog.d(TAG, "registerAlarmClockChanged:" + newUserId);
+        UserHandle newUserHandle = new UserHandle(newUserId);
+        mContext.registerReceiverAsUser(mAlarmIntentReceiver, newUserHandle, filter,
+            null /* permission */, mHandler /* scheduler */);
+    }
+    /// M: [Multi-User] register Alarm intent by user @}
 }

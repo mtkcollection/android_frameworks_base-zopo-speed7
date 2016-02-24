@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +58,9 @@ import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
+import com.mediatek.common.accountsync.ISyncManagerExt;
+import com.mediatek.common.MPlugin;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -64,6 +72,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
 import java.util.TimeZone;
+/* Vanzo:songlixin on: Mon, 07 Apr 2014 08:04:52 +0800
+ */
+import android.os.SystemProperties;
+// End of Vanzo: songlixin
 
 /**
  * Singleton that tracks the sync data and overall sync
@@ -157,6 +169,8 @@ public class SyncStorageEngine extends Handler {
         sAuthorityRenames.put("contacts", "com.android.contacts");
         sAuthorityRenames.put("calendar", "com.android.calendar");
     }
+
+    private ISyncManagerExt mSyncManagerExt = null;
 
     public static class PendingOperation {
         final EndPoint target;
@@ -507,6 +521,9 @@ public class SyncStorageEngine extends Handler {
         writeStatusLocked();
         writePendingOperationsLocked();
         writeStatisticsLocked();
+
+        /// M: for CMCC, set the auto sync false
+        mSyncManagerExt = MPlugin.createInstance(ISyncManagerExt.class.getName(), mContext);
     }
 
     public static SyncStorageEngine newTestInstance(Context context) {
@@ -1040,7 +1057,26 @@ public class SyncStorageEngine extends Handler {
     public boolean getMasterSyncAutomatically(int userId) {
         synchronized (mAuthorities) {
             Boolean auto = mMasterSyncAutomatically.get(userId);
-            return auto == null ? mDefaultMasterSyncAutomatically : auto;
+
+            ///M: add for cmccc when there is no account default auto sync is off
+            if (mSyncManagerExt == null) {
+/* Vanzo:wangyi on: Fri, 14 Feb 2014 16:31:26 +0800
+ * sync prop
+                return auto == null ? true : auto;
+ */
+                return auto == null ? SystemProperties.getBoolean("ro.init.sync", false) : auto;
+// End of Vanzo: wangyi
+            }
+
+            boolean isAutomatically = mSyncManagerExt.getSyncAutomatically();
+            Log.d(TAG, "mSyncManagerExt.getSyncAutomatically() = " + isAutomatically);
+ /* Vanzo:wangyi on: Fri, 14 Feb 2014 16:31:30 +0800
+ * sync prop
+            return auto == null ? isAutomatically : auto;
+ */
+            return auto == null ? SystemProperties.getBoolean("ro.init.sync", true) : auto;
+// End of Vanzo: wangyi
+            //return auto == null ? mDefaultMasterSyncAutomatically : auto;
         }
     }
 

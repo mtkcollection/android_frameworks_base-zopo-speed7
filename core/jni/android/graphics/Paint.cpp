@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 /* libs/android_runtime/android/graphics/Paint.cpp
 **
 ** Copyright 2006, The Android Open Source Project
@@ -24,6 +29,8 @@
 #include <android_runtime/AndroidRuntime.h>
 #include <ScopedUtfChars.h>
 
+#include "SkTypeface_android.h"
+
 #include "SkBlurDrawLooper.h"
 #include "SkColorFilter.h"
 #include "SkMaskFilter.h"
@@ -44,6 +51,10 @@
 // temporary for debugging
 #include <Caches.h>
 #include <utils/Log.h>
+
+//extern "C" {
+//  #include "harfbuzz-unicode.h"
+//}
 
 namespace android {
 
@@ -490,6 +501,83 @@ public:
         }
         return SkScalarToFloat(spacing);
     }
+/*
+    static float getCharsFontMetrics(SkPaint::FontMetrics *metricsObj, const SkPaint* paint,
+            const jchar* chars, int start, int end) {
+
+        SkPaint::FontMetrics metrics;
+        SkPaint localPaint(*paint);
+        SkTypeface *origTypeface = paint->getTypeface();
+        SkScalar             spacing = 0.0f;
+        memset(metricsObj, 0, sizeof(SkPaint::FontMetrics));
+
+        SkTypeface::Style currentStyle = SkTypeface::kNormal;
+        if (origTypeface) {
+            currentStyle = origTypeface->style();
+        }
+
+        paint->getFontMetrics(metricsObj);
+
+        ssize_t indexFontRun = 0;
+        unsigned numCodePoints = 0;
+        HB_ScriptItem item;
+        SkTypeface *typeface;
+        SkScalar currentSpacing = 0.0f;
+        while (hb_utf16_script_run_next(&numCodePoints, &item, chars + start, end - start, &indexFontRun)) {
+            if (SkIsTypefaceCoverScript(item.script, origTypeface)) {
+                continue;
+            }
+            
+            typeface = SkCreateTypefaceForScript(item.script, currentStyle);
+            localPaint.setTypeface(typeface);
+            currentSpacing = localPaint.getFontMetrics(&metrics);
+            
+            if (currentSpacing > spacing) {
+                spacing = currentSpacing;
+            }
+            if (metrics.fTop < metricsObj->fTop) {
+                metricsObj->fTop = metrics.fTop;
+            }
+            if (metrics.fAscent < metricsObj->fAscent) {
+                metricsObj->fAscent = metrics.fAscent;
+            }
+            if (metrics.fDescent > metricsObj->fDescent) {
+                metricsObj->fDescent = metrics.fDescent;
+            }
+            if (metrics.fBottom > metricsObj->fBottom) {
+                metricsObj->fBottom = metrics.fBottom;
+            }
+            if (metrics.fLeading > metricsObj->fLeading) {
+                metricsObj->fLeading = metrics.fLeading;
+            }
+        }
+
+        return SkScalarToFloat(spacing);
+    }
+*/
+    static jfloat getStringFontMetrics(JNIEnv* env, jobject paint, jobject metricsObj, jstring text) {
+	return getFontMetrics(env, paint, metricsObj);
+//        NPE_CHECK_RETURN_ZERO(env, paint);
+//        SkPaint::FontMetrics metrics;
+//
+//        SkPaint *npaint = GraphicsJNI::getNativePaint(env, paint);
+//        size_t textLength = env->GetStringLength(text);
+//        const jchar* textArray = env->GetStringChars(text, NULL);
+
+//        SkScalar spacing = getCharsFontMetrics(&metrics, npaint, textArray, 0, textLength);
+
+//        if (metricsObj) {
+//            SkASSERT(env->IsInstanceOf(metricsObj, gFontMetrics_class));
+//            env->SetFloatField(metricsObj, gFontMetrics_fieldID.top, SkScalarToFloat(metrics.fTop));
+//            env->SetFloatField(metricsObj, gFontMetrics_fieldID.ascent, SkScalarToFloat(metrics.fAscent));
+//            env->SetFloatField(metricsObj, gFontMetrics_fieldID.descent, SkScalarToFloat(metrics.fDescent));
+//            env->SetFloatField(metricsObj, gFontMetrics_fieldID.bottom, SkScalarToFloat(metrics.fBottom));
+//            env->SetFloatField(metricsObj, gFontMetrics_fieldID.leading, SkScalarToFloat(metrics.fLeading));
+//        }
+
+//        env->ReleaseStringChars(text, textArray);
+//        return SkScalarToFloat(spacing);
+    }
 
     static jint getFontMetricsInt(JNIEnv* env, jobject paint, jobject metricsObj) {
         NPE_CHECK_RETURN_ZERO(env, paint);
@@ -509,6 +597,34 @@ public:
             env->SetIntField(metricsObj, gFontMetricsInt_fieldID.leading, leading);
         }
         return descent - ascent + leading;
+    }
+
+    static jint getStringFontMetricsInt(JNIEnv* env, jobject paint, jobject metricsObj, jstring text) {
+	return getFontMetricsInt(env, paint, metricsObj);
+//        NPE_CHECK_RETURN_ZERO(env, paint);
+//        SkPaint::FontMetrics metrics;
+//
+//        SkPaint *npaint = GraphicsJNI::getNativePaint(env, paint);
+//        size_t textLength = env->GetStringLength(text);
+//        const jchar* textArray = env->GetStringChars(text, NULL);
+
+//        getCharsFontMetrics(&metrics, npaint, textArray, 0, textLength);
+
+//        int ascent = SkScalarRound(metrics.fAscent);
+//        int descent = SkScalarRound(metrics.fDescent);
+//        int leading = SkScalarRound(metrics.fLeading);
+
+//        if (metricsObj) {
+//            SkASSERT(env->IsInstanceOf(metricsObj, gFontMetricsInt_class));
+//            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.top, SkScalarFloor(metrics.fTop));
+//            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.ascent, ascent);
+//            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.descent, descent);
+//            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.bottom, SkScalarCeil(metrics.fBottom));
+//            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.leading, leading);
+//        }
+//
+//        env->ReleaseStringChars(text, textArray);
+//        return descent - ascent + leading;
     }
 
     static jfloat measureText_CIII(JNIEnv* env, jobject jpaint, jcharArray text, jint index, jint count,
@@ -806,7 +922,11 @@ public:
             paint->setLooper(NULL);
         }
         else {
+#ifdef USE_OPENGL_RENDERER
             SkScalar sigma = android::uirenderer::Blur::convertRadiusToSigma(radius);
+#else
+            SkScalar sigma = 0.57735f * radius + 0.5f;//BLUR_SIGMA_SCALE = 0.57735f = 1/sqrt(3)
+#endif
             paint->setLooper(SkBlurDrawLooper::Create((SkColor)color, sigma, dx, dy))->unref();
         }
     }
@@ -900,7 +1020,15 @@ public:
     static void doTextBounds(JNIEnv* env, const jchar* text, int count, jobject bounds,
             const Paint& paint, TypefaceImpl* typeface, jint bidiFlags) {
         SkRect  r;
+        r.set(0,0,0,0);
+
         SkIRect ir;
+
+        if (count > 1024)
+        {
+            ALOGW("doTextBounds:text too long! count=%d",count);
+        }
+
 
         Layout layout;
         MinikinUtils::doLayout(&layout, &paint, bidiFlags, typeface, text, 0, count, count);
@@ -994,7 +1122,9 @@ static JNINativeMethod methods[] = {
     {"descent","!()F", (void*) PaintGlue::descent},
 
     {"getFontMetrics", "(Landroid/graphics/Paint$FontMetrics;)F", (void*)PaintGlue::getFontMetrics},
+    {"getStringFontMetrics", "(Landroid/graphics/Paint$FontMetrics;Ljava/lang/String;)F", (void*)PaintGlue::getStringFontMetrics},
     {"getFontMetricsInt", "(Landroid/graphics/Paint$FontMetricsInt;)I", (void*)PaintGlue::getFontMetricsInt},
+    {"getStringFontMetricsInt", "(Landroid/graphics/Paint$FontMetricsInt;Ljava/lang/String;)I", (void*)PaintGlue::getStringFontMetricsInt},
     {"native_measureText","([CIII)F", (void*) PaintGlue::measureText_CIII},
     {"native_measureText","(Ljava/lang/String;I)F", (void*) PaintGlue::measureText_StringI},
     {"native_measureText","(Ljava/lang/String;III)F", (void*) PaintGlue::measureText_StringIII},

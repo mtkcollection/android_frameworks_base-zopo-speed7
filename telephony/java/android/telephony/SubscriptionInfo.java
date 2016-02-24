@@ -144,10 +144,26 @@ public class SubscriptionInfo implements Parcelable {
     }
 
     /**
+     * Sets the ICC ID
+     * @hide
+     */
+    public void setIccId(String iccId) {
+        this.mIccId = iccId;
+    }
+
+    /**
      * @return the slot index of this Subscription's SIM card.
      */
     public int getSimSlotIndex() {
         return this.mSimSlotIndex;
+    }
+
+    /**
+     * Sets the slot index of this Subscription's SIM card.
+     * @hide
+     */
+    public void setSimSlotIndex(int slotId) {
+        this.mSimSlotIndex = slotId;
     }
 
     /**
@@ -187,6 +203,15 @@ public class SubscriptionInfo implements Parcelable {
      */
     public int getNameSource() {
         return this.mNameSource;
+    }
+
+    /**
+     * Sets the source of the name, eg NAME_SOURCE_UNDEFINED, NAME_SOURCE_DEFAULT_SOURCE,
+     * NAME_SOURCE_SIM_SOURCE or NAME_SOURCE_USER_INPUT.
+     * @hide
+     */
+    public void setNameSource(int nameSource) {
+        this.mNameSource = nameSource;
     }
 
     /**
@@ -255,11 +280,27 @@ public class SubscriptionInfo implements Parcelable {
     }
 
     /**
+     * Sets the number of this subscription.
+     * @hide
+     */
+    public void setNumber(String number) {
+        this.mNumber = number;
+    }
+
+    /**
      * @return the data roaming state for this subscription, either
      * {@link SubscriptionManager#DATA_ROAMING_ENABLE} or {@link SubscriptionManager#DATA_ROAMING_DISABLE}.
      */
     public int getDataRoaming() {
         return this.mDataRoaming;
+    }
+
+    /**
+     * Sets the data roaming value.
+     * @hide
+     */
+    public void setDataRoaming(int roaming) {
+        this.mDataRoaming = roaming;
     }
 
     /**
@@ -270,10 +311,26 @@ public class SubscriptionInfo implements Parcelable {
     }
 
     /**
+     * Sets the MCC.
+     * @hide
+     */
+    public void setMcc(int mcc) {
+        this.mMcc = mcc;
+    }
+
+    /**
      * @return the MNC.
      */
     public int getMnc() {
         return this.mMnc;
+    }
+
+    /**
+     * Sets the MNC.
+     * @hide
+     */
+    public void setMnc(int mnc) {
+        this.mMnc = mnc;
     }
 
     /**

@@ -66,4 +66,9 @@ interface IImsRegistrationListener {
      */
     void registrationFeatureCapabilityChanged(int serviceClass,
             out int[] enabledFeatures, out int[] disabledFeatures);
+            
+    /**
+     * Notifies the application when the device is disconnected from the IMS network.
+     */
+    void registrationDisconnectedWithCause(in int cause);
 }

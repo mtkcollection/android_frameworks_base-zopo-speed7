@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright 2008, The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,11 +30,14 @@
 #include <utils/Log.h>
 #include <arpa/inet.h>
 #include <cutils/properties.h>
+#include <fcntl.h>
 
 extern "C" {
 int ifc_enable(const char *ifname);
 int ifc_disable(const char *ifname);
 int ifc_reset_connections(const char *ifname, int reset_mask);
+/// M: support reset socket connections by the UID of process
+int ifc_reset_connection_by_uid(int uid, int err);
 
 int dhcp_do_request(const char * const ifname,
                     const char *ipaddr,
@@ -56,6 +64,35 @@ int dhcp_do_request_renew(const char * const ifname,
 int dhcp_stop(const char *ifname);
 int dhcp_release_lease(const char *ifname);
 char *dhcp_get_errmsg();
+
+int PPPOE_stop(const char *interface);
+
+int PPPOE_do_request(const char *interface, int timeout_sec, const char *usr, const char *passwd, int interval, int failure, int mtu, int mru, int mss, char* iplocal, char* ipremote, char* gateway, char* dns1, char* dns2, char * ppplinkname);
+
+char *PPPOE_get_errmsg();
+/*mtk_net pcscf*/
+int dhcp_do_sip_request(const char *iface);
+int dhcp_stop_sip_request(const char *iface);
+int dhcpv6_do_sip_request(const char *iface);
+int dhcpv6_stop_sip_request(const char *iface);
+/*mtk_net pcscf end*/
+
+char *dhcpv6_get_errmsg();
+
+/*add dhcpv6 corresponding c method declaration*/
+int dhcpv6_do_request(const char *interface, char *ipaddr,
+        char *dns1,
+        char *dns2,
+        uint32_t *lease, uint32_t *pid);
+int dhcpv6_stop(const char *interface);
+int dhcpv6_do_request_renew(const char *interface, const int pid, char *ipaddr,
+        char *dns1,
+        char *dns2,
+        uint32_t *lease);
+int dhcpv6_PD_request(const char *interface, char *prefix, uint32_t *lease);
+int dhcpv6_PD_renew(const char *interface, char *prefix, uint32_t *lease);
+int dhcpv6_PD_stop(const char *interface);
+char *PD_get_errmsg();
 }
 
 #define NETUTILS_PKG_NAME "android/net/NetworkUtils"
@@ -76,6 +113,8 @@ static struct fieldIds {
     jmethodID setServerAddress;
     jmethodID setLeaseDuration;
     jmethodID setVendorInfo;
+	jmethodID setPidForRenew;
+	jmethodID setPpplinkname;
 } dhcpResultsFieldIds;
 
 static jint android_net_utils_resetConnections(JNIEnv* env, jobject clazz,
@@ -205,6 +244,49 @@ static jboolean android_net_utils_stopDhcp(JNIEnv* env, jobject clazz, jstring i
     return (jboolean)(result == 0);
 }
 
+/*mtk_net pcscf*/
+static jboolean android_net_utils_doSipDhcpRequest(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    ALOGD("android_net_utils_doSipDhcpRequest for %s\n", nameStr);
+    result = ::dhcp_do_sip_request(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+
+static jboolean android_net_utils_stopSipDhcpRequest(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::dhcp_stop_sip_request(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+
+static jboolean android_net_utils_doSipDhcpv6Request(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::dhcpv6_do_sip_request(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+
+static jboolean android_net_utils_stopSipDhcpv6Request(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::dhcpv6_stop_sip_request(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+/*mtk_net pcscf end*/
+
 static jboolean android_net_utils_releaseDhcpLease(JNIEnv* env, jobject clazz, jstring ifname)
 {
     int result;
@@ -247,6 +329,283 @@ static jboolean android_net_utils_protectFromVpn(JNIEnv *env, jobject thiz, jint
     return (jboolean) !protectFromVpn(socket);
 }
 
+// M:
+static jint android_net_utils_runPPPOE(JNIEnv* env, jobject clazz, jstring ifname, jint timeout, jstring usr, jstring passwd, jint interval, jint failure, jint mtu, jint mru, jint mss,jobject dhcpResults)
+{
+	int result;
+	char iplocal[PROPERTY_VALUE_MAX];
+	char ipremote[PROPERTY_VALUE_MAX];
+    char gateway[PROPERTY_VALUE_MAX];
+    char    dns1[PROPERTY_VALUE_MAX];
+    char    dns2[PROPERTY_VALUE_MAX];
+	char  ppplinkname[PROPERTY_VALUE_MAX];
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    const char *usrStr = env->GetStringUTFChars(usr, NULL);
+    const char *passwdStr = env->GetStringUTFChars(passwd, NULL);
+	
+	result = ::PPPOE_do_request(nameStr, timeout, usrStr, passwdStr, interval, failure, mtu, mru, mss, iplocal, ipremote, gateway, dns1, dns2, ppplinkname);
+	env->ReleaseStringUTFChars(ifname, nameStr);
+	env->ReleaseStringUTFChars(usr, usrStr);
+	env->ReleaseStringUTFChars(passwd, passwdStr);
+
+	 if (result == 0) {
+		 env->CallVoidMethod(dhcpResults, dhcpResultsFieldIds.clear);
+
+		 // set the linkAddress
+		 // dhcpResults->addLinkAddress(inetAddress, prefixLength)
+		 result = env->CallBooleanMethod(dhcpResults, dhcpResultsFieldIds.setIpAddress,
+				 env->NewStringUTF(iplocal), 32); // FIXME: we don't have prefixLength here, so use 32 instead, is it good enough?
+
+		 if (result == 0) {
+			 // set the gateway
+			 // dhcpResults->addGateway(gateway)
+			 result = env->CallBooleanMethod(dhcpResults,
+					 dhcpResultsFieldIds.setGateway, env->NewStringUTF(gateway));
+		 }
+
+		 //env->SetObjectField(info, dhcpInfoInternalFieldIds.dns1, env->NewStringUTF(dns1));
+		 if (result == 0) {
+			 // dhcpResults->addDns(new InetAddress(dns1))
+			 result = env->CallBooleanMethod(dhcpResults,
+					 dhcpResultsFieldIds.addDns, env->NewStringUTF(dns1));
+		 }
+
+		 //env->SetObjectField(info, dhcpInfoInternalFieldIds.dns2, env->NewStringUTF(dns2));
+		 if (result == 0) {
+			 result = env->CallBooleanMethod(dhcpResults,
+					 dhcpResultsFieldIds.addDns, env->NewStringUTF(dns2));
+		 }
+
+		 //env->SetObjectField(info, dhcpInfoInternalFieldIds.interfaceName, env->NewStringUTF(ppplinkname));
+		 if (result == 0) {
+			 env->CallVoidMethod(dhcpResults,
+					 dhcpResultsFieldIds.setPpplinkname, env->NewStringUTF(ppplinkname));
+		 }
+	 }
+
+	 return result;
+}
+
+static jboolean android_net_utils_stopPPPOE(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::PPPOE_stop(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+
+    return (jboolean)(result == 0);
+}
+
+static jstring android_net_utils_getPPPOEError(JNIEnv* env, jobject clazz)
+{
+    return env->NewStringUTF(::PPPOE_get_errmsg());    
+}
+
+/** M: support reset socket connections by the uid of process */
+static jint android_net_utils_resetConnectionByUid(JNIEnv* env, jobject clazz, jint uid)
+{
+    int etimeout = 110;    /* ETIMEDOUT */
+    int result = ::ifc_reset_connection_by_uid(uid, etimeout);  
+    ALOGD("android_net_utils_resetConnectionByUid:%d", result);
+    return (jint)result;
+}
+/** @} */
+
+/** M: support reset socket connections by the uid of process with special error number */
+static jint android_net_utils_resetConnectionByUid_err(JNIEnv* env, jobject clazz, jint uid, jint err)
+{
+    int result = ::ifc_reset_connection_by_uid(uid, err);
+    ALOGE("android_net_utils_resetConnectionByUid_err:%d", result);
+    return (jint)result;
+}
+/** @} */
+
+/*add dhcpv6 corresponding method as dhcp*/
+static jboolean android_net_utils_runDhcpv6Common(JNIEnv* env, jobject clazz, jstring ifname,
+        jobject dhcpResults, bool renew)
+{
+    int result;
+    char  ipaddr[PROPERTY_VALUE_MAX];
+    char    dns1[PROPERTY_VALUE_MAX];
+    char    dns2[PROPERTY_VALUE_MAX];
+    uint32_t lease;
+    uint32_t pid;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    if (nameStr == NULL) return (jboolean)false;
+
+
+    if (renew) {
+		//pid = env->GetIntField(info, dhcpInfoInternalFieldIds.pid_for_renew);
+        result = ::dhcpv6_do_request_renew(nameStr, pid, ipaddr, dns1, dns2, &lease);
+    } else {
+        result = ::dhcpv6_do_request(nameStr, ipaddr, dns1, dns2, &lease, &pid);
+        //env->SetIntField(info, dhcpInfoInternalFieldIds.pid_for_renew, pid);
+    }
+
+
+    env->ReleaseStringUTFChars(ifname, nameStr);
+
+    if (result == 0) {
+        env->CallVoidMethod(dhcpResults, dhcpResultsFieldIds.clear);
+
+		// set mIfaceName
+        // dhcpResults->setInterfaceName(ifname)
+		//env->CallVoidMethod(dhcpResults, dhcpResultsFieldIds.setInterfaceName, ifname);
+
+		// set the linkAddress
+        // dhcpResults->addLinkAddress(inetAddress, prefixLength)
+        result = env->CallBooleanMethod(dhcpResults, dhcpResultsFieldIds.setIpAddress,
+                env->NewStringUTF(ipaddr), 64);
+
+        result = env->CallBooleanMethod(dhcpResults,
+                dhcpResultsFieldIds.addDns, env->NewStringUTF(dns1));
+
+        if (result == 0) {
+            result = env->CallBooleanMethod(dhcpResults,
+                    dhcpResultsFieldIds.addDns, env->NewStringUTF(dns2));
+		}
+
+		if (result == 0) {
+			// dhcpResults->setLeaseDuration(lease)
+			env->CallVoidMethod(dhcpResults,
+					dhcpResultsFieldIds.setLeaseDuration, lease);
+		}
+
+		if (result == 0)
+		{
+			env->CallVoidMethod(dhcpResults,
+					dhcpResultsFieldIds.setPidForRenew, pid);
+		}
+    }
+    
+    return (jboolean)(result == 0);
+}
+
+static jboolean android_net_utils_runDhcpv6(JNIEnv* env, jobject clazz, jstring ifname, jobject info)
+{
+    return android_net_utils_runDhcpv6Common(env, clazz, ifname, info, false);
+}
+
+static jboolean android_net_utils_runDhcpv6Renew(JNIEnv* env, jobject clazz, jstring ifname, jobject info)
+{
+    return android_net_utils_runDhcpv6Common(env, clazz, ifname, info, true);
+}
+
+static jboolean android_net_utils_stopDhcpv6(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::dhcpv6_stop(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+
+static jstring android_net_utils_getDhcpv6Error(JNIEnv* env, jobject clazz)
+{
+    return env->NewStringUTF(::dhcpv6_get_errmsg());
+}
+
+static jint android_net_utils_getRaFlags(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result, len, fd;
+    char filename[64];
+	char flags;
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+
+	snprintf(filename, sizeof(filename), "/proc/sys/net/ipv6/conf/%s/ra_info_flag", nameStr);
+	fd = open(filename, O_RDONLY);
+	if (fd < 0) {
+		ALOGE("Can't open %s: %s", filename, strerror(errno));
+		result = -1;
+	} else {
+		len = read(fd, &flags, 1);
+		if (len < 0) {
+			ALOGE("Can't read %s: %s", filename, strerror(errno));
+			result = -2;
+		} else {
+			if(flags >= '0' && flags <= '4'){
+				result = (int)(flags - '0');
+				ALOGD("read:ra_info_flag=%c, result=%d\n", flags, result);
+			} else {
+				ALOGE("read:ra_info_flag=0x%x\n", flags);
+				result = -3;
+			}
+		}	
+		close(fd);
+	}	
+
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jint)result;
+}
+
+/*JNI of PD*/
+static jboolean android_net_utils_runPDCommon(JNIEnv* env, jobject clazz, jstring ifname, jobject dhcpResults, bool renew)
+{
+	int result;
+    char  prefix[PROPERTY_VALUE_MAX];
+    uint32_t lease;
+
+	const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    if (nameStr == NULL) return (jboolean)false;
+
+	if (renew) {
+		result = ::dhcpv6_PD_renew(nameStr, prefix, &lease);
+	} else {
+		result = ::dhcpv6_PD_request(nameStr, prefix, &lease);
+	}
+
+    env->ReleaseStringUTFChars(ifname, nameStr);
+
+    if (result == 0) {
+        env->CallVoidMethod(dhcpResults, dhcpResultsFieldIds.clear);
+
+		// set mIfaceName
+        // dhcpResults->setInterfaceName(ifname)
+		//env->CallVoidMethod(dhcpResults, dhcpResultsFieldIds.setInterfaceName, ifname);
+
+		// set the linkAddress
+        //env->SetObjectField(info, dhcpInfoInternalFieldIds.ipaddress, env->NewStringUTF(prefix));
+        result = env->CallBooleanMethod(dhcpResults, dhcpResultsFieldIds.setIpAddress,
+                env->NewStringUTF(prefix), 64);
+
+        //env->SetIntField(info, dhcpInfoInternalFieldIds.leaseDuration, lease);
+		if (result == 0) {
+			// dhcpResults->setLeaseDuration(lease)
+			env->CallVoidMethod(dhcpResults,
+					dhcpResultsFieldIds.setLeaseDuration, lease);
+		}
+    }
+    
+    return (jboolean)(result == 0);
+}
+
+static jboolean android_net_utils_runPD(JNIEnv* env, jobject clazz, jstring ifname, jobject info)
+{
+    return android_net_utils_runPDCommon(env, clazz, ifname, info, false);
+}
+
+static jboolean android_net_utils_runPDRenew(JNIEnv* env, jobject clazz, jstring ifname, jobject info)
+{
+    return android_net_utils_runPDCommon(env, clazz, ifname, info, true);
+}
+
+static jboolean android_net_utils_stopPD(JNIEnv* env, jobject clazz, jstring ifname)
+{
+    int result;
+
+    const char *nameStr = env->GetStringUTFChars(ifname, NULL);
+    result = ::dhcpv6_PD_stop(nameStr);
+    env->ReleaseStringUTFChars(ifname, nameStr);
+    return (jboolean)(result == 0);
+}
+
+static jstring android_net_utils_getPDError(JNIEnv* env, jobject clazz)
+{
+    return env->NewStringUTF(::PD_get_errmsg());
+}
 // ----------------------------------------------------------------------------
 
 /*
@@ -265,6 +624,29 @@ static JNINativeMethod gNetworkUtilMethods[] = {
     { "bindProcessToNetworkForHostResolution", "(I)Z", (void*) android_net_utils_bindProcessToNetworkForHostResolution },
     { "bindSocketToNetwork", "(II)I", (void*) android_net_utils_bindSocketToNetwork },
     { "protectFromVpn", "(I)Z", (void*)android_net_utils_protectFromVpn },
+    // M:
+	{"runPPPOE", "(Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;IIIIILandroid/net/DhcpResults;)I", (void*)android_net_utils_runPPPOE },
+	{"stopPPPOE", "(Ljava/lang/String;)Z", (void*)android_net_utils_stopPPPOE },
+    { "getPPPOEError", "()Ljava/lang/String;", (void*) android_net_utils_getPPPOEError },
+    /// M: MTK sip info utility. Must sync with netutils.java !!
+    { "doSipDhcpRequest", "(Ljava/lang/String;)Z",  (void *)android_net_utils_doSipDhcpRequest },
+    { "stopSipDhcpRequest", "(Ljava/lang/String;)Z",  (void *)android_net_utils_stopSipDhcpRequest },
+	{ "doSipDhcpv6Request", "(Ljava/lang/String;)Z",	(void *)android_net_utils_doSipDhcpv6Request },
+	{ "stopSipDhcpv6Request", "(Ljava/lang/String;)Z",  (void *)android_net_utils_stopSipDhcpv6Request },
+    /// M: MTK network utility functions
+    { "resetConnectionByUidErrNum", "(II)I",  (void *)android_net_utils_resetConnectionByUid_err },
+    { "resetConnectionByUid", "(I)I",  (void *)android_net_utils_resetConnectionByUid },
+    /// add dhcpv6 corresponding JNI declaration
+    { "runDhcpv6", "(Ljava/lang/String;Landroid/net/DhcpResults;)Z",  (void *)android_net_utils_runDhcpv6 },
+    { "runDhcpv6Renew", "(Ljava/lang/String;Landroid/net/DhcpResults;)Z",  (void *)android_net_utils_runDhcpv6Renew },
+    { "stopDhcpv6", "(Ljava/lang/String;)Z",  (void *)android_net_utils_stopDhcpv6 },
+    { "getDhcpv6Error", "()Ljava/lang/String;", (void*) android_net_utils_getDhcpv6Error },
+	{ "getRaFlags", "(Ljava/lang/String;)I",  (void *)android_net_utils_getRaFlags },
+	/// M: add PD corresponding JNI declaration
+    { "runDhcpv6PD", "(Ljava/lang/String;Landroid/net/DhcpResults;)Z",  (void *)android_net_utils_runPD },
+    { "runDhcpv6PDRenew", "(Ljava/lang/String;Landroid/net/DhcpResults;)Z",  (void *)android_net_utils_runPDRenew },
+    { "stopDhcpv6PD", "(Ljava/lang/String;)Z",  (void *)android_net_utils_stopPD },
+    { "getDhcpv6PDError", "()Ljava/lang/String;", (void*)android_net_utils_getPDError },
 };
 
 int register_android_net_NetworkUtils(JNIEnv* env)
@@ -287,6 +669,10 @@ int register_android_net_NetworkUtils(JNIEnv* env)
             env->GetMethodID(dhcpResultsClass, "setLeaseDuration", "(I)V");
     dhcpResultsFieldIds.setVendorInfo =
             env->GetMethodID(dhcpResultsClass, "setVendorInfo", "(Ljava/lang/String;)V");
+	dhcpResultsFieldIds.setPidForRenew =
+			env->GetMethodID(dhcpResultsClass, "setPidForRenew", "(I)V");
+    dhcpResultsFieldIds.setPpplinkname = 
+			env->GetMethodID(dhcpResultsClass, "setPpplinkname", "(Ljava/lang/String;)V");
 
     return AndroidRuntime::registerNativeMethods(env,
             NETUTILS_PKG_NAME, gNetworkUtilMethods, NELEM(gNetworkUtilMethods));

@@ -285,10 +285,12 @@ public class ExpandHelper implements Gefingerpoken {
         if (mExpanding) {
             mLastMotionY = ev.getRawY();
             maybeRecycleVelocityTracker(ev);
+            Log.d(TAG, "onInterceptTouchEvent maybeRecycleVelocityTracker");
             return true;
         } else {
             if ((action == MotionEvent.ACTION_MOVE) && 0 != (mExpansionStyle & BLINDS)) {
                 // we've begun Venetian blinds style expansion
+                Log.d(TAG, "onInterceptTouchEvent we've begun Venetian blinds style expansion");
                 return true;
             }
             switch (action & MotionEvent.ACTION_MASK) {
@@ -335,6 +337,9 @@ public class ExpandHelper implements Gefingerpoken {
             }
             mLastMotionY = ev.getRawY();
             maybeRecycleVelocityTracker(ev);
+            if (mExpanding) {
+                Log.d(TAG, "onInterceptTouchEvent action=" + action);
+            }
             return mExpanding;
         }
     }

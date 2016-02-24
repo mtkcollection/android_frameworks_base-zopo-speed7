@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +25,11 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.TextView;
+
 
 import com.android.systemui.R;
+import com.mediatek.xlog.Xlog;
 
 public class IconMerger extends LinearLayout {
     private static final String TAG = "IconMerger";
@@ -29,6 +37,7 @@ public class IconMerger extends LinearLayout {
 
     private int mIconSize;
     private View mMoreView;
+    public TextView mCarrierText;
 
     public IconMerger(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -68,6 +77,24 @@ public class IconMerger extends LinearLayout {
             if (getChildAt(i).getVisibility() != GONE) visibleChildren++;
         }
         final boolean overflowShown = (mMoreView.getVisibility() == View.VISIBLE);
+        //add for plmn text
+        if (mCarrierText != null) {
+        final boolean carrierTextShown = (mCarrierText.getVisibility() == View.VISIBLE);
+        final boolean showCarrier = (visibleChildren * mIconSize + mCarrierText.getWidth()) < width;
+        Xlog.d(TAG, "carrierTextShown = " + carrierTextShown);
+        Xlog.d(TAG, "showCarrier = " + showCarrier);
+        /*we should display carries text only if carrierText plus
+        //Notification icons could fit in th Notification area.*/
+        if (showCarrier != carrierTextShown) {
+            post(new Runnable() {
+                @Override
+                public void run() {
+                    //mCarrierText.setVisibility(showCarrier?View.VISIBLE:View.GONE);
+                    Xlog.d(TAG, "showCarrier = " + (showCarrier ? View.VISIBLE : View.GONE));
+                    }
+                });
+            }
+        }
         // let's assume we have one more slot if the more icon is already showing
         if (overflowShown) visibleChildren --;
         final boolean moreRequired = visibleChildren * mIconSize > width;
@@ -79,5 +106,9 @@ public class IconMerger extends LinearLayout {
                 }
             });
         }
+    }
+
+    public void setCarrierText(View v) {
+        mCarrierText = (TextView) v;
     }
 }

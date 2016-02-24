@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -181,6 +186,9 @@ public class MediaHTTPConnection extends IMediaHTTPConnection.Stub {
                 } else {
                     mConnection = (HttpURLConnection)url.openConnection();
                 }
+                /// M: add socket read/write timeout
+                mConnection.setReadTimeout(60000);
+                mConnection.setWriteTimeout(60000);
 
                 // handle redirects ourselves if we do not allow cross-domain redirect
                 mConnection.setInstanceFollowRedirects(mAllowCrossDomainRedirect);
@@ -277,7 +285,12 @@ public class MediaHTTPConnection extends IMediaHTTPConnection.Stub {
             } else if (response != HttpURLConnection.HTTP_OK) {
                 throw new IOException();
             } else {
-                mTotalSize = mConnection.getContentLength();
+                try {
+                    mTotalSize = Long.parseLong(mConnection.getHeaderField("Content-Length"));
+                } catch (NumberFormatException e) {
+                    mTotalSize = -1;
+                }
+                Log.d(TAG, "mTotalSize=" + mTotalSize);
             }
 
             if (offset > 0 && response != HttpURLConnection.HTTP_PARTIAL) {
@@ -312,8 +325,19 @@ public class MediaHTTPConnection extends IMediaHTTPConnection.Stub {
         StrictMode.setThreadPolicy(policy);
 
         try {
+            if (VERBOSE) {
+                Log.d(TAG, "readAt -->" + offset + " / " + size);
+            }
+
             if (offset != mCurrentOffset) {
                 seekTo(offset);
+            }
+
+            if (mInputStream == null) {
+                if (VERBOSE) {
+                    Log.d(TAG, "readAt mInputStream == null");
+                }
+                return -1;
             }
 
             int n = mInputStream.read(data, 0, size);
@@ -327,7 +351,7 @@ public class MediaHTTPConnection extends IMediaHTTPConnection.Stub {
             mCurrentOffset += n;
 
             if (VERBOSE) {
-                Log.d(TAG, "readAt " + offset + " / " + size + " => " + n);
+                Log.d(TAG, "readAt <--" + offset + " / " + size + " => " + n);
             }
 
             return n;
@@ -336,16 +360,21 @@ public class MediaHTTPConnection extends IMediaHTTPConnection.Stub {
             return MEDIA_ERROR_UNSUPPORTED;
         } catch (NoRouteToHostException e) {
             Log.w(TAG, "readAt " + offset + " / " + size + " => " + e);
+            if (VERBOSE) {
+                e.printStackTrace();
+            }
             return MEDIA_ERROR_UNSUPPORTED;
         } catch (IOException e) {
             if (VERBOSE) {
                 Log.d(TAG, "readAt " + offset + " / " + size + " => -1");
+                e.printStackTrace();
             }
             return -1;
         } catch (Exception e) {
             if (VERBOSE) {
                 Log.d(TAG, "unknown exception " + e);
                 Log.d(TAG, "readAt " + offset + " / " + size + " => -1");
+                e.printStackTrace();
             }
             return -1;
         }

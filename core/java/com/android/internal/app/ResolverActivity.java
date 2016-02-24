@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +70,9 @@ import android.widget.Toast;
 import com.android.internal.widget.ResolverDrawerLayout;
 
 import java.text.Collator;
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.media.IRCSePriorityExt;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -107,6 +115,7 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
     private UsageStatsManager mUsm;
     private Map<String, UsageStats> mStats;
     private static final long USAGE_STATS_PERIOD = 1000 * 60 * 60 * 24 * 14;
+    private IRCSePriorityExt mRCSePriorityExt = null;
 
     private boolean mRegistered;
     private final PackageMonitor mPackageMonitor = new PackageMonitor() {
@@ -421,6 +430,8 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
         try {
             result = res.getDrawableForDensity(resId, mIconDpi);
         } catch (Resources.NotFoundException e) {
+            /// M: ALPS01377642, log enhancement
+            Log.v(TAG, "Couldn't find resources for package in getIcon", e);
             result = null;
         }
 
@@ -440,6 +451,8 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
             if (iconRes != 0) {
                 dr = getIcon(mPm.getResourcesForApplication(ri.activityInfo.packageName), iconRes);
                 if (dr != null) {
+                    /// M: ALPS01377642, log enhancement
+                    Log.v(TAG, "loadIconForResolveInfo " + ri);
                     return dr;
                 }
             }
@@ -676,12 +689,17 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
                 }
             }
 
-            if (filter != null) {
-                final int N = mAdapter.mOrigResolveList.size();
+            if (filter != null && mAdapter.currentResolveList != null) {
+                /** M:[ALPS01575637] Pop-up dialog box every time when exiting call details after choose always.
+                We only add activity with the same highest priority to preferferred activity set @{ */
+                final int N = mAdapter.currentResolveList.size();
+                /** @} */
                 ComponentName[] set = new ComponentName[N];
                 int bestMatch = 0;
                 for (int i=0; i<N; i++) {
-                    ResolveInfo r = mAdapter.mOrigResolveList.get(i);
+                    /** M:[ALPS01575637] Pop-up dialog box every time when exiting call details after choose always. @{ */
+                    ResolveInfo r = mAdapter.currentResolveList.get(i);
+                    /** @} */
                     set[i] = new ComponentName(r.activityInfo.packageName,
                             r.activityInfo.name);
                     if (r.match > bestMatch) bestMatch = r.match;
@@ -729,9 +747,11 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
             } catch (RemoteException e2) {
                 launchedFromPackage = "??";
             }
-            Slog.wtf(TAG, "Unable to launch as uid " + mLaunchedFromUid
+            /// M: Suppress AEE warning @{
+            Slog.e(TAG, "Unable to launch as uid " + mLaunchedFromUid
                     + " package " + launchedFromPackage + ", while running in "
                     + ActivityThread.currentProcessName(), e);
+            /// @}
         }
     }
 
@@ -781,8 +801,14 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
         private final int mLaunchedFromUid;
         private final LayoutInflater mInflater;
 
+        /** M:[ALPS01575637] Pop-up dialog box every time when exiting call details after choose always. @{ */
+        List<ResolveInfo> currentResolveList;
+        /** @} */
+
         List<DisplayResolveInfo> mList;
         List<ResolveInfo> mOrigResolveList;
+        /// M : Save load Task Info (ALPS01549667)
+        List<DisplayResolveInfo> mLoadTaskList;
 
         private int mLastChosenPosition = -1;
         private boolean mFilterLastUsed;
@@ -796,14 +822,31 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
             mList = new ArrayList<DisplayResolveInfo>();
             mFilterLastUsed = filterLastUsed;
             rebuildList();
+            /// M : new load Task List (ALPS01549667)
+            mLoadTaskList = new ArrayList<DisplayResolveInfo>();
         }
 
         public void handlePackagesChanged() {
+            final int oldItemCount = getCount();
             rebuildList();
             notifyDataSetChanged();
-            if (getCount() == 0) {
+            final int newItemCount = getCount();
+            if (newItemCount == 0) {
                 // We no longer have any items...  just finish the activity.
                 finish();
+            /// M: fix ALPS00368603 first issue, if the last selected item has been selected and uninstalled
+            /// we should disable always and once buttons since it has beend removed @{
+            } else if (newItemCount != oldItemCount) {
+                if (mAlwaysUseOption) {
+                    final int checkedPos = mListView.getCheckedItemPosition();
+                    final boolean enabled = checkedPos != ListView.INVALID_POSITION;
+                    if (enabled && checkedPos >= newItemCount) {
+                        Log.w("ResolverActivity", "handlePackagesChanged: checkedPos " + checkedPos + " >= newItemCount " + newItemCount + ", disable buttons");
+                        mAlwaysButton.setEnabled(false);
+                        mOnceButton.setEnabled(false);
+                    }
+                }
+            /// @}
             }
         }
 
@@ -831,7 +874,9 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
         }
 
         private void rebuildList() {
-            List<ResolveInfo> currentResolveList;
+            /** M:[ALPS01575637] Pop-up dialog box every time when exiting call details after choose always. @{ */
+            //List<ResolveInfo> currentResolveList;
+            /** @} */
 
             try {
                 mLastChosen = AppGlobals.getPackageManager().getLastChosenActivity(
@@ -898,6 +943,22 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
                             new ResolverComparator(ResolverActivity.this, mIntent);
                     Collections.sort(currentResolveList, rComparator);
                 }
+                mRCSePriorityExt = MPlugin.createInstance(IRCSePriorityExt.class.getName(), ResolverActivity.this);
+                Log.d(TAG , "RCSe Plugin initiated " + mRCSePriorityExt);
+                if (mRCSePriorityExt != null) {
+                    for (ResolveInfo info : currentResolveList) {
+                        ApplicationInfo applicationInfo = info.activityInfo.applicationInfo;
+                        if (applicationInfo.packageName.equals("com.orangelabs.rcs"))
+                        {
+                            Log.d(TAG, "rebuild list after sort");
+                            currentResolveList.remove(info);
+                            currentResolveList.add(0, info);
+                            break;
+                        }
+                    }
+                }
+
+                ArrayList<String>packageNames = new ArrayList<String>();
                 // First put the initial items at the top.
                 if (mInitialIntents != null) {
                     for (int i=0; i<mInitialIntents.length; i++) {
@@ -924,12 +985,29 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
                             ri.labelRes = li.getLabelResource();
                             ri.nonLocalizedLabel = li.getNonLocalizedLabel();
                             ri.icon = li.getIconResource();
+                            if (mRCSePriorityExt != null) {
+                               //Add package names in list to resort on RCSe basis
+                               packageNames.add(li.getSourcePackage());
+                            }
                         }
                         addResolveInfo(new DisplayResolveInfo(ri,
                                 ri.loadLabel(getPackageManager()), null, ii));
                     }
                 }
 
+                if (mRCSePriorityExt != null) {
+                int rcseIndex = -1;
+                Log.d(TAG, "mRCSePriorityExt to sort the list");
+                //Resort the share list and add RCSe on top
+                rcseIndex = mRCSePriorityExt.sortTheListForRCSe(packageNames);
+                if (rcseIndex != -1)
+                 {
+                     Log.d(TAG, "mRCSePriorityExt to sort the list index is" + rcseIndex);
+                     DisplayResolveInfo rcseInfo = mList.get(rcseIndex);
+                     mList.remove(rcseIndex);
+                     mList.add(0, rcseInfo);
+                  }
+               }
                 // Check for applications with same name and use application name or
                 // package name if necessary
                 r0 = currentResolveList.get(0);
@@ -1074,8 +1152,16 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
         }
 
         private final void bindView(View view, DisplayResolveInfo info) {
+            Log.v(TAG, "bindView " + info.displayLabel);
             final ViewHolder holder = (ViewHolder) view.getTag();
             holder.text.setText(info.displayLabel);
+
+            /// M: ALPS00580535 Add for Long String Improvement Feature @{
+            holder.text.setMaxLines(2);
+            holder.text.setSmartFit(true);
+            holder.text.setEllipsize(null);
+            /// @}
+
             if (mShowExtended) {
                 holder.text2.setVisibility(View.VISIBLE);
                 holder.text2.setText(info.extendedInfo);
@@ -1083,7 +1169,25 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
                 holder.text2.setVisibility(View.GONE);
             }
             if (info.displayIcon == null) {
-                new LoadIconTask().execute(info);
+                /// M : Fix ALPS01549667 to avoid too many async tasks for
+                /// the same DisplayResolveInfo that causes the bad performance
+                /// to load the icon @{
+                boolean newTask = true;
+                for (DisplayResolveInfo loadTaskInfo : mLoadTaskList) {
+                    if (loadTaskInfo.equals(info)) {
+                        newTask = false;
+                    }
+                }
+                if (newTask) {
+                    /// M: Fix ALPS01628038: change AsyncTask to parallel execution
+                    new LoadIconTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, info);
+                    mLoadTaskList.add(info);
+                    /// M: ALPS01377642, log enhancement
+                    Log.v(TAG, "Async LoadIconTask executed "  + info.ri);
+                }
+                /// @]
+
+                // new LoadIconTask().execute(info);
             }
             holder.icon.setImageDrawable(info.displayIcon);
         }
@@ -1121,9 +1225,13 @@ public class ResolverActivity extends Activity implements AdapterView.OnItemClic
         @Override
         protected DisplayResolveInfo doInBackground(DisplayResolveInfo... params) {
             final DisplayResolveInfo info = params[0];
+            /// M: Add log for ALPS01628038
+            Log.v(TAG, "LoadIconTask doInBackground Enter: "  + info);
             if (info.displayIcon == null) {
                 info.displayIcon = loadIconForResolveInfo(info.ri);
             }
+            /// M: Add log for ALPS01628038
+            Log.v(TAG, "LoadIconTask doInBackground Leave: "  + info + ", displayIcon=" + info.displayIcon);
             return info;
         }
 

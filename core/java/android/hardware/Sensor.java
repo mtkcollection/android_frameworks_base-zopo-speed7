@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -512,6 +517,51 @@ public final class Sensor {
     public static final String STRING_TYPE_PICK_UP_GESTURE = "android.sensor.pick_up_gesture";
 
     /**
+     * @hide
+     */
+    public static final int TYPE_PEDOMETER  = 26;
+    /**
+     * @hide
+     */
+    public static final String STRING_TYPE_PEDOMETER = "android.sensor.pedometer";
+
+    /**
+     * @hide
+     */
+    public static final int TYPE_IN_POCKET  = 27;
+    /**
+     * @hide
+     */
+    public static final String STRING_TYPE_IN_POCKET = "android.sensor.in_pocket";
+
+    /**
+     * @hide
+     */
+    public static final int TYPE_ACTIVITY   = 28;
+    /**
+     * @hide
+     */
+    public static final String STRING_TYPE_ACTIVITY = "android.sensor.activity";
+
+    /**
+     * @hide
+     */
+    public static final int TYPE_FACE_DOWN  = 29;
+    /**
+     * @hide
+     */
+    public static final String STRING_TYPE_FACE_DOWN = "android.sensor.face_down";
+
+    /**
+     * @hide
+     */
+    public static final int TYPE_SHAKE      = 30;
+    /**
+     * @hide
+     */
+    public static final String STRING_TYPE_SHAKE = "android.sensor.shake";
+
+    /**
      * A constant describing all sensor types.
      */
     public static final int TYPE_ALL = -1;
@@ -591,6 +641,12 @@ public final class Sensor {
             1, // SENSOR_TYPE_WAKE_GESTURE
             1, // SENSOR_TYPE_GLANCE_GESTURE
             1, // SENSOR_TYPE_PICK_UP_GESTURE
+            4,  // SENSOR_TYPE_PEDOMETER
+            3,  // SENSOR_TYPE_IN_POCKET
+            6,  // SENSOR_TYPE_ACTIVITY 
+            3,  // SENSOR_TYPE_PICK_UP  
+            3,  // SENSOR_TYPE_FACE_DOWN
+            3   // SENSOR_TYPE_SHAKE    
     };
 
     /**

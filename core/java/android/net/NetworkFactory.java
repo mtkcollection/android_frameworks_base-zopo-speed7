@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +51,7 @@ import com.android.internal.util.Protocol;
  **/
 public class NetworkFactory extends Handler {
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
 
     private static final int BASE = Protocol.BASE_NETWORK_FACTORY;
     /**
@@ -179,9 +184,19 @@ public class NetworkFactory extends Handler {
 
     private void handleRemoveRequest(NetworkRequest request) {
         NetworkRequestInfo n = mNetworkRequests.get(request.requestId);
-        if (n != null && n.requested) {
+        if (DBG) log("handleRemoveRequest" + request);
+        if (VDBG) {
+            for (int i = 0; i < mNetworkRequests.size(); i++) {
+                log("req:" + mNetworkRequests.valueAt(i).requested
+                        + ":" + mNetworkRequests.valueAt(i).request);
+            }
+        }
+        if (n != null) {
+            if (DBG) log("find n");
             mNetworkRequests.remove(request.requestId);
-            releaseNetworkFor(n.request);
+            if (n.requested) {
+                releaseNetworkFor(n.request);
+            }
         }
     }
 
@@ -219,8 +234,10 @@ public class NetworkFactory extends Handler {
     }
 
     private void evalRequest(NetworkRequestInfo n) {
-        if (VDBG) log("evalRequest");
-        if (n.requested == false && n.score < mScore &&
+        if (VDBG) log("evalRequest request = " + n.request + " with requested = " + n.requested
+                         + "(" + n.score + ") my score:" + mScore);
+        // M: change design from [n.score < mScore] to [n.score <= mScore]
+        if (n.requested == false && n.score <= mScore &&
                 n.request.networkCapabilities.satisfiedByNetworkCapabilities(
                 mCapabilityFilter) && acceptRequest(n.request, n.score)) {
             if (VDBG) log("  needNetworkFor");

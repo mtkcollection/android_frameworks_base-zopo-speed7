@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,18 @@ import android.telephony.Rlog;
 import android.telephony.SubscriptionManager;
 import android.util.Log;
 
+/// M: CC006: CallerInfo for CDMA ECC number @{
+import android.telephony.TelephonyManager;
+import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
+/// @}
+/// M: CC007: CallerInfo For phone number attribution of China @{
+import android.os.SystemProperties;
+/// @}
+/* Vanzo:tanglei on: Mon, 09 Feb 2015 16:18:24 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:tanglei
+
 /**
  * Helper class to make it easier to run asynchronous caller-id lookup queries.
  * @see CallerInfo
@@ -43,7 +60,7 @@ import android.util.Log;
  * {@hide}
  */
 public class CallerInfoAsyncQuery {
-    private static final boolean DBG = false;
+    private static final boolean DBG = true;
     private static final String LOG_TAG = "CallerInfoAsyncQuery";
 
     private static final int EVENT_NEW_QUERY = 1;
@@ -279,11 +296,31 @@ public class CallerInfoAsyncQuery {
                 if (cw.event == EVENT_EMERGENCY_NUMBER) {
                     // Note we're setting the phone number here (refer to javadoc
                     // comments at the top of CallerInfo class).
+/* Vanzo:tanglei on: Mon, 09 Feb 2015 16:16:04 +0800
+ * modify emergency call show number
                     mCallerInfo = new CallerInfo().markAsEmergency(mContext);
+ */
+                    if (FeatureOption.VANZO_FEATURE_EMERGENCY_CALL_SHOW_NUMBER) {
+                        mCallerInfo = new CallerInfo().markAsEmergency(mContext, cw.number);
+                    } else {
+                        mCallerInfo = new CallerInfo().markAsEmergency(mContext);
+                    }
+// End of Vanzo:tanglei
+                    /// M: CC006: CallerInfo for CDMA ECC number @{
+                    int phoneType = TelephonyManager.getDefault().getCurrentPhoneType(cw.subId);
+                    if (phoneType == PHONE_TYPE_CDMA) {
+                        mCallerInfo.name = mCallerInfo.phoneNumber;
+                        mCallerInfo.phoneNumber = cw.number;
+                    }
+                    /// @}
                 } else if (cw.event == EVENT_VOICEMAIL_NUMBER) {
                     mCallerInfo = new CallerInfo().markAsVoiceMail(cw.subId);
                 } else {
-                    mCallerInfo = CallerInfo.getCallerInfo(mContext, mQueryUri, cursor);
+                    /// M: CC001: CallerInfo OP Plugin @{
+                    //According to CallerInfoExt implementation on L, subId is requested for USIM AAS feature.
+                    //mCallerInfo = CallerInfo.getCallerInfo(mContext, mQueryUri, cursor);
+                    mCallerInfo = CallerInfo.getCallerInfo(mContext, mQueryUri, cursor, cw.subId);
+                    /// @}
                     if (DBG) Rlog.d(LOG_TAG, "==> Got mCallerInfo: " + mCallerInfo);
 
                     CallerInfo newCallerInfo = CallerInfo.doSecondaryLookupIfNecessary(
@@ -307,7 +344,10 @@ public class CallerInfoAsyncQuery {
                         // new parameter to CallerInfoAsyncQuery.startQuery() to force
                         // the geoDescription field to be populated.)
 
-                        if (TextUtils.isEmpty(mCallerInfo.name)) {
+                        if (TextUtils.isEmpty(mCallerInfo.name) ||
+                            /// M: CC007: CallerInfo For phone number attribution of China @{
+                            (SystemProperties.get("ro.mtk_phone_number_geo").equals("1"))) {
+                            /// @}
                             // Actually when no contacts match the incoming phone number,
                             // the CallerInfo object is totally blank here (i.e. no name
                             // *or* phoneNumber).  So we need to pass in cw.number as
@@ -435,7 +475,10 @@ public class CallerInfoAsyncQuery {
         cw.subId = subId;
 
         // check to see if these are recognized numbers, and use shortcuts if we can.
-        if (PhoneNumberUtils.isLocalEmergencyNumber(context, number)) {
+        /// M: CC003: Query ECC via EmergencyNumberExt @{
+        int phoneType = TelephonyManager.getDefault().getCurrentPhoneType(cw.subId);
+        if (PhoneNumberUtils.isEmergencyNumberExt(number, phoneType)) {
+        /// @}
             cw.event = EVENT_EMERGENCY_NUMBER;
         } else if (PhoneNumberUtils.isVoiceMailNumber(subId, number)) {
             cw.event = EVENT_VOICEMAIL_NUMBER;

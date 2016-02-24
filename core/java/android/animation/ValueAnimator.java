@@ -1389,6 +1389,12 @@ public class ValueAnimator extends Animator {
         anim.mInitialized = false;
         anim.mPlayingState = STOPPED;
         anim.mStartedDelay = false;
+/* Vanzo:yinjun on: Mon, 20 Apr 2015 16:34:39 +0800
+ * bugfix #106996 need to reset more variables
+ */
+        anim.mStarted = false;
+        anim.mStartListenersCalled = false;
+// End of Vanzo: yinjun
         PropertyValuesHolder[] oldValues = mValues;
         if (oldValues != null) {
             int numValues = oldValues.length;

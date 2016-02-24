@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1061,6 +1066,76 @@ public class Process {
     
     /** @hide */
     public static final native long getTotalMemory();
+
+    /// M: To get total anon memory @{
+    /** @hide */
+    public static final native long getLruAnonMemory();
+    /// @}
+
+    /// M: Helper functions to get available zram space @{
+    /** @hide */
+    public static final float getZramCompressRatio() {
+        long compZram = Debug.getCompZram();
+        long origZram = Debug.getOrigZram();
+        int threshold = 3072 * 1024; //Experiment threshold(bytes)
+
+        if (0 == compZram){
+            return 1.0f; //ZRAM is not enabled
+        } else if (compZram < threshold) { // Return TypicalRatio (LZO1X, LZ4K) <=> (2.63, 3.2)
+            if (1 == Debug.getZramCompressMethod()) 
+                return 3.2f; //LZ4K
+            else
+                return 2.63f; //LZO
+        } else{
+            return (((float) origZram)/compZram);//Runtime value
+        }
+    }
+    /// @}
+
+    /** 
+     * return the maximal possible extra memory capacity provide by zram
+     * in bytes
+     * @hide
+     * @internal
+     */
+    public static final long getZramExtraTotalSize() {
+        long totalZram = Debug.getTotalZram();
+        if (totalZram == 0) {
+            return 0;
+        }
+
+        // compress zram size could be up to total memory / 4
+        long compTotalSize = getTotalMemory() / 4;
+        long origTotalSize = (long) (compTotalSize * getZramCompressRatio());
+        // uncompressed size - compressed size = memory saved
+        return origTotalSize - compTotalSize;
+    }
+
+    /** 
+     * return the estimated memory zram could still save
+     * in bytes
+     * @hide
+     * @internal
+     */
+    public static final long getZramExtraAvailableSize() {
+        long totalZram = Debug.getTotalZram();
+        if (totalZram == 0) {
+            return 0;
+        }
+        if (!SystemProperties.getBoolean("ro.default_cache_free", false)) {
+            // physical zram extra memory
+            final long anonReserve = 15 * 1024 * 1024; // 15MB
+            long anonToCompress = getLruAnonMemory() - anonReserve;
+            if (anonToCompress < 0) {
+                anonToCompress = 0;
+            }
+            long savableMemory = (long) (anonToCompress * (1.0f - 1.0f / getZramCompressRatio()));
+            return savableMemory;
+        }
+        else return 0;
+    }
+    /// @}
+
     
     /** @hide */
     public static final native void readProcLines(String path,
@@ -1110,6 +1185,21 @@ public class Process {
      * @hide
      */
     public static final native long getPss(int pid);
+
+
+    /// M: Helper function for LTK @{
+    /**
+     * Gets the sum of RSwap+RSS value for a given process, in bytes.
+     *
+     * @param pid of the process
+     * @return the total RSwap + RSS value for the given process in bytes,
+     *  or 0 if the value cannot be determined
+     * @hide
+     */
+    public static final native long getRswapRssSum(int pid);
+    /// @}
+
+
 
     /**
      * Specifies the outcome of having started a process.

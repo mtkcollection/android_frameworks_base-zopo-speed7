@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -137,6 +142,16 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
+    public void setBlNotify() throws RemoteException {
+        // pass for now.
+    }
+
+    @Override
+    public void setBacklightOffForWfd(boolean enable) throws RemoteException {
+        // pass for now.
+    }
+
+    @Override
     public void wakeUp(long time) throws RemoteException {
         // pass for now.
     }
@@ -145,4 +160,24 @@ public class BridgePowerManager implements IPowerManager {
     public void boostScreenBrightness(long time) throws RemoteException {
         // pass for now.
     }
+
+    public void wakeUpByReason(long time, int reason) throws RemoteException {
+        // pass for now.
+    }
+
+    @Override
+    public void setSmartBookScreen(boolean on) throws RemoteException {
+        // pass for now.
+    }
+
+    @Override // Binder call
+    public void startBacklight(int delay_msec) throws RemoteException {
+        // pass for now.
+    }
+
+    @Override // Binder call
+    public void stopBacklight() throws RemoteException {
+        // pass for now.
+    }
+
 }

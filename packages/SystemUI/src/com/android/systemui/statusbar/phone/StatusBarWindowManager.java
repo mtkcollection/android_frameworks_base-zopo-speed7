@@ -178,11 +178,25 @@ public class StatusBarWindowManager {
     public void setKeyguardShowing(boolean showing) {
         mCurrentState.keyguardShowing = showing;
         apply(mCurrentState);
+/* Vanzo:fenghaitao on: Wed, 06 May 2015 14:14:28 +0800
+ * bugfix #107208 modify lock screen exception on top white line
+  */
+        if (mCurrentState.isKeyguardShowingAndNotOccluded()) {
+            mStatusBarView.requestFitSystemWindows();
+        }
+// End of Vanzo:fenghaitao
     }
 
     public void setKeyguardOccluded(boolean occluded) {
         mCurrentState.keyguardOccluded = occluded;
         apply(mCurrentState);
+/* Vanzo:fenghaitao on: Wed, 06 May 2015 14:14:28 +0800
+ * bugfix #107208 modify lock screen exception on top white line
+  */
+        if (mCurrentState.isKeyguardShowingAndNotOccluded()) {
+            mStatusBarView.requestFitSystemWindows();
+        }
+// End of Vanzo:fenghaitao
     }
 
     public void setKeyguardNeedsInput(boolean needsInput) {

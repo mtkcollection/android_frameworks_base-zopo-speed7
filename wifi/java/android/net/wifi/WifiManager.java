@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,7 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SystemApi;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.DhcpInfo;
 import android.net.wifi.ScanSettings;
 import android.net.wifi.WifiChannel;
@@ -41,7 +47,13 @@ import java.util.concurrent.CountDownLatch;
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.Protocol;
 
+import java.util.HashMap;
 import java.util.List;
+import android.os.Process;
+/* Vanzo:hanshengpeng on: Tue, 10 Jun 2014 16:20:59 +0800
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo:hanshengpeng
 
 /**
  * This class provides the primary API for managing all aspects of Wi-Fi
@@ -485,10 +497,18 @@ public class WifiManager {
     public static final int WIFI_MODE_FULL_HIGH_PERF = 3;
 
     /** Anything worse than or equal to this will show 0 bars. */
+/* Vanzo:songlixin on: Thu, 15 Mar 2012 10:28:12 +0800
     private static final int MIN_RSSI = -100;
+ */
+    private static final int MIN_RSSI = FeatureOption.VANZO_FEATURE_BUILD_CTS ? -100 : -110;
+// End of Vanzo: songlixin
 
     /** Anything better than or equal to this will show the max bars. */
+/* Vanzo:songlixin on: Thu, 15 Mar 2012 10:14:31 +0800
     private static final int MAX_RSSI = -55;
+ */
+    private static final int MAX_RSSI = FeatureOption.VANZO_FEATURE_BUILD_CTS ? -55 : -65;
+// End of Vanzo: songlixin
 
     /**
      * Number of RSSI levels used in the framework to initiate
@@ -544,6 +564,95 @@ public class WifiManager {
     /* Number of currently active WifiLocks and MulticastLocks */
     private int mActiveLockCount;
 
+    // M: Added constant
+    /**
+     * Broadcast intent action indicating that no WAPI certification error.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String NO_CERTIFICATION_ACTION = "android.net.wifi.NO_CERTIFICATION";
+
+    /**
+     * Broadcast intent action notifies WifiService to clear the notification show flag
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String WIFI_CLEAR_NOTIFICATION_SHOW_FLAG_ACTION =
+        "android.net.wifi.WIFI_CLEAR_NOTIFICATION_SHOW_FLAG_ACTION";
+
+    /**
+     * The lookup key for a boolean that indicates whether the pick network activity
+     * is triggered by the notification.
+     * Retrieve with {@link android.content.Intent#getBooleanExtra(String,boolean)}.
+     * @hide
+     */
+    public static final String EXTRA_TRIGGERED_BY_NOTIFICATION = "notification";
+
+    /**
+     * Broadcast intent action indicating that WPS check pin fails.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String WIFI_WPS_CHECK_PIN_FAIL_ACTION = "android.net.wifi.WIFI_WPS_CHECK_PIN_FAIL";
+
+    /**
+     * Broadcast intent action indicating that the hotspot clients changed.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String WIFI_HOTSPOT_CLIENTS_CHANGED_ACTION = "android.net.wifi.WIFI_HOTSPOT_CLIENTS_CHANGED";
+
+    /**
+     * Broadcast intent action indicating that the hotspot overlap occurs.
+     * @hide
+     * @internal
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String WIFI_HOTSPOT_OVERLAP_ACTION = "android.net.wifi.WIFI_HOTSPOT_OVERLAP";
+
+    /**
+     * Broadcast intent action indicating that the PAC has updated for EAP-FAST.
+     * @hide
+     * @internal
+     */
+    public static final String NEW_PAC_UPDATED_ACTION = "android.net.wifi.NEW_PAC_UPDATED";
+
+    /** @hide */
+    public static final String WIFI_PPPOE_COMPLETED_ACTION = "android.net.wifi.PPPOE_COMPLETED_ACTION";
+    /** @hide */
+    public static final String EXTRA_PPPOE_STATUS = "pppoe_result_status";
+    /** @hide */
+    public static final String EXTRA_PPPOE_ERROR = "pppoe_result_error_code";
+    /** @hide */
+    public static final String PPPOE_STATUS_SUCCESS = "SUCCESS";
+    /** @hide */
+    public static final String PPPOE_STATUS_FAILURE = "FAILURE";
+    /** @hide */
+    public static final String PPPOE_STATUS_ALREADY_ONLINE = "ALREADY_ONLINE";
+
+    /** @hide */
+    public static final String WIFI_PPPOE_STATE_CHANGED_ACTION = "android.net.wifi.PPPOE_STATE_CHANGED";
+    /** @hide */
+    public static final String EXTRA_PPPOE_STATE = "pppoe_state";
+    /** @hide */
+    public static final String PPPOE_STATE_CONNECTING = "PPPOE_STATE_CONNECTING";
+    /** @hide */
+    public static final String PPPOE_STATE_CONNECTED = "PPPOE_STATE_CONNECTED";
+    /** @hide */
+    public static final String PPPOE_STATE_DISCONNECTING = "PPPOE_STATE_DISCONNECTING";
+    /** @hide */
+    public static final String PPPOE_STATE_DISCONNECTED = "PPPOE_STATE_DISCONNECTED";
+    /** M: NFC Float II @{ */
+    /** @hide */
+    public static final int TOKEN_TYPE_NDEF = 1;
+    /** @hide */
+    public static final int TOKEN_TYPE_WPS  = 2;
+    /** @} */
+
     private Context mContext;
     IWifiManager mService;
 
@@ -553,6 +662,10 @@ public class WifiManager {
     private static final Object sListenerMapLock = new Object();
 
     private static AsyncChannel sAsyncChannel;
+    ///M: modify@{
+    private static ServiceHandler sHandler;
+    private Messenger mWifiServiceMessenger;
+    ///@}
     private static CountDownLatch sConnected;
 
     private static final Object sThreadRefLock = new Object();
@@ -855,6 +968,7 @@ public class WifiManager {
      * @return true if this adapter supports 5 GHz band
      */
     public boolean is5GHzBandSupported() {
+
         return isFeatureSupported(WIFI_FEATURE_INFRA_5G);
     }
 
@@ -870,6 +984,7 @@ public class WifiManager {
      * @return true if this adapter supports WifiP2pManager (Wi-Fi Direct)
      */
     public boolean isP2pSupported() {
+
         return isFeatureSupported(WIFI_FEATURE_P2P);
     }
 
@@ -935,6 +1050,8 @@ public class WifiManager {
      * @return true if this adapter supports Tunnel Directed Link Setup
      */
     public boolean isTdlsSupported() {
+
+
         return isFeatureSupported(WIFI_FEATURE_TDLS);
     }
 
@@ -1632,6 +1749,61 @@ public class WifiManager {
     /** @hide */
     public static final int RSSI_PKTCNT_FETCH_FAILED        = BASE + 22;
 
+    /** @hide */
+    public static final int START_PPPOE                     = BASE + 23;
+    /** @hide */
+    public static final int START_PPPOE_SUCCEEDED           = BASE + 24;
+    /** @hide */
+    public static final int START_PPPOE_FAILED              = BASE + 25;
+    /** @hide */
+    public static final int STOP_PPPOE                      = BASE + 26;
+    /** @hide */
+    public static final int STOP_PPPOE_SUCCEEDED            = BASE + 27;
+    /** @hide */
+    public static final int STOP_PPPOE_FAILED               = BASE + 28;
+
+    /** M: NFC Float II @{ */
+    /** @hide */
+    public static final int START_WPS_REG                   = BASE + 41;
+    /** @hide */
+    public static final int START_WPS_ER                    = BASE + 42;
+    /** @hide */
+    public static final int GET_WPS_PIN_AND_CONNECT         = BASE + 43;
+    /** @hide */
+    public static final int GET_WPS_CRED_AND_CONNECT        = BASE + 44;
+    /** @hide */
+    public static final int GET_WPS_CRED_AND_CONNECT_FAILED = BASE + 45;
+    /** @hide */
+    public static final int GET_WPS_CRED_AND_CONNECT_SUCCEEDED = BASE + 46;
+    /** @hide */
+    public static final int WRITE_CRED_TO_NFC               = BASE + 47;
+    /** @hide */
+    public static final int WRITE_CRED_TO_NFC_FAILED        = BASE + 48;
+    /** @hide */
+    public static final int WRITE_CRED_TO_NFC_SUCCEEDED     = BASE + 49;
+    /** @hide */
+    public static final int WRITE_PIN_TO_NFC                = BASE + 50;
+    /** @hide */
+    public static final int WRITE_PIN_TO_NFC_FAILED         = BASE + 51;
+    /** @hide */
+    public static final int WRITE_PIN_TO_NFC_SUCCEEDED      = BASE + 52;
+    /** @hide */
+    public static final int GET_PIN_FROM_NFC                = BASE + 53;
+    /** @hide */
+    public static final int GET_PIN_FROM_NFC_FAILED         = BASE + 54;
+    /** @hide */
+    public static final int GET_PIN_FROM_NFC_SUCCEEDED      = BASE + 55;
+    /** @hide */
+    public static final int GET_CRED_FROM_NFC               = BASE + 56;
+    /** @hide */
+    public static final int GET_CRED_FROM_NFC_FAILED        = BASE + 57;
+    /** @hide */
+    public static final int GET_CRED_FROM_NFC_SUCCEEDED     = BASE + 58;
+    /** @} */
+    /** @hide */
+    public static final int SET_WIFI_NOT_RECONNECT_AND_SCAN             = BASE + 60;
+    /** @} */
+
     /**
      * Passed with {@link ActionListener#onFailure}.
      * Indicates that the operation failed due to an internal error.
@@ -1679,6 +1851,16 @@ public class WifiManager {
      * @hide
      */
     public static final int NOT_AUTHORIZED              = 9;
+
+    /** M: NFC Float II @{ */
+   /**
+     * WPS/P2P NFC invalid pin
+     * @hide
+     * @internal
+     */
+    public static final int WPS_INVALID_PIN             = 10;
+    /** @} */
+
 
     /**
      * Interface for callback invocation on an application action
@@ -1744,7 +1926,15 @@ public class WifiManager {
                         Log.e(TAG, "Failed to set up channel connection");
                         // This will cause all further async API calls on the WifiManager
                         // to fail and throw an exception
-                        sAsyncChannel = null;
+                        ///M:@{
+                        if (sAsyncChannel != null) {
+                            Log.d(TAG, "Disconnect sAsyncChannel for failed to set up!");
+                            sAsyncChannel.disconnect();
+                            sAsyncChannel = null;
+                        } else {
+                            Log.d(TAG, "sAsyncChannel is null when failed to set up!");
+                        }
+                        ///@}
                     }
                     sConnected.countDown();
                     break;
@@ -1755,7 +1945,15 @@ public class WifiManager {
                     Log.e(TAG, "Channel connection lost");
                     // This will cause all further async API calls on the WifiManager
                     // to fail and throw an exception
-                    sAsyncChannel = null;
+                    ///M:@{
+                    if (sAsyncChannel != null) {
+                        Log.d(TAG, "Disconnect sAsyncChannel for channel connection lost!");
+                        sAsyncChannel.disconnect();
+                        sAsyncChannel = null;
+                    } else {
+                        Log.d(TAG, "sAsyncChannel is null when channel connection lost!");
+                    }
+                    ///@}
                     getLooper().quit();
                     break;
                     /* ActionListeners grouped together */
@@ -1763,6 +1961,16 @@ public class WifiManager {
                 case WifiManager.FORGET_NETWORK_FAILED:
                 case WifiManager.SAVE_NETWORK_FAILED:
                 case WifiManager.DISABLE_NETWORK_FAILED:
+                ///M:@{
+                case WifiManager.START_PPPOE_FAILED:
+                case WifiManager.STOP_PPPOE_FAILED:
+                 ///@}
+                /** M: NFC Float II @{ */
+                case WifiManager.WRITE_CRED_TO_NFC_FAILED:
+                case WifiManager.WRITE_PIN_TO_NFC_FAILED:
+                case WifiManager.GET_WPS_CRED_AND_CONNECT_FAILED:
+                case WifiManager.GET_PIN_FROM_NFC_FAILED:
+                /** @} */
                     if (listener != null) {
                         ((ActionListener) listener).onFailure(message.arg1);
                     }
@@ -1772,6 +1980,16 @@ public class WifiManager {
                 case WifiManager.FORGET_NETWORK_SUCCEEDED:
                 case WifiManager.SAVE_NETWORK_SUCCEEDED:
                 case WifiManager.DISABLE_NETWORK_SUCCEEDED:
+                ///M:@{
+                case WifiManager.START_PPPOE_SUCCEEDED:
+                case WifiManager.STOP_PPPOE_SUCCEEDED:
+                ///@}
+                /** M: NFC Float II @{ */
+                case WifiManager.WRITE_CRED_TO_NFC_SUCCEEDED:
+                case WifiManager.WRITE_PIN_TO_NFC_SUCCEEDED:
+                case WifiManager.GET_WPS_CRED_AND_CONNECT_SUCCEEDED:
+                case WifiManager.GET_PIN_FROM_NFC_SUCCEEDED:
+                /** @} */
                     if (listener != null) {
                         ((ActionListener) listener).onSuccess();
                     }
@@ -1849,21 +2067,25 @@ public class WifiManager {
     }
 
     private void init() {
+        ///M: modify all
+        Log.d(TAG, "Enter init, sThreadRefCount:" + sThreadRefCount);
+        mWifiServiceMessenger = getWifiServiceMessenger();
+        if (mWifiServiceMessenger == null) {
+            sAsyncChannel = null;
+            Log.e(TAG, "mWifiServiceMessenger == null");
+            return;
+        }
+
         synchronized (sThreadRefLock) {
             if (++sThreadRefCount == 1) {
-                Messenger messenger = getWifiServiceMessenger();
-                if (messenger == null) {
-                    sAsyncChannel = null;
-                    return;
-                }
-
                 sHandlerThread = new HandlerThread("WifiManager");
+                Log.d(TAG, "Create WifiManager handlerthread");
+
                 sAsyncChannel = new AsyncChannel();
                 sConnected = new CountDownLatch(1);
-
                 sHandlerThread.start();
-                Handler handler = new ServiceHandler(sHandlerThread.getLooper());
-                sAsyncChannel.connect(mContext, handler, messenger);
+                sHandler = new ServiceHandler(sHandlerThread.getLooper());
+                sAsyncChannel.connect(mContext, sHandler, mWifiServiceMessenger);
                 try {
                     sConnected.await();
                 } catch (InterruptedException e) {
@@ -1895,6 +2117,7 @@ public class WifiManager {
      * @hide
      */
     public void connect(WifiConfiguration config, ActionListener listener) {
+        Log.d(TAG, "connect, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         if (config == null) throw new IllegalArgumentException("config cannot be null");
         validateChannel();
         // Use INVALID_NETWORK_ID for arg1 when passing a config object
@@ -1917,6 +2140,7 @@ public class WifiManager {
      * @hide
      */
     public void connect(int networkId, ActionListener listener) {
+        Log.d(TAG, "connect, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         if (networkId < 0) throw new IllegalArgumentException("Network id cannot be negative");
         validateChannel();
         sAsyncChannel.sendMessage(CONNECT_NETWORK, networkId, putListener(listener));
@@ -1941,6 +2165,7 @@ public class WifiManager {
      * @hide
      */
     public void save(WifiConfiguration config, ActionListener listener) {
+        Log.d(TAG, "save, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         if (config == null) throw new IllegalArgumentException("config cannot be null");
         validateChannel();
         sAsyncChannel.sendMessage(SAVE_NETWORK, 0, putListener(listener), config);
@@ -1960,6 +2185,7 @@ public class WifiManager {
      * @hide
      */
     public void forget(int netId, ActionListener listener) {
+        Log.d(TAG, "forget, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         if (netId < 0) throw new IllegalArgumentException("Network id cannot be negative");
         validateChannel();
         sAsyncChannel.sendMessage(FORGET_NETWORK, netId, putListener(listener));
@@ -1975,6 +2201,7 @@ public class WifiManager {
      * @hide
      */
     public void disable(int netId, ActionListener listener) {
+        Log.d(TAG, "disable, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
         if (netId < 0) throw new IllegalArgumentException("Network id cannot be negative");
         validateChannel();
         sAsyncChannel.sendMessage(DISABLE_NETWORK, netId, putListener(listener));
@@ -2003,6 +2230,9 @@ public class WifiManager {
      * initialized again
      */
     public void startWps(WpsInfo config, WpsCallback listener) {
+
+        Log.d(TAG, "startWps, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
+
         if (config == null) throw new IllegalArgumentException("config cannot be null");
         validateChannel();
         sAsyncChannel.sendMessage(START_WPS, 0, putListener(listener), config);
@@ -2016,6 +2246,9 @@ public class WifiManager {
      * initialized again
      */
     public void cancelWps(WpsCallback listener) {
+
+        Log.d(TAG, "cancelWps, pid:" + Process.myPid() + ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
+
         validateChannel();
         sAsyncChannel.sendMessage(CANCEL_WPS, 0, putListener(listener));
     }
@@ -2475,10 +2708,19 @@ public class WifiManager {
     }
 
     protected void finalize() throws Throwable {
+        ///M: modify all
+        Log.d(TAG, "Enter finalize, sThreadRefCount:" + sThreadRefCount);
         try {
             synchronized (sThreadRefLock) {
-                if (--sThreadRefCount == 0 && sAsyncChannel != null) {
-                    sAsyncChannel.disconnect();
+                if (--sThreadRefCount == 0 && sHandlerThread != null) {
+                    sHandlerThread.getLooper().quit();
+                    if (sAsyncChannel != null) {
+                        Log.d(TAG, "Disconnect sAsyncChannel for finalize!");
+                        sAsyncChannel.disconnect();
+                        sAsyncChannel = null;
+                    } else {
+                        Log.d(TAG, "sAsyncChannel is null when finalize!");
+                    }
                 }
             }
         } finally {
@@ -2561,6 +2803,816 @@ public class WifiManager {
         }
     }
 
+     // M: Added functions
+     /**
+      * Get hotspot preferred channels
+      * @return an String array of the hotspot perferred channels
+      * @hide
+      */
+     public String[] getAccessPointPreferredChannels() {
+         try {
+             return mService.getAccessPointPreferredChannels();
+         } catch (RemoteException e) {
+             return null;
+         }
+     }
 
+     /**
+      * Enable CTIA test
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean doCtiaTestOn() {
+         try {
+             return mService.doCtiaTestOn();
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Disable CTIA test
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean doCtiaTestOff() {
+         try {
+             return mService.doCtiaTestOff();
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Set rate
+      * @param rate The value to be set
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean doCtiaTestRate(int rate) {
+         try {
+             return mService.doCtiaTestRate(rate);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Set the TX power enable or disable
+      * @param enabled {@code true} to enable, {@code false} to disable.
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean setTxPowerEnabled(boolean enabled) {
+         try {
+             return mService.setTxPowerEnabled(enabled);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Set the TX power offset
+      * @param offset The offset value to be set
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean setTxPower(int offset) {
+         try {
+             return mService.setTxPower(offset);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+
+     /**
+      * Start hotspot WPS function
+      * @param config WPS configuration
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      * @internal
+      */
+     public boolean startApWps(WpsInfo config) {
+         try {
+             mService.startApWps(config);
+             return true;
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Return the hotspot clients
+      * @return a list of hotspot client in the form of a list
+      * of {@link HotspotClient} objects.
+      * @hide
+      * @internal
+      */
+     public List<HotspotClient> getHotspotClients() {
+         try {
+             return mService.getHotspotClients();
+         } catch (RemoteException e) {
+             return null;
+         }
+     }
+
+     /**
+      * Return the IP address of the client
+      * @param deviceAddress The mac address of the hotspot client
+      * @hide
+      * @internal
+      */
+     public String getClientIp(String deviceAddress) {
+         try {
+             return mService.getClientIp(deviceAddress);
+         } catch (RemoteException e) {
+             return null;
+         }
+     }
+
+     /**
+      * Block the client
+      * @param client The hotspot client to be blocked
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      * @internal
+      */
+     public boolean blockClient(HotspotClient client) {
+         try {
+             return mService.blockClient(client);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Unblock the client
+      * @param client The hotspot client to be unblocked
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      * @internal
+      */
+     public boolean unblockClient(HotspotClient client) {
+         try {
+             return mService.unblockClient(client);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Set hotspot probe request enable or disable
+      * @param enabled {@code true} to enable, {@code false} to disable.
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean setApProbeRequestEnabled(boolean enabled) {
+         try {
+             return mService.setApProbeRequestEnabled(enabled);
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * Suspend the WiFi available notification
+      * @param type Suspend notification type
+      * @return {@code true} if the operation succeeds else {@code false}
+      * @hide
+      */
+     public boolean suspendNotification(int type) {
+         try {
+             mService.suspendNotification(type);
+             return true;
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+     /**
+      * @hide
+      */
+     public String getWifiStatus() {
+         if (null == mService) {
+             Log.d(TAG, "getWifiStatus, fail, null == mService");
+             return "";
+         }
+         try {
+             return mService.getWifiStatus();
+         } catch (RemoteException e) {
+             return "";
+         }
+     }
+
+     /**
+      * @hide
+      */
+     public void setPowerSavingMode(boolean mode) {
+         if (null == mService) {
+             Log.d(TAG, "setPowerSavingMode, fail, null == mService");
+             return ;
+         }
+         try {
+             mService.setPowerSavingMode(mode);
+         } catch (RemoteException e) {
+             return;
+         }
+     }
+
+     /**
+        * poor link threshold value access
+        * @return poor link threadshould for good link or poor link
+        * @hide
+        */
+      public double getPoorLinkThreshold(boolean isGood) {
+           try {
+               return mService.getPoorLinkThreshold(isGood);
+           } catch (RemoteException e) {
+               return -1;
+           }
+       }
+
+      /**
+        * poor link threshold value access
+        * @return poor link threadshould for good link or poor link
+        * @hide
+        */
+      public boolean setPoorLinkThreshold(String key, double value) {
+           try {
+               return mService.setPoorLinkThreshold(key, value);
+           } catch (RemoteException e) {
+               return false;
+           }
+       }
+
+      /**
+        * poor link threshold value access
+        * @param enable enable poor link profiling at EM
+        * @return poor link threadshould for good link or poor link
+        * @hide
+        */
+    public void setPoorLinkProfilingOn(boolean enable) {
+        try {
+            mService.setPoorLinkProfilingOn(enable);
+        } catch (RemoteException e) {
+            Log.d(TAG, "setPoorLinkProfilingOn error");
+        }
+
+    }
+
+
+
+     /**
+      * Start PPPOE Dial Up
+      * @param config PPPOE configuration
+      * @hide
+      */
+     public void startPPPOE(PPPOEConfig config) {
+         Log.d("WifiManager", "DEBUG", new Throwable());
+         if (config == null) throw new IllegalArgumentException("config cannot be null");
+         validateChannel();
+         sAsyncChannel.sendMessage(START_PPPOE, 0, putListener(null), config);
+     }
+
+     /**
+      * Stop PPPOE Dial Up
+      * @hide
+      */
+     public void stopPPPOE() {
+         Log.d("WifiManager", "DEBUG", new Throwable());
+         validateChannel();
+         sAsyncChannel.sendMessage(STOP_PPPOE, 0, putListener(null));
+     }
+
+     /**
+      * Return PPPOE info
+      * @hide
+      */
+     public PPPOEInfo getPPPOEInfo() {
+         Log.d("WifiManager", "DEBUG", new Throwable());
+         try {
+             return mService.getPPPOEInfo();
+         } catch (RemoteException e) {
+             return null;
+         }
+     }
+     /** M: NFC Float II @{ */
+    /**
+      * Start Wi-fi Protected Setup Reg.
+      *
+      * @param config WPS configuration
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      * @internal
+      */
+     public void startWpsRegistrar(WpsInfo config, WpsCallback listener) {
+         if (config == null) {
+            throw new IllegalArgumentException("config cannot be null");
+         }
+         validateChannel();
+         sAsyncChannel.sendMessage(START_WPS_REG, 0, putListener(listener), config);
+     }
+
+     /**
+      * Start Wi-fi Protected Setup Er
+      *
+      * @param config WPS configuration
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      * @internal
+      */
+     public void startWpsExternalRegistrar(WpsInfo config, WpsCallback listener) {
+         if (config == null) {
+            throw new IllegalArgumentException("config cannot be null");
+         }
+         validateChannel();
+         sAsyncChannel.sendMessage(START_WPS_ER, 0, putListener(listener), config);
+     }
+
+     /**
+      * Get WPS pin and connect.
+      *
+      * @param tokenType Token type
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      * @internal
+      */
+     public void connectWithWpsPin(int tokenType, WpsCallback listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(GET_WPS_PIN_AND_CONNECT, tokenType, putListener(listener));
+     }
+
+     /**
+      * Get WPS credential and connect
+      *
+      * @param tokenType Token type
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      */
+     public void getWpsCredAndConnect(int tokenType, ActionListener listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(GET_WPS_CRED_AND_CONNECT, tokenType, putListener(listener));
+     }
+
+     /**
+      * Write pin to Nfc
+      *
+      * @param tokenType Token type
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      */
+     public void writePinToNfc(int tokenType, ActionListener listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(WRITE_PIN_TO_NFC, tokenType, putListener(listener));
+     }
+
+     /**
+      * Write credential to Nfc
+      *
+      * @param tokenType Token type
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      */
+     public void writeCredToNfc(int tokenType, ActionListener listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(WRITE_CRED_TO_NFC, tokenType, putListener(listener));
+     }
+
+     /**
+      * Get pin from Nfc
+      *
+      * @param tokenType Token type
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      */
+     public void getPinFromNfc(int tokenType, ActionListener listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(GET_PIN_FROM_NFC, tokenType, putListener(listener));
+     }
+
+     /**
+      * Get credential from Nfc
+      *
+      * @param listener for callbacks on success or failure. Can be null.
+      * @hide
+      */
+     public void getCredFromNfc(ActionListener listener) {
+         validateChannel();
+         sAsyncChannel.sendMessage(GET_CRED_FROM_NFC, 0, putListener(listener));
+     }
+     /** @} */
+
+     ///M: Add API For Set WOWLAN Mode @{
+     /**
+      * Set Driver WOWLAN normal mode
+      * This API is used by Setting UI
+      * @return {@code true} if the operation succeeds, {@code false} otherwise
+      * @hide
+      */
+     public boolean setWoWlanNormalMode() {
+         if (null == mService) {
+             Log.d(TAG, "setWoWlanNormalMode, fail, null == mService");
+             return false;
+         }
+
+         try {
+             return  mService.setWoWlanNormalMode();
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+     /**
+      * Set Driver WOWLAN magic mode
+      * This API is used by Setting UI
+      * @return {@code true} if the operation succeeds, {@code false} otherwise
+      * @hide
+      */
+     public boolean setWoWlanMagicMode() {
+         if (null == mService) {
+             Log.d(TAG, "setWoWlanMagicMode, fail, null == mService");
+             return false;
+         }
+
+         try {
+             return  mService.setWoWlanMagicMode();
+
+         } catch (RemoteException e) {
+             return false;
+         }
+     }
+
+    ///M: for proprietary use, not reconnect or scan during a period time
+    /**
+     *  for proprietary use, not reconnect or scan during a period time.
+     * @param enable set enable true means do not reconnect and scan.
+     * Set enable= false back to normal.
+     * @param period units: seconds. a timeout value bring back to normal ,
+     * use only when enable =true.
+     * @return {@code true} if the operation succeeds,{@code false} otherwise
+     * @hide
+     * @internal
+     */
+    public boolean stopReconnectAndScan(boolean enable, int period) {
+        Log.d(TAG, "stopReconnectAndScan, " + enable + " period=" + period);
+        Log.d(TAG, "stopReconnectAndScan, pid:" + Process.myPid() +
+            ", tid:" + Process.myTid() + ", uid:" + Process.myUid());
+
+        validateChannel();
+        if (enable == true) {
+            sAsyncChannel.sendMessage(SET_WIFI_NOT_RECONNECT_AND_SCAN, 1, period);
+        } else {
+            sAsyncChannel.sendMessage(SET_WIFI_NOT_RECONNECT_AND_SCAN, 0, 0);
+        }
+        return true;
+    }
+
+
+    /**
+     * Returns true if the connectivity IC supports 5G band.
+     * @return {@code true} if the Wi-Fi 5G band is supported,{@code false} otherwise
+     * @hide
+     */
+    public boolean is5gBandSupported() {
+        if (null == mService) {
+             Log.d(TAG, "is5gBandSupported, fail, null == mService");
+             return false;
+         }
+
+         try {
+             return  mService.is5gBandSupported();
+         } catch (RemoteException e) {
+             return false;
+         }
+    }
+
+    /**
+     * Returns true if set hotspot optimization success.
+     * @param enable set enable true means enable.
+     * @return {@code true}  if set hotspot optimization success,{@code false} otherwise
+     * @hide
+     */
+    public boolean setHotspotOptimization(boolean enable) {
+        if (null == mService) {
+             Log.d(TAG, "setHotspotOptimization, fail, null == mService");
+             return false;
+         }
+
+         try {
+             return  mService.setHotspotOptimization(enable);
+         } catch (RemoteException e) {
+             return false;
+         }
+    }
+
+    /**
+     * Returns true if set auto join scan when connected success.
+     * @param enable set enable true means enable.
+     * @return {@code true}  if set auto join scan when connected success,{@code false} otherwise
+     * @hide
+     */
+    public boolean setAutoJoinScanWhenConnected(boolean enable) {
+        if (null == mService) {
+             Log.d(TAG, "setHotspotOptimization, fail, null == mService");
+             return false;
+         }
+
+         try {
+             return  mService.setAutoJoinScanWhenConnected(enable);
+         } catch (RemoteException e) {
+             return false;
+         }
+    }
+
+    /**
+     * Get test environment.
+     * @param channel Wi-Fi channel
+     * @param result Output parameter for storing info
+     * @return {@code true}  if it's suitable for test,{@code false} otherwise
+     * @hide
+     */
+    public boolean isSuitableForTest(int channel, HashMap<Integer, Integer> result) {
+        String env = null;
+        boolean testResult = false;
+        if (null == mService) {
+            Log.e(TAG, "isSuitableForTest fail, mService is null!");
+            return testResult;
+        }
+        try {
+            env = mService.getTestEnv(channel);
+        } catch (RemoteException e) {
+            return testResult;
+        }
+        if (env == null) {
+            return testResult;
+        } else {
+            String[] lines = env.split("\n");
+            if (lines.length > 1) {
+                String[] tmp = lines[1].split(":");
+                if (tmp.length == 2 && tmp[1].equals("1")) {
+                    testResult = true;
+                }
+            }
+            if (lines.length > 2 && result != null) {
+                for (int i = 2; i < lines.length; i++) {
+                    String[] nameValue = lines[i].split(",");
+                    if (nameValue.length == 2) {
+                        try {
+                            int ch = Integer.parseInt(nameValue[0].substring(6));
+                            int num = Integer.parseInt(nameValue[1].substring(6));
+                            result.put(ch, num);
+                        } catch (NumberFormatException e) {
+                            Log.e(TAG, "NumberFormatException, lines[" + i + "]:" + lines[i]);
+                        }
+                    }
+                }
+            }
+        }
+        Log.d(TAG, "isSuitableForTest result:" + testResult);
+        return testResult;
+    }
+
+   /**
+       * For Passpoint.
+       * @param type type
+       * @param username username
+       * @param passwd passwd
+       * @param imsi imsi
+       * @param root_ca root_ca
+       * @param realm realm
+       * @param fqdn fqdn
+       * @param client_ca client_ca
+       * @param milenage milenage
+       * @param simslot simslot
+       * @param priority priority
+       * @param roamingconsortium roamingconsortium
+       * @param mcc_mnc mcc_mnc
+       * @return 1  if it's success,0 otherwise
+        * @hide
+        */
+    public int addHsCredential(String type, String username, String passwd, String imsi,
+        String root_ca, String realm, String fqdn, String client_ca, String milenage,
+        String simslot, String priority, String roamingconsortium, String mcc_mnc) {
+        Log.d(TAG, "addHsCredential, type = " + type + " username = " + username +
+            " passwd = " + passwd + " imsi = " + imsi + " root_ca = " + root_ca + " realm = " +
+            realm + " fqdn = " + fqdn + " client_ca = " + client_ca + " milenage = " + milenage +
+            " simslot = " + simslot + " priority = " + priority + " roamingconsortium = " +
+            roamingconsortium + " mcc_mnc = " + mcc_mnc);
+
+        if (null == mService) {
+            Log.d(TAG, "addHsCredential, fail, null == mService");
+            return -1;
+        }
+
+        try {
+            return mService.addHsCredential(type, username, passwd, imsi, root_ca, realm,
+                fqdn, client_ca, milenage, simslot, priority, roamingconsortium, mcc_mnc);
+        } catch (RemoteException e) {
+            return -1;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param index index
+        * @param name name
+        * @param value value
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean setHsCredential(int index, String name, String value) {
+        Log.d(TAG, "setHsCredential, index = " + index + " name = " + name +  " value = " + value);
+
+        if (null == mService) {
+            Log.d(TAG, "setHsCredential, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.setHsCredential(index, name, value);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @return HS credential
+        * @hide
+        */
+    public String getHsCredential() {
+        Log.d(TAG, "getHsCredential");
+
+        if (null == mService) {
+            Log.d(TAG, "getHsCredential, fail, null == mService");
+            return "";
+        }
+
+        try {
+            return mService.getHsCredential();
+        } catch (RemoteException e) {
+            return "";
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param index index
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean delHsCredential(int index) {
+        Log.d(TAG, "delHsCredential, index = " + index);
+
+        if (null == mService) {
+            Log.d(TAG, "delHsCredential, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.delHsCredential(index);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @return HS status
+        * @hide
+        */
+    public String getHsStatus() {
+        Log.d(TAG, "getHsStatus");
+
+        if (null == mService) {
+            Log.d(TAG, "getHsStatus, fail, null == mService");
+            return "";
+        }
+
+        try {
+            String results = mService.getHsStatus();
+            if (results == null) {
+                Log.d(TAG, "getHsStatus, fail, results == null");
+                return "";
+            }
+
+            Log.d(TAG, "getHsStatus, results = " + results);
+            return results;
+        } catch (RemoteException e) {
+            return "";
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @return HS network
+        * @hide
+        */
+    public String getHsNetwork() {
+        Log.d(TAG, "getHsNetwork");
+
+        if (null == mService) {
+            Log.d(TAG, "getHsNetwork, fail, null == mService");
+            return "";
+        }
+
+        try {
+            return mService.getHsNetwork();
+        } catch (RemoteException e) {
+            return "";
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param index index
+        * @param name name
+        * @param value value
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean setHsNetwork(int index, String name, String value) {
+        Log.d(TAG, "setHsNetwork, index = " + index + " name = " + name + " value = " + value);
+
+        if (null == mService) {
+            Log.d(TAG, "setHsNetwork, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.setHsNetwork(index, name, value);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param index index
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean delHsNetwork(int index) {
+        Log.d(TAG, "delHsNetwork, index = " + index);
+
+        if (index < 0) {
+            Log.d(TAG, "delHsNetwork, fail, index < 0");
+            return false;
+        }
+
+        if (null == mService) {
+            Log.d(TAG, "delHsNetwork, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.delHsNetwork(index);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param enabled enabled
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean enableHS(boolean enabled) {
+        Log.d(TAG, "enableHS, enabled = " + enabled);
+
+        if (null == mService) {
+            Log.d(TAG, "enableHS, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.enableHS(enabled);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+        * For Passpoint.
+        * @param index index
+        * @param value value
+        * @return {@code true}  if it's success,{@code false} otherwise
+        * @hide
+        */
+    public boolean setHsPreferredNetwork(int index, int value) {
+        Log.d(TAG, "setHsPreferredNetwork, index = " + index + " value = " + value);
+
+        if (null == mService) {
+            Log.d(TAG, "setHsPreferredNetwork, fail, null == mService");
+            return false;
+        }
+
+        try {
+            return mService.setHsPreferredNetwork(index, value);
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
 
 }

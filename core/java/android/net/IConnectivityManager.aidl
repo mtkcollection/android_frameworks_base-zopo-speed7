@@ -162,4 +162,50 @@ interface IConnectivityManager
     boolean addVpnAddress(String address, int prefixLength);
     boolean removeVpnAddress(String address, int prefixLength);
     boolean setUnderlyingNetworksForVpn(in Network[] networks);
+
+    /// M: For automatic NS-IOT test
+    String[] getTetheredIfacePairs();
+
+    /** M: support Tether dediated APN feature  for OP03APNSettingExt*/
+    boolean isTetheringChangeDone();
+
+    /**
+     * M: ipv6 tethering
+     * @hide
+     */
+    void setTetheringIpv6Enable(boolean enable);
+
+    /**
+     * M: ipv6 tethering
+     * @hide
+     */
+    boolean getTetheringIpv6Enable();
+    /**
+     * M: ePDG handover usage
+     * @hide
+     */
+    void connectToRadio(int radioType);
+
+    /** M: Get airplane mode is on or off
+     * @return true if airplane mode on
+     * @hide
+     */
+    boolean isAirplaneModeOn();
+
+    /**
+     * M: Used for connection disconnect cause.
+     * @hide
+     */
+    int getDisconnectCause(in int networkType);
+
+    /**
+     * M: Retry for pending request for WFC.
+     * @hide
+     */
+    void retryConnectToRadio(int radioType);
+    /**
+     * M: ePDG handover usage
+     * @hide
+     */
+    void sendRoveOutAlert();
 }

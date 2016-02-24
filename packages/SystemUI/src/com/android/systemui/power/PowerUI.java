@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +39,8 @@ import android.util.Slog;
 import com.android.systemui.SystemUI;
 import com.android.systemui.statusbar.phone.PhoneStatusBar;
 
+import com.mediatek.systemui.statusbar.util.SIMHelper;
+import com.mediatek.xlog.Xlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
@@ -56,6 +63,10 @@ public class PowerUI extends SystemUI {
     private final int[] mLowBatteryReminderLevels = new int[2];
 
     private long mScreenOffTime = -1;
+
+    /// M: [SystemUI] Support Smartbook Feature.
+    /// M: Support Laptop Battery Status.
+    boolean mIsLaptopBatteryPresent = false;
 
     public void start() {
         mPowerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
@@ -140,6 +151,8 @@ public class PowerUI extends SystemUI {
             filter.addAction(Intent.ACTION_USER_SWITCHED);
             filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGING);
             filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+            /// M: Support play low battery sound when IPO reboot
+            filter.addAction("android.intent.action.ACTION_SHUTDOWN_IPO");
             mContext.registerReceiver(this, filter, null, mHandler);
             updateSaverMode();
         }
@@ -152,13 +165,67 @@ public class PowerUI extends SystemUI {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if (action.equals(Intent.ACTION_BATTERY_CHANGED)) {
+                /// M: [SystemUI] Support Smartbook Feature. @{
+                /// M: Support Laptop Battery Status.
+                if (SIMHelper.isMtkSmartBookSupport()) {
+                    final boolean isPresent = intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT_SMARTBOOK, false);
+                    if (isPresent != mIsLaptopBatteryPresent) {
+                        /// Reset the status for laptop battery.
+                        mWarnings.dismissLowBatteryWarning();
+                        mBatteryLevel = 100;
+                        mBatteryStatus = BatteryManager.BATTERY_STATUS_UNKNOWN;
+                        mPlugType = 0;
+                        mInvalidCharger = 0;
+                        /// Update the variable.
+                        mIsLaptopBatteryPresent = isPresent;
+                    }
+                }
+                /// @}
+
                 final int oldBatteryLevel = mBatteryLevel;
-                mBatteryLevel = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 100);
+                /// M: [SystemUI] Support Smartbook Feature. @{
+                /// M: Support Laptop Battery Status.
+                if (SIMHelper.isMtkSmartBookSupport()) {
+                    mBatteryLevel = (mIsLaptopBatteryPresent)
+                        ? intent.getIntExtra(BatteryManager.EXTRA_LEVEL_SMARTBOOK, 100)
+                        : intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 100);
+                }
+                /// @}
+                else
+                    mBatteryLevel = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 100);
                 final int oldBatteryStatus = mBatteryStatus;
-                mBatteryStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS,
+                /// M: [SystemUI] Support Smartbook Feature. @{
+                /// M: Support Laptop Battery Status.
+                if (SIMHelper.isMtkSmartBookSupport()) {
+                    mBatteryStatus = (mIsLaptopBatteryPresent)
+                        ? intent.getIntExtra(BatteryManager.EXTRA_STATUS_SMARTBOOK,
+                            BatteryManager.BATTERY_STATUS_UNKNOWN)
+                        : intent.getIntExtra(BatteryManager.EXTRA_STATUS,
+                            BatteryManager.BATTERY_STATUS_UNKNOWN);
+                }
+                /// @}
+                else
+                    mBatteryStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS,
                         BatteryManager.BATTERY_STATUS_UNKNOWN);
                 final int oldPlugType = mPlugType;
                 mPlugType = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 1);
+
+                /// M: [SystemUI] Support Smartbook Feature. @{
+                /// M: Support Laptop Battery Status.
+                if (SIMHelper.isMtkSmartBookSupport()) {
+                    Xlog.d(TAG, "mIsLaptopBatteryPresent = " + mIsLaptopBatteryPresent
+                        + "mBatteryStatus = " + mBatteryStatus);
+                    if (mIsLaptopBatteryPresent) {
+                        if (mBatteryStatus == BatteryManager.BATTERY_STATUS_CHARGING
+                            || mBatteryStatus == BatteryManager.BATTERY_STATUS_FULL) {
+                            mPlugType = BatteryManager.BATTERY_PLUGGED_AC;
+                        } else {
+                            mPlugType = 0;
+                        }
+                    }
+                }
+                /// @}
+
                 final int oldInvalidCharger = mInvalidCharger;
                 mInvalidCharger = intent.getIntExtra(BatteryManager.EXTRA_INVALID_CHARGER, 0);
 
@@ -214,6 +281,11 @@ public class PowerUI extends SystemUI {
                 updateSaverMode();
             } else if (PowerManager.ACTION_POWER_SAVE_MODE_CHANGING.equals(action)) {
                 setSaverMode(intent.getBooleanExtra(PowerManager.EXTRA_POWER_SAVE_MODE, false));
+            } else if (action.equals("android.intent.action.ACTION_SHUTDOWN_IPO")) {
+                Xlog.d(TAG, "Intent android.intent.action.ACTION_SHUTDOWN_IPO mBatteryLevel = "+ mBatteryLevel);
+                /// M: Support show low battery dialog in IPO boot.
+                mBatteryLevel = 100;
+                mWarnings.dismissLowBatteryWarning();
             } else {
                 Slog.w(TAG, "unknown intent: " + intent);
             }

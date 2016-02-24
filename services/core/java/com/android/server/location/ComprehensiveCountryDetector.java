@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,7 +63,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class ComprehensiveCountryDetector extends CountryDetectorBase {
 
     private final static String TAG = "CountryDetector";
-    /* package */ static final boolean DEBUG = false;
+    /* package */ static final boolean DEBUG = true; //false;
 
     /**
      * Max length of logs to maintain for debugging.

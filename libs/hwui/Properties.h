@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -236,7 +241,7 @@ enum DebugLevel {
 #define DEFAULT_PATCH_CACHE_SIZE 128 // in kB
 #define DEFAULT_GRADIENT_CACHE_SIZE 0.5f
 #define DEFAULT_DROP_SHADOW_CACHE_SIZE 2.0f
-#define DEFAULT_FBO_CACHE_SIZE 0
+#define DEFAULT_FBO_CACHE_SIZE 16
 
 #define DEFAULT_TEXTURE_CACHE_FLUSH_RATE 0.6f
 

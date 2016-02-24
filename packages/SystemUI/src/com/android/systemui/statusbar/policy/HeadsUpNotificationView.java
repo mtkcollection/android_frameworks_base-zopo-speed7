@@ -287,8 +287,12 @@ public class HeadsUpNotificationView extends FrameLayout implements SwipeHelper.
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
+        Log.v(TAG, "========HeadsUpNotificationView onInterceptTouchEvent()========");
         if (DEBUG) Log.v(TAG, "onInterceptTouchEvent()");
         if (SystemClock.elapsedRealtime() < mStartTouchTime) {
+            Log.v(TAG, "onInterceptTouchEvent() SystemClock.elapsedRealtime < mStartTouchTime"
+                + " SystemClock.elapsedRealtime=" + SystemClock.elapsedRealtime()
+                + " mStartTouchTime=" + mStartTouchTime);
             return true;
         }
         return mEdgeSwipeHelper.onInterceptTouchEvent(ev)
@@ -314,6 +318,7 @@ public class HeadsUpNotificationView extends FrameLayout implements SwipeHelper.
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        Log.v(TAG, "========HeadsUpNotificationView onTouchEvent()========");
         if (SystemClock.elapsedRealtime() < mStartTouchTime) {
             return false;
         }
@@ -483,6 +488,9 @@ public class HeadsUpNotificationView extends FrameLayout implements SwipeHelper.
                     if (DEBUG_EDGE_SWIPE) Log.d(TAG, "action done" );
                     mConsuming = false;
                     break;
+            }
+            if (mConsuming) {
+                Log.d(TAG, "EdgeSwipeHelper onInterceptTouchEvent action=" + ev.getActionMasked());
             }
             return mConsuming;
         }

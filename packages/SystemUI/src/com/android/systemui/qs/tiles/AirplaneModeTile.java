@@ -22,13 +22,22 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.provider.Settings.Global;
+import android.util.Log;
 
 import com.android.systemui.R;
 import com.android.systemui.qs.GlobalSetting;
 import com.android.systemui.qs.QSTile;
 
+import com.mediatek.systemui.ext.BehaviorSet;
+import com.mediatek.systemui.ext.PluginFactory;
+import com.mediatek.xlog.Xlog;
+
 /** Quick settings tile: Airplane mode **/
 public class AirplaneModeTile extends QSTile<QSTile.BooleanState> {
+    /// M: For debug
+    private static final String TAG = "AirplaneModeTile";
+    private static final boolean DEBUG = true;
+
     private final AnimationIcon mEnable =
             new AnimationIcon(R.drawable.ic_signal_airplane_enable_animation);
     private final AnimationIcon mDisable =
@@ -36,14 +45,29 @@ public class AirplaneModeTile extends QSTile<QSTile.BooleanState> {
     private final GlobalSetting mSetting;
 
     private boolean mListening;
-
+    /// M: add flightMode sync for CT @{
+    private boolean mAirplaneMode;
+    private boolean mAirplaneModeReceived;
+    /// M: add flightMode sync for CT @}
     public AirplaneModeTile(Host host) {
         super(host);
 
         mSetting = new GlobalSetting(mContext, mHandler, Global.AIRPLANE_MODE_ON) {
             @Override
             protected void handleValueChanged(int value) {
-                handleRefreshState(value);
+                if (DEBUG) {
+                     Log.d(TAG, "handleValueChanged: " + value);
+                }
+                /// M: refreshState just receive intent, add flightMode sync for CT, @{
+                if (PluginFactory.getStatusBarPlugin(mContext).customizeBehaviorSet()
+                        == BehaviorSet.OP09_BS) {
+                    Log.d(TAG, "handleValueChanged, op flow, not refresh and return");
+                    return;
+                }
+                /// M: add flightMode sync for CT @}
+                /// M: Fix potential race condition
+                refreshState();
+                //handleRefreshState(value);
             }
         };
     }
@@ -69,8 +93,22 @@ public class AirplaneModeTile extends QSTile<QSTile.BooleanState> {
     @Override
     protected void handleUpdateState(BooleanState state, Object arg) {
         final int value = arg instanceof Integer ? (Integer)arg : mSetting.getValue();
-        final boolean airplaneMode = value != 0;
+        boolean airplaneMode = value != 0;
+        if (DEBUG) {
+            Log.d(TAG, "handleUpdateState: " + airplaneMode + ", " + value + ", " + arg);
+        }
+        /// M: add flightMode sync for CT @{
+        if (PluginFactory.getStatusBarPlugin(mContext).customizeBehaviorSet()
+                == BehaviorSet.OP09_BS && mAirplaneModeReceived) {
+            Xlog.d(TAG, "handleUpdateState(), op flow, mAirplaneMode: " + mAirplaneMode);
+            state.value = mAirplaneMode;
+            airplaneMode = mAirplaneMode;
+            mAirplaneModeReceived = false;
+        } else {
+            Xlog.d(TAG, "handleUpdateState(), common flow");
+        /// M: add flightMode sync for CT @}
         state.value = airplaneMode;
+        }
         state.visible = true;
         state.label = mContext.getString(R.string.quick_settings_airplane_mode_label);
         if (airplaneMode) {
@@ -110,6 +148,12 @@ public class AirplaneModeTile extends QSTile<QSTile.BooleanState> {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (Intent.ACTION_AIRPLANE_MODE_CHANGED.equals(intent.getAction())) {
+                /// M: add flightMode sync for CT @{
+                Xlog.d(TAG, "onReceive(), intent: " + intent.getAction());
+                mAirplaneMode = intent.getBooleanExtra("state", false);
+                mAirplaneModeReceived = true;
+                Xlog.d(TAG, "updateAirplaneMode: intent state= " + mAirplaneMode);
+                /// M: add flightMode sync for CT @}
                 refreshState();
             }
         }

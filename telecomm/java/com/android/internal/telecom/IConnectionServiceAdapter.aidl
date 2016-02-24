@@ -16,6 +16,7 @@
 
 package com.android.internal.telecom;
 
+import android.os.Bundle;
 import android.app.PendingIntent;
 import android.net.Uri;
 import android.telecom.ConnectionRequest;
@@ -80,5 +81,23 @@ oneway interface IConnectionServiceAdapter {
 
     void setConferenceableConnections(String callId, in List<String> conferenceableCallIds);
 
-    void addExistingConnection(String callId, in ParcelableConnection connection);
+   void addExistingConnection(String callId, in ParcelableConnection connection);
+
+    /* M: call control part start */
+    void notifyConnectionLost(String callId);
+
+    void notifyActionFailed(String callId, int action);
+    void notifySSNotificationToast(String callId, int notiType, int type, int code, String number, int index);
+    void notifyNumberUpdate(String callId, String number);
+    void notifyIncomingInfoUpdate(String callId, int type, String alphaid, int cli_validity);
+    void notifyCdmaCallAccepted(String callId);
+    /* M: call control part end */
+
+    /// M: For volte @{
+    void updateExtras(String callId, in Bundle bundle);
+    void handleCreateConferenceComplete(
+            String conferenceId,
+            in ConnectionRequest request,
+            in ParcelableConference conference);
+    /// @}
 }

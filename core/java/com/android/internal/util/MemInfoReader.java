@@ -48,6 +48,21 @@ public final class MemInfoReader {
         return mInfos[Debug.MEMINFO_FREE] * 1024;
     }
 
+    /// M: @{ Amount of RAM that cahces that are mapped in to processes.
+    /**
+     * Amount of RAM used to map devices, files, or libraries using the mmap command.
+     */
+    public long getMappedSize() {
+        return mInfos[Debug.MEMINFO_MAPPED] * 1024;
+    }
+    /**
+     * Amount of RAM used for file buffers.
+     */
+    public long getBuffersSize() {
+        return mInfos[Debug.MEMINFO_BUFFERS] * 1024;
+    }
+    /// @}
+
     /**
      * Amount of RAM that the kernel is being used for caches, not counting caches
      * that are mapped in to processes.

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +67,9 @@ import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraOpe
 import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraCloseEnterAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraCloseExitAnimation;
 
+import static com.android.server.wm.WindowManagerService.DEBUG_APP_TRANSITIONS;
+import static com.android.server.wm.WindowManagerService.DEBUG_ANIM;
+
 // State management of app transitions.  When we are preparing for a
 // transition, mNextAppTransition will be the kind of transition to
 // perform or TRANSIT_NONE if we are not waiting.  If we are waiting,
@@ -69,9 +77,9 @@ import static com.android.internal.R.styleable.WindowAnimation_wallpaperIntraClo
 // made visible or hidden at the next transition.
 public class AppTransition implements Dump {
     private static final String TAG = "AppTransition";
-    private static final boolean DEBUG_APP_TRANSITIONS =
+    /*private static final boolean DEBUG_APP_TRANSITIONS =
             WindowManagerService.DEBUG_APP_TRANSITIONS;
-    private static final boolean DEBUG_ANIM = WindowManagerService.DEBUG_ANIM;
+    private static final boolean DEBUG_ANIM = WindowManagerService.DEBUG_ANIM;*/
 
 
     /** Not set up for a transition. */
@@ -950,6 +958,143 @@ public class AppTransition implements Dump {
         return a;
     }
 
+    /// M: BMW. Modify transition animation for multiwindow  @{ 
+    Animation loadAnimation(WindowManager.LayoutParams lp, int transit, boolean enter,
+            int appWidth, int appHeight, int orientation, Rect containingFrame, Rect contentInsets,
+            boolean isFullScreen, boolean isVoiceInteraction, boolean isFloating) {
+        Animation a;
+        if (isVoiceInteraction && (transit == TRANSIT_ACTIVITY_OPEN
+                || transit == TRANSIT_TASK_OPEN
+                || transit == TRANSIT_TASK_TO_FRONT)) {
+            a = loadAnimationRes(lp, enter
+                    ? com.android.internal.R.anim.voice_activity_open_enter
+                    : com.android.internal.R.anim.voice_activity_open_exit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "[BMW]applyAnimation voice:"
+                    + " anim=" + a + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (isVoiceInteraction && (transit == TRANSIT_ACTIVITY_CLOSE
+                || transit == TRANSIT_TASK_CLOSE
+                || transit == TRANSIT_TASK_TO_BACK)) {
+            a = loadAnimationRes(lp, enter
+                    ? com.android.internal.R.anim.voice_activity_close_enter
+                    : com.android.internal.R.anim.voice_activity_close_exit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "[BMW]applyAnimation voice:"
+                    + " anim=" + a + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_CUSTOM) {
+            a = loadAnimationRes(mNextAppTransitionPackage, enter ?
+                    mNextAppTransitionEnter : mNextAppTransitionExit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "[BMW]applyAnimation:"
+                    + " anim=" + a + " nextAppTransition=ANIM_CUSTOM"
+                    + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_SCALE_UP) {
+            a = createScaleUpAnimationLocked(transit, enter, appWidth, appHeight);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "[BMW]applyAnimation:"
+                    + " anim=" + a + " nextAppTransition=ANIM_SCALE_UP"
+                    + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP ||
+                mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN) {
+            mNextAppTransitionScaleUp =
+                    (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP);
+            a = createThumbnailEnterExitAnimationLocked(getThumbnailTransitionState(enter),
+                    appWidth, appHeight, transit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) {
+                String animName = mNextAppTransitionScaleUp ?
+                        "ANIM_THUMBNAIL_SCALE_UP" : "ANIM_THUMBNAIL_SCALE_DOWN";
+                Slog.v(TAG, "[BMW]applyAnimation:"
+                        + " anim=" + a + " nextAppTransition=" + animName
+                        + " transit=" + transit + " isEntrance=" + enter
+                        + " Callers=" + Debug.getCallers(3));
+            }
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP ||
+                mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN) {
+            mNextAppTransitionScaleUp =
+                    (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP);
+            a = createAspectScaledThumbnailEnterExitAnimationLocked(
+                    getThumbnailTransitionState(enter), appWidth, appHeight, orientation,
+                    transit, containingFrame, contentInsets, isFullScreen);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) {
+                String animName = mNextAppTransitionScaleUp ?
+                        "ANIM_THUMBNAIL_ASPECT_SCALE_UP" : "ANIM_THUMBNAIL_ASPECT_SCALE_DOWN";
+                Slog.v(TAG, "[BMW]applyAnimation:"
+                        + " anim=" + a + " nextAppTransition=" + animName
+                        + " transit=" + transit + " isEntrance=" + enter
+                        + " Callers=" + Debug.getCallers(3));
+            }
+        } else {
+            int animAttr = 0;
+            switch (transit) {
+                case TRANSIT_ACTIVITY_OPEN:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.activity_open_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.activity_open_exit);
+                    break;
+                case TRANSIT_ACTIVITY_CLOSE:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.activity_close_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.activity_close_exit);
+                    break;
+                case TRANSIT_TASK_OPEN:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_open_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_open_exit);
+                    break;
+                case TRANSIT_TASK_CLOSE:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_close_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_close_exit);
+                    break;
+                case TRANSIT_TASK_TO_FRONT:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_open_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_open_exit);
+                    break;
+                case TRANSIT_TASK_TO_BACK:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_close_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.task_close_exit);
+                    break;
+                case TRANSIT_WALLPAPER_OPEN:
+                    a = enter
+                            ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_open_enter)
+                            : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_open_exit);
+                    break;
+                case TRANSIT_WALLPAPER_CLOSE:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_close_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_close_exit);
+                    break;
+                case TRANSIT_WALLPAPER_INTRA_OPEN:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_intra_open_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_intra_open_exit);
+                    break;
+                case TRANSIT_WALLPAPER_INTRA_CLOSE:
+                    a = enter
+                        ? AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_intra_close_enter)
+                        : AnimationUtils.loadAnimation(mContext, com.mediatek.internal.R.anim.wallpaper_intra_close_exit);
+                    break;
+                default:
+                    a = null;
+                    break;
+            }
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "[BMW]applyAnimation:"
+                    + " anim=" + a
+                    + " animAttr=0x" + Integer.toHexString(animAttr)
+                    + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        }
+        return a;
+    }
+    /// @}
+    
     void postAnimationCallback() {
         if (mNextAppTransitionCallback != null) {
             mH.sendMessage(mH.obtainMessage(H.DO_ANIMATION_CALLBACK, mNextAppTransitionCallback));

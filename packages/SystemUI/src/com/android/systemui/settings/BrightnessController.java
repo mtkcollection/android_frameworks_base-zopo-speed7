@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +37,11 @@ import android.widget.ImageView;
 
 import java.util.ArrayList;
 
+/* Vanzo:songlixin on: Fri, 25 Apr 2014 15:50:09 +0800
+ */
+import java.io.File;
+// End of Vanzo: songlixin
+
 public class BrightnessController implements ToggleSlider.Listener {
     private static final String TAG = "StatusBar.BrightnessController";
     private static final boolean SHOW_AUTOMATIC_ICON = false;
@@ -48,7 +58,12 @@ public class BrightnessController implements ToggleSlider.Listener {
     private final Context mContext;
     private final ImageView mIcon;
     private final ToggleSlider mControl;
+/* Vanzo:wangyi on: Fri, 11 Apr 2014 19:38:14 +0800
+ * disable auto brightness when no alsps
     private final boolean mAutomaticAvailable;
+ */
+    private boolean mAutomaticAvailable = true;
+// End of Vanzo: wangyi
     private final IPowerManager mPower;
     private final CurrentUserTracker mUserTracker;
     private final Handler mHandler;
@@ -149,6 +164,14 @@ public class BrightnessController implements ToggleSlider.Listener {
 
         mAutomaticAvailable = context.getResources().getBoolean(
                 com.android.internal.R.bool.config_automatic_brightness_available);
+/* Vanzo:wangyi on: Fri, 11 Apr 2014 19:39:47 +0800
+ * disable auto brightness when no alsps
+ */
+        File file = new File("/sys/bus/platform/drivers/als_ps/ps");
+        if (!file.exists()) {
+            mAutomaticAvailable = false;
+        }
+// End of Vanzo:wangyi
         mPower = IPowerManager.Stub.asInterface(ServiceManager.getService("power"));
     }
 
@@ -271,6 +294,8 @@ public class BrightnessController implements ToggleSlider.Listener {
         } else {
             mControl.setChecked(false);
             updateIcon(false /*automatic*/);
+            //M: [ALPS01748251] hide the Toggle slider 
+            mControl.hideToggle();
         }
     }
 

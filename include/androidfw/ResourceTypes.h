@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2005 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1187,7 +1192,7 @@ struct ResTable_config
     // (ie, request with no mcc should not match a particular mcc's data)
     // settings is the requested settings
     bool match(const ResTable_config& settings) const;
-
+    
     // Get the string representation of the locale component of this
     // Config. The maximum size of this representation will be
     // |RESTABLE_MAX_LOCALE_LEN| (including a terminating '\0').

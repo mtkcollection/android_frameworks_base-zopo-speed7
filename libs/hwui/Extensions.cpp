@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +46,11 @@ namespace uirenderer {
 
 // Debug
 #if DEBUG_EXTENSIONS
-    #define EXT_LOGD(...) ALOGD(__VA_ARGS__)
+    #define EXT_LOGD(...) \
+    {                                \
+        if (g_HWUI_debug_extensions) \
+            ALOGD(__VA_ARGS__); \
+    }
 #else
     #define EXT_LOGD(...)
 #endif

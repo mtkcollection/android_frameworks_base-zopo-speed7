@@ -25,7 +25,13 @@ public abstract class LightsManager {
     public static final int LIGHT_ID_ATTENTION = 5;
     public static final int LIGHT_ID_BLUETOOTH = 6;
     public static final int LIGHT_ID_WIFI = 7;
-    public static final int LIGHT_ID_COUNT = 8;
+
+/* Vanzo:luanshijun on: Thu, 23 Apr 2015 14:47:28 +0800
+ * add breathlight support
+ */
+    public static final int LIGHT_ID_BREATH = 8;
+    public static final int LIGHT_ID_COUNT = 9;
+// End of Vanzo:luanshijun
 
     public abstract Light getLight(int id);
 }

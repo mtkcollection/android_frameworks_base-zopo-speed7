@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +47,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteQueryBuilder;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
@@ -59,10 +65,11 @@ import android.util.Log;
 import android.util.LruCache;
 import android.util.Slog;
 import android.util.SparseArray;
+import com.mediatek.audioprofile.AudioProfileManager;
 
 public class SettingsProvider extends ContentProvider {
     private static final String TAG = "SettingsProvider";
-    private static final boolean LOCAL_LOGV = false;
+    private static final boolean LOCAL_LOGV = true;
 
     private static final boolean USER_CHECK_THROWS = true;
 
@@ -481,6 +488,9 @@ public class SettingsProvider extends ContentProvider {
 
         ensureAndroidIdIsSet(userHandle);
 
+        /// M:
+        initDialogSequenceValue(userHandle);
+
         startAsyncCachePopulation(userHandle);
     }
 
@@ -521,6 +531,11 @@ public class SettingsProvider extends ContentProvider {
 
     // Slurp all values (if sane in number & size) into cache.
     private void fullyPopulateCache(DatabaseHelper dbHelper, String table, SettingsCache cache) {
+        //M: Fix CR ALPS00461556(start)
+         if (dbHelper == null || cache == null) {
+             return;
+         }
+        //M: Fix CR ALPS00461556(end)
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.query(
             table,
@@ -569,7 +584,22 @@ public class SettingsProvider extends ContentProvider {
                 }
 
                 final SecureRandom random = new SecureRandom();
-                final String newAndroidIdValue = Long.toHexString(random.nextLong());
+                /// M: ALPS00441755, assure the random string cannot be converted to float {@
+                String newAndroidIdValue = Long.toHexString(random.nextLong());
+                boolean jumpWhileFlag = false;
+                int index = 10;
+                while ((index > 0) && (!jumpWhileFlag)) {
+                    --index;
+                    try {
+                        Float.parseFloat(newAndroidIdValue);
+                        newAndroidIdValue = Long.toHexString(random.nextLong());
+                        Log.d(TAG, "create random again: " + newAndroidIdValue);
+                    } catch (NumberFormatException e) {
+                        Log.d(TAG, "NumberFormatException e ,  android_id " + newAndroidIdValue);
+                        jumpWhileFlag = true;
+                    }
+                }
+                ///  @}
                 final ContentValues values = new ContentValues();
                 values.put(Settings.NameValueTable.NAME, Settings.Secure.ANDROID_ID);
                 values.put(Settings.NameValueTable.VALUE, newAndroidIdValue);
@@ -856,6 +886,8 @@ public class SettingsProvider extends ContentProvider {
             Bundle value = cache.get(key);
             if (value != null) {
                 if (value != TOO_LARGE_TO_CACHE_MARKER) {
+                    Log.d(TAG, "lookupValue table " + table + " cache contains Key "
+                            + key + " , value = " + value);
                     return value;
                 }
                 // else we fall through and read the value from disk
@@ -866,6 +898,7 @@ public class SettingsProvider extends ContentProvider {
                 // give us access, which could takes hundreds of
                 // milliseconds.  And we're very likely being called
                 // from somebody's UI thread...
+                Log.d(TAG, "lookupValue table " + table + " cache.fullyMatchesDisk() " + key);
                 return NULL_SETTING;
             }
         }
@@ -877,7 +910,10 @@ public class SettingsProvider extends ContentProvider {
                               null, null, null, null);
             if (cursor != null && cursor.getCount() == 1) {
                 cursor.moveToFirst();
-                return cache.putIfAbsent(key, cursor.getString(0));
+                Bundle bValue = cache.putIfAbsent(key, cursor.getString(0));
+                Log.d(TAG, "lookupValue table " + table + " cache.putIfAbsent Key "
+                        + key + " , value = " + bValue);
+                return bValue;
             }
         } catch (SQLiteException e) {
             Log.w(TAG, "settings lookup error", e);
@@ -1085,6 +1121,7 @@ public class SettingsProvider extends ContentProvider {
 
         SqlArguments args = new SqlArguments(url);
         if (TABLE_FAVORITES.equals(args.table)) {
+            Log.d(TAG, "table favorites , return null");
             return null;
         }
 
@@ -1322,10 +1359,61 @@ public class SettingsProvider extends ContentProvider {
                 Bundle bundle = cache.get(name);
                 if (bundle == null) return false;
                 String oldValue = bundle.getPairValue();
+                Log.d(TAG, "redundant, old Value: " + String.valueOf(oldValue)
+                        + " new value: " + String.valueOf(value));
                 if (oldValue == null && value == null) return true;
                 if ((oldValue == null) != (value == null)) return false;
                 return oldValue.equals(value);
             }
+        }
+    }
+
+    /// M : add by mtk , get the default ringtone uri
+    private Uri getDefaultUri(Context context, int type) {
+        String uriName = null;
+        switch (type) {
+            case RingtoneManager.TYPE_NOTIFICATION:
+                 uriName = AudioProfileManager.KEY_DEFAULT_NOTIFICATION;
+                 break;
+            case RingtoneManager.TYPE_RINGTONE:
+                 uriName = AudioProfileManager.KEY_DEFAULT_RINGTONE;
+                 break;
+            case RingtoneManager.TYPE_VIDEO_CALL:
+                 uriName = AudioProfileManager.KEY_DEFAULT_VIDEO_CALL;
+                 break;
+            default:
+                 Log.d(TAG, "getDefaultUri: unexpectedType = " + type);
+                 break;
+         }
+         String uriValue = uriName != null ? Settings.System.getString(
+                            context.getContentResolver(), uriName) : null;
+         return uriValue != null ? Uri.parse(uriValue) : null;
+     }
+
+    /**
+     *  M:Reset power on sequence dialog sequence value
+     */
+    private boolean initDialogSequenceValue(int userHandle) {
+        final Cursor c = queryForUser(Settings.System.CONTENT_URI,
+                new String[] { Settings.NameValueTable.VALUE },
+                Settings.NameValueTable.NAME + "=?",
+                new String[] { Settings.System.DIALOG_SEQUENCE_SETTINGS }, null,
+                userHandle);
+        try {
+            final String value = c.moveToNext() ? c.getString(0) : null;
+            if (value != null) {
+                Log.d(TAG, "reset DIALOG_SEQUENCE_SETTINGS to default");
+                final ContentValues values = new ContentValues();
+                values.put(Settings.NameValueTable.NAME, Settings.System.DIALOG_SEQUENCE_SETTINGS);
+                values.put(Settings.NameValueTable.VALUE, Settings.System.DIALOG_SEQUENCE_DEFAULT);
+                final Uri uri = insertForUser(Settings.System.CONTENT_URI, values, userHandle);
+                if (uri == null) {
+                    return false;
+                }
+            }
+            return true;
+        } finally {
+            c.close();
         }
     }
 }

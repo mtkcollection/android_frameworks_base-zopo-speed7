@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1177,11 +1182,17 @@ final class FragmentManagerImpl extends FragmentManager implements LayoutInflate
     public void hideFragment(Fragment fragment, int transition, int transitionStyle) {
         if (DEBUG) Log.v(TAG, "hide: " + fragment);
         if (!fragment.mHidden) {
+            // If there is a showing or hidding animation, stop it immediately.
+            if (fragment.mAnimatingShowHide != null) {
+                fragment.mAnimatingShowHide.end();
+            }
+
             fragment.mHidden = true;
             if (fragment.mView != null) {
                 Animator anim = loadAnimator(fragment, transition, false,
                         transitionStyle);
                 if (anim != null) {
+                    fragment.mAnimatingShowHide = anim;
                     anim.setTarget(fragment.mView);
                     // Delay the actual hide operation until the animation finishes, otherwise
                     // the fragment will just immediately disappear
@@ -1189,6 +1200,7 @@ final class FragmentManagerImpl extends FragmentManager implements LayoutInflate
                     anim.addListener(new AnimatorListenerAdapter() {
                         @Override
                         public void onAnimationEnd(Animator animation) {
+                            finalFragment.mAnimatingShowHide = null;
                             if (finalFragment.mView != null) {
                                 finalFragment.mView.setVisibility(View.GONE);
                             }
@@ -1209,12 +1221,26 @@ final class FragmentManagerImpl extends FragmentManager implements LayoutInflate
     public void showFragment(Fragment fragment, int transition, int transitionStyle) {
         if (DEBUG) Log.v(TAG, "show: " + fragment);
         if (fragment.mHidden) {
+            // If there is a showing or hidding animation, stop it immediately.
+            if (fragment.mAnimatingShowHide != null) {
+                fragment.mAnimatingShowHide.end();
+            }
+
             fragment.mHidden = false;
             if (fragment.mView != null) {
                 Animator anim = loadAnimator(fragment, transition, true,
                         transitionStyle);
                 if (anim != null) {
+                    fragment.mAnimatingShowHide = anim;
                     anim.setTarget(fragment.mView);
+
+                    final Fragment finalFragment = fragment;
+                    anim.addListener(new AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(Animator animation) {
+                            finalFragment.mAnimatingShowHide = null;
+                        }
+                    });
                     anim.start();
                 }
                 fragment.mView.setVisibility(View.VISIBLE);

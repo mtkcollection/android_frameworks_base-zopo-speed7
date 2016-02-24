@@ -690,7 +690,7 @@
     <string name="permlab_accessNetworkState" msgid="4951027964348974773">"view network connections"</string>
     <string name="permdesc_accessNetworkState" msgid="8318964424675960975">"Allows the app to view information about network connections such as which networks exist and are connected."</string>
     <string name="permlab_createNetworkSockets" msgid="8018758136404323658">"full network access"</string>
-    <string name="permdesc_createNetworkSockets" msgid="3403062187779724185">"Allows the app to create network sockets and use customised network protocols. The browser and other applications provide means to send data to the Internet, so this permission is not required to send data to the Internet."</string>
+    <string name="permdesc_createNetworkSockets" msgid="3403062187779724185">"Allows the app to create network sockets and use custom network protocols. The browser and other applications provide means to send data to the internet, so this permission is not required to send data to the internet."</string>
     <string name="permlab_writeApnSettings" msgid="505660159675751896">"change/intercept network settings and traffic"</string>
     <string name="permdesc_writeApnSettings" msgid="5333798886412714193">"Allows the app to change network settings and to intercept and inspect all network traffic, for example to change the proxy and port of any APN. Malicious apps may monitor, redirect or modify network packets without your knowledge."</string>
     <string name="permlab_changeNetworkState" msgid="958884291454327309">"change network connectivity"</string>

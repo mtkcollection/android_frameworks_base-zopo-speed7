@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -267,6 +272,12 @@ class AppWindowToken extends WindowToken {
             }
 
             win.mService.removeWindowLocked(win.mSession, win);
+            /// M:[ALPS01754942]Avoid the empty size JE for allAppWindows due to
+            /// removeWindowLocked possibly remove all windows in allAppWindows @{
+            if (allAppWindows.size() == 0) {
+                break;
+            }
+            /// @}
         }
     }
 

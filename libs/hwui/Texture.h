@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +23,7 @@
 #define ANDROID_HWUI_TEXTURE_H
 
 #include <GLES2/gl2.h>
+#include "Debug.h"
 
 namespace android {
 namespace uirenderer {
@@ -125,6 +131,7 @@ public:
     ~AutoTexture() {
         if (mTexture && mTexture->cleanup) {
             mTexture->deleteTexture();
+            TT_REMOVE(mTexture->id, "[Texture.h] ~AutoTexture -");
             delete mTexture;
         }
     }

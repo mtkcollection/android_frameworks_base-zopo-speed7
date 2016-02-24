@@ -772,6 +772,7 @@ public class RippleDrawable extends LayerDrawable {
         // Draw everything except the mask.
         final ChildDrawable[] array = mLayerState.mChildren;
         final int count = mLayerState.mNum;
+        // Draw everything except the mask.
         for (int i = 0; i < count; i++) {
             if (array[i].mId != R.id.mask) {
                 array[i].mDrawable.draw(canvas);

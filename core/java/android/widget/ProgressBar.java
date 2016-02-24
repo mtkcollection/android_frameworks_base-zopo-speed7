@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,9 +44,11 @@ import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.graphics.drawable.shapes.RoundRectShape;
 import android.graphics.drawable.shapes.Shape;
+import android.os.Debug;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.Pools.SynchronizedPool;
 import android.view.Gravity;
 import android.view.RemotableViewMethod;
@@ -195,6 +202,8 @@ import java.util.ArrayList;
  */
 @RemoteView
 public class ProgressBar extends View {
+    private static final String LOG_TAG = "ProgressBar";
+
     private static final int MAX_LEVEL = 10000;
     private static final int TIMEOUT_SEND_ACCESSIBILITY_EVENT = 200;
 
@@ -1304,6 +1313,10 @@ public class ProgressBar extends View {
     
     @android.view.RemotableViewMethod
     synchronized void setProgress(int progress, boolean fromUser) {
+        Log.d(LOG_TAG, "setProgress, old = " + mProgress + ", new = " + progress +
+                ", max = " + mMax +
+                ", backtrace = " + Debug.getCallers(5) + ", this = " + this);
+
         if (mIndeterminate) {
             return;
         }
@@ -1336,6 +1349,10 @@ public class ProgressBar extends View {
      */
     @android.view.RemotableViewMethod
     public synchronized void setSecondaryProgress(int secondaryProgress) {
+        Log.d(LOG_TAG, "setSecondaryProgress, old = " + mSecondaryProgress +
+                ", new = " + secondaryProgress + ", max = " + mMax +
+                ", backtrace = " + Debug.getCallers(5) + ", this = " + this);
+
         if (mIndeterminate) {
             return;
         }
@@ -1413,6 +1430,9 @@ public class ProgressBar extends View {
      */
     @android.view.RemotableViewMethod
     public synchronized void setMax(int max) {
+        Log.d(LOG_TAG, "setMax, old = " + mMax + ", new = " + max +
+                ", backtrace = " + Debug.getCallers(5) + ", this = " + this);
+
         if (max < 0) {
             max = 0;
         }
@@ -1564,7 +1584,7 @@ public class ProgressBar extends View {
     @Override
     public void invalidateDrawable(Drawable dr) {
         if (!mInDrawing) {
-            if (verifyDrawable(dr)) {
+            if (dr == mProgressDrawable || dr == mIndeterminateDrawable) {
                 final Rect dirty = dr.getBounds();
                 final int scrollX = mScrollX + mPaddingLeft;
                 final int scrollY = mScrollY + mPaddingTop;
@@ -1812,9 +1832,8 @@ public class ProgressBar extends View {
         }
         if (mRefreshProgressRunnable != null) {
             removeCallbacks(mRefreshProgressRunnable);
-        }
-        if (mRefreshProgressRunnable != null && mRefreshIsPosted) {
-            removeCallbacks(mRefreshProgressRunnable);
+            /// M: Reset mRefreshIsPosted to ensure next refresh action can work properly.
+            mRefreshIsPosted = false;
         }
         if (mAccessibilityEventSender != null) {
             removeCallbacks(mAccessibilityEventSender);

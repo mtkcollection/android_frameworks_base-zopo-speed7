@@ -20,7 +20,7 @@
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
     <view class="android.widget.NumberPicker$CustomEditText"
-        android:textAppearance="?android:attr/textAppearanceMedium"
+        android:textAppearance="?android:attr/textAppearanceMedium" 
         android:id="@+id/numberpicker_input"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"

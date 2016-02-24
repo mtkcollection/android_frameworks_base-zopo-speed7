@@ -18,16 +18,114 @@ package com.android.systemui.statusbar.policy;
 
 import com.android.systemui.R;
 import com.android.systemui.statusbar.policy.NetworkControllerImpl.MobileSignalController.MobileIconGroup;
+import com.mediatek.systemui.ext.NetworkType;
+/* Vanzo:yinjun on: Tue, 10 Mar 2015 21:19:51 +0800
+ * remove networkType icon
+ */
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
 
-class TelephonyIcons {
+/**
+  * TelephonyIcons.
+ */
+public class TelephonyIcons {
     //***** Signal strength icons
+    /// M: config for show the ! icon or not @{
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_EXCLAMATION  = {
+          R.drawable.stat_sys_signal_0,
+          R.drawable.stat_sys_signal_1,
+          R.drawable.stat_sys_signal_2,
+          R.drawable.stat_sys_signal_3,
+          R.drawable.stat_sys_signal_4,
+    };
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_FULL = {
+          R.drawable.stat_sys_signal_0_fully,
+          R.drawable.stat_sys_signal_1_fully,
+          R.drawable.stat_sys_signal_2_fully,
+          R.drawable.stat_sys_signal_3_fully,
+          R.drawable.stat_sys_signal_4_fully,
+    };
+
+    static final int[] QS_TELEPHONY_SIGNAL_STRENGTH_EXCLAMATION = {
+          R.drawable.ic_qs_signal_0,
+          R.drawable.ic_qs_signal_1,
+          R.drawable.ic_qs_signal_2,
+          R.drawable.ic_qs_signal_3,
+          R.drawable.ic_qs_signal_4,
+    };
+
+    static final int[] QS_TELEPHONY_SIGNAL_STRENGTH_FULL = {
+          R.drawable.ic_qs_signal_full_0,
+          R.drawable.ic_qs_signal_full_1,
+          R.drawable.ic_qs_signal_full_2,
+          R.drawable.ic_qs_signal_full_3,
+          R.drawable.ic_qs_signal_full_4,
+    };
+
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_ROAMING_EXCLAMATION  = {
+          R.drawable.stat_sys_signal_0,
+          R.drawable.stat_sys_signal_1,
+          R.drawable.stat_sys_signal_2,
+          R.drawable.stat_sys_signal_3,
+          R.drawable.stat_sys_signal_4,
+    };
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL = {
+          R.drawable.stat_sys_signal_0_fully,
+          R.drawable.stat_sys_signal_1_fully,
+          R.drawable.stat_sys_signal_2_fully,
+          R.drawable.stat_sys_signal_3_fully,
+          R.drawable.stat_sys_signal_4_fully,
+    };
+
+    static final int TELEPHONY_LEVEL_COUNT = TELEPHONY_SIGNAL_STRENGTH_FULL.length;
+    static int[][] TELEPHONY_SIGNAL_STRENGTH = new int[2][TELEPHONY_LEVEL_COUNT];
+    static int[][] QS_TELEPHONY_SIGNAL_STRENGTH = new int[2][TELEPHONY_LEVEL_COUNT];
+    static int[][] TELEPHONY_SIGNAL_STRENGTH_ROAMING = new int[2][TELEPHONY_LEVEL_COUNT];
+
+    static void initTelephonyIcon() {
+        if (NetworkControllerImpl.mShowNormalIcon) {
+/* Vanzo:zhongjunyu on: Mon, 20 Apr 2015 20:46:49 +0800
+ * implement#107212,replace signal icon
+            TELEPHONY_SIGNAL_STRENGTH[0] = TELEPHONY_SIGNAL_STRENGTH_FULL;
+            TELEPHONY_SIGNAL_STRENGTH[1] = TELEPHONY_SIGNAL_STRENGTH_FULL;
+            QS_TELEPHONY_SIGNAL_STRENGTH[0] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL;
+            QS_TELEPHONY_SIGNAL_STRENGTH[1] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL;
+            TELEPHONY_SIGNAL_STRENGTH_ROAMING[0] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL;
+            TELEPHONY_SIGNAL_STRENGTH_ROAMING[1] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL;
+ */
+            if (FeatureOption.VANZO_FEATURE_REPLACE_SIGNAL_ICON) {
+                TELEPHONY_SIGNAL_STRENGTH[0] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL_OLD;
+                TELEPHONY_SIGNAL_STRENGTH[1] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL_OLD;
+                QS_TELEPHONY_SIGNAL_STRENGTH[0] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL_OLD;
+                QS_TELEPHONY_SIGNAL_STRENGTH[1] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL_OLD;
+                TELEPHONY_SIGNAL_STRENGTH_ROAMING[0] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL_OLD;
+                TELEPHONY_SIGNAL_STRENGTH_ROAMING[1] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL_OLD;
+            } else {
+                TELEPHONY_SIGNAL_STRENGTH[0] = TELEPHONY_SIGNAL_STRENGTH_FULL;
+                TELEPHONY_SIGNAL_STRENGTH[1] = TELEPHONY_SIGNAL_STRENGTH_FULL;
+                QS_TELEPHONY_SIGNAL_STRENGTH[0] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL;
+                QS_TELEPHONY_SIGNAL_STRENGTH[1] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL;
+                TELEPHONY_SIGNAL_STRENGTH_ROAMING[0] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL;
+                TELEPHONY_SIGNAL_STRENGTH_ROAMING[1] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL;
+            }
+// End of Vanzo:zhongjunyu
+        } else {
+            TELEPHONY_SIGNAL_STRENGTH[0] = TELEPHONY_SIGNAL_STRENGTH_EXCLAMATION;
+            TELEPHONY_SIGNAL_STRENGTH[1] = TELEPHONY_SIGNAL_STRENGTH_FULL;
+            QS_TELEPHONY_SIGNAL_STRENGTH[0] = QS_TELEPHONY_SIGNAL_STRENGTH_EXCLAMATION;
+            QS_TELEPHONY_SIGNAL_STRENGTH[1] = QS_TELEPHONY_SIGNAL_STRENGTH_FULL;
+            TELEPHONY_SIGNAL_STRENGTH_ROAMING[0] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_EXCLAMATION;
+            TELEPHONY_SIGNAL_STRENGTH_ROAMING[1] = TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL;
+        }
+    }
+    /// M: config for show the ! icon or not @}
 
     static final int TELEPHONY_NUM_LEVELS = 5;
 
     //GSM/UMTS
     static final int TELEPHONY_NO_NETWORK = R.drawable.stat_sys_signal_null;
 
-    static final int[][] TELEPHONY_SIGNAL_STRENGTH = {
+    /*static final int[][] TELEPHONY_SIGNAL_STRENGTH = {
         { R.drawable.stat_sys_signal_0,
           R.drawable.stat_sys_signal_1,
           R.drawable.stat_sys_signal_2,
@@ -38,11 +136,11 @@ class TelephonyIcons {
           R.drawable.stat_sys_signal_2_fully,
           R.drawable.stat_sys_signal_3_fully,
           R.drawable.stat_sys_signal_4_fully }
-    };
+    };*/
 
     static final int QS_TELEPHONY_NO_NETWORK = R.drawable.ic_qs_signal_no_signal;
 
-    static final int[][] QS_TELEPHONY_SIGNAL_STRENGTH = {
+    /*static final int[][] QS_TELEPHONY_SIGNAL_STRENGTH = {
         { R.drawable.ic_qs_signal_0,
           R.drawable.ic_qs_signal_1,
           R.drawable.ic_qs_signal_2,
@@ -66,7 +164,7 @@ class TelephonyIcons {
           R.drawable.stat_sys_signal_2_fully,
           R.drawable.stat_sys_signal_3_fully,
           R.drawable.stat_sys_signal_4_fully }
-    };
+    };*/
 
     static final int[] QS_DATA_R = {
         R.drawable.ic_qs_signal_r,
@@ -141,6 +239,26 @@ class TelephonyIcons {
                 R.drawable.ic_qs_signal_h
     };
 
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:50:55 +0800
+ * support h plus show
+ */
+    static final int[][] DATA_H_PLUS = {
+            { R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus },
+            { R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus,
+              R.drawable.stat_sys_data_fully_connected_h_plus }
+    };
+
+    static final int[] QS_DATA_H_PLUS = {
+                R.drawable.ic_qs_signal_h_plus,
+                R.drawable.ic_qs_signal_h_plus
+    };
+// End of Vanzo:tanglei
+
     //CDMA
     // Use 3G icons for EVDO data and 1x icons for 1XRTT data
     static final int[][] DATA_1X = {
@@ -199,6 +317,11 @@ class TelephonyIcons {
     static final int ICON_G = R.drawable.stat_sys_data_fully_connected_g;
     static final int ICON_E = R.drawable.stat_sys_data_fully_connected_e;
     static final int ICON_H = R.drawable.stat_sys_data_fully_connected_h;
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:58:13 +0800
+ * support h plus show
+ */
+    static final int ICON_H_PLUS = R.drawable.stat_sys_data_fully_connected_h_plus;
+// End of Vanzo:tanglei
     static final int ICON_3G = R.drawable.stat_sys_data_fully_connected_3g;
     static final int ICON_4G = R.drawable.stat_sys_data_fully_connected_4g;
     static final int ICON_1X = R.drawable.stat_sys_data_fully_connected_1x;
@@ -295,6 +418,25 @@ class TelephonyIcons {
             TelephonyIcons.QS_DATA_H
             );
 
+/* Vanzo:tanglei on: Sat, 18 Jul 2015 15:49:30 +0800
+ * support h plus show
+ */
+    static final MobileIconGroup H_PLUS = new MobileIconGroup(
+            "H",
+            TelephonyIcons.TELEPHONY_SIGNAL_STRENGTH,
+            TelephonyIcons.QS_TELEPHONY_SIGNAL_STRENGTH,
+            AccessibilityContentDescriptions.PHONE_SIGNAL_STRENGTH,
+            0, 0,
+            TelephonyIcons.TELEPHONY_NO_NETWORK,
+            TelephonyIcons.QS_TELEPHONY_NO_NETWORK,
+            AccessibilityContentDescriptions.PHONE_SIGNAL_STRENGTH[0],
+            R.string.accessibility_data_connection_3_5g,
+            TelephonyIcons.ICON_H_PLUS,
+            false,
+            TelephonyIcons.QS_DATA_H_PLUS
+            );
+// End of Vanzo:tanglei
+
     static final MobileIconGroup FOUR_G = new MobileIconGroup(
             "4G",
             TelephonyIcons.TELEPHONY_SIGNAL_STRENGTH,
@@ -339,5 +481,109 @@ class TelephonyIcons {
             false,
             TelephonyIcons.QS_DATA_R
             );
+
+    /// M: Support "Service Network Type on Statusbar". @{
+    /**
+     * M: getNetworkTypeIcon: Get Network icon by network type.
+     * @param networkType : Network Type
+     * @return  Network icon ID
+     */
+    static public int getNetworkTypeIcon(NetworkType networkType) {
+/* Vanzo:yinjun on: Tue, 10 Mar 2015 21:16:45 +0800
+ * remove networkType icon
+ */
+        if (FeatureOption.VANZO_FEATURE_REMOVE_NETWORKTYPE_ICON) {
+            return -1;
+        }
+// End of Vanzo: yinjun
+        if (networkType == NetworkType.Type_G) {
+            return R.drawable.stat_sys_network_type_g;
+        } else if (networkType == NetworkType.Type_E) {
+            return R.drawable.stat_sys_network_type_e;
+        } else if (networkType == NetworkType.Type_3G) {
+            return R.drawable.stat_sys_network_type_3g;
+        } else if (networkType == NetworkType.Type_4G) {
+            return R.drawable.stat_sys_network_type_4g;
+        } else if (networkType == NetworkType.Type_1X) {
+            return R.drawable.stat_sys_network_type_1x;
+        } else if (networkType == NetworkType.Type_1X3G) {
+            return R.drawable.stat_sys_network_type_3g;
+        } else {
+            return -1;
+        }
+    }
+    /// M: Support "Service Network Type on Statusbar". @}
+/* Vanzo:zhongjunyu on: Mon, 20 Apr 2015 20:46:32 +0800
+ * implement#107212,replace signal icon
+ */
+    static final int[] QS_TELEPHONY_SIGNAL_STRENGTH_FULL_OLD = {
+        R.drawable.ic_qs_signal_full_0_old,
+        R.drawable.ic_qs_signal_full_1_old,
+        R.drawable.ic_qs_signal_full_2_old,
+        R.drawable.ic_qs_signal_full_3_old,
+        R.drawable.ic_qs_signal_full_4_old,
+    };
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_FULL_OLD = {
+        R.drawable.stat_sys_signal_0_fully_old,
+        R.drawable.stat_sys_signal_1_fully_old,
+        R.drawable.stat_sys_signal_2_fully_old,
+        R.drawable.stat_sys_signal_3_fully_old,
+        R.drawable.stat_sys_signal_4_fully_old,
+    };
+    static final int[] TELEPHONY_SIGNAL_STRENGTH_ROAMING_FULL_OLD = {
+        R.drawable.stat_sys_signal_0_fully_old,
+        R.drawable.stat_sys_signal_1_fully_old,
+        R.drawable.stat_sys_signal_2_fully_old,
+        R.drawable.stat_sys_signal_3_fully_old,
+        R.drawable.stat_sys_signal_4_fully_old,
+    };
+// End of Vanzo:zhongjunyu
+
+    /// M: Add roaming data nework type icon @{
+    static final int ROAMING_ICON_LTE = R.drawable.stat_sys_data_fully_connected_lte_roam;
+    static final int ROAMING_ICON_G = R.drawable.stat_sys_data_fully_connected_g_roam;
+    static final int ROAMING_ICON_E = R.drawable.stat_sys_data_fully_connected_e_roam;
+    static final int ROAMING_ICON_H = R.drawable.stat_sys_data_fully_connected_h_roam;
+    static final int ROAMING_ICON_3G = R.drawable.stat_sys_data_fully_connected_3g_roam;
+    static final int ROAMING_ICON_4G = R.drawable.stat_sys_data_fully_connected_4g_roam;
+    static final int ROAMING_ICON_1X = R.drawable.stat_sys_data_fully_connected_1x_roam;
+
+    /**
+     *
+     * Get roaming data type icon id.
+     *
+     * @param dataType Data type icon id
+     * @return Roaming data type icon id
+     */
+    static public int getRoamingDataTypeIcon(int dataType) {
+        int icon = ROAMING_ICON;
+        switch (dataType) {
+        case ICON_LTE:
+            icon = ROAMING_ICON_LTE;
+            break;
+        case ICON_G:
+            icon = ROAMING_ICON_G;
+            break;
+        case ICON_E:
+            icon = ROAMING_ICON_E;
+            break;
+        case ICON_H:
+            icon = ROAMING_ICON_H;
+            break;
+        case ICON_3G:
+            icon = ROAMING_ICON_3G;
+            break;
+        case ICON_4G:
+            icon = ROAMING_ICON_4G;
+            break;
+        case ICON_1X:
+            icon = ROAMING_ICON_1X;
+            break;
+        default:
+            break;
+        }
+        return icon;
+    }
+    /// M: Add roaming data nework type icon @}
 }
 

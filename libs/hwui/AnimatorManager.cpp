@@ -41,6 +41,7 @@ AnimatorManager::~AnimatorManager() {
 }
 
 void AnimatorManager::addAnimator(const sp<BaseRenderNodeAnimator>& animator) {
+    Mutex::Autolock _l(mLock);
     animator->incStrong(0);
     animator->attach(&mParent);
     mNewAnimators.push_back(animator.get());
@@ -64,6 +65,7 @@ static void move_all(T& source, T& dest) {
 }
 
 void AnimatorManager::pushStaging() {
+    mLock.lock();
     if (mNewAnimators.size()) {
         LOG_ALWAYS_FATAL_IF(!mAnimationHandle,
                 "Trying to start new animators on %p (%s) without an animation handle!",
@@ -71,6 +73,7 @@ void AnimatorManager::pushStaging() {
         // Since this is a straight move, we don't need to inc/dec the ref count
         move_all(mNewAnimators, mAnimators);
     }
+    mLock.unlock();
     for (vector<BaseRenderNodeAnimator*>::iterator it = mAnimators.begin(); it != mAnimators.end(); it++) {
         (*it)->pushStaging(mAnimationHandle->context());
     }
@@ -146,6 +149,7 @@ static void endStagingAnimator(BaseRenderNodeAnimator* animator) {
 }
 
 void AnimatorManager::endAllStagingAnimators() {
+    Mutex::Autolock _l(mLock);
     ALOGD("endAllStagingAnimators on %p (%s)", &mParent, mParent.getName());
     // This works because this state can only happen on the UI thread,
     // which means we're already on the right thread to invoke listeners

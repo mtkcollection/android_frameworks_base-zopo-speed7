@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +71,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.Vibrator;
+import android.os.ServiceManager;
 import android.provider.Settings;
 import android.service.notification.Condition;
 import android.service.notification.IConditionListener;
@@ -120,12 +126,21 @@ import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
+/// M: MTK components
+import com.mediatek.common.dm.DmAgent;
+import com.mediatek.common.mom.MobileManagerUtils;
+import com.mediatek.common.mom.IMobileManager;
+import com.mediatek.common.mom.IMobileManagerService;
+
 /** {@hide} */
 public class NotificationManagerService extends SystemService {
     static final String TAG = "NotificationService";
-    static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
+    //static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
+    static final boolean DBG = true;
 
-    static final int MAX_PACKAGE_NOTIFICATIONS = 50;
+    /// M: [ALPS00447419] Limit max. number of notifications to 20 to prevent OOM
+    //static final int MAX_PACKAGE_NOTIFICATIONS = 50;
+    static final int MAX_PACKAGE_NOTIFICATIONS = 20; // 50;
 
     // message codes
     static final int MESSAGE_TIMEOUT = 2;
@@ -198,6 +213,8 @@ public class NotificationManagerService extends SystemService {
     private long[] mFallbackVibrationPattern;
     private boolean mUseAttentionLight;
     boolean mSystemReady;
+    /// M: mtk add
+    int mDisabledNotifications;
 
     private boolean mDisableNotificationEffects;
     private int mCallState;
@@ -243,6 +260,17 @@ public class NotificationManagerService extends SystemService {
     private static final String ATTR_NAME = "name";
 
     private RankingHelper mRankingHelper;
+
+    /// M: DM/PPL Lock
+    private boolean mDmLock = false;
+    public static final String OMADM_LAWMO_LOCK = "com.mediatek.dm.LAWMO_LOCK";
+    public static final String OMADM_LAWMO_UNLOCK = "com.mediatek.dm.LAWMO_UNLOCK";
+    private boolean mPplLock = false;
+    public static final String PPL_LOCK = "com.mediatek.ppl.NOTIFY_LOCK";
+    public static final String PPL_UNLOCK = "com.mediatek.ppl.NOTIFY_UNLOCK";
+
+    /// M: Mobile Management
+    private IMobileManagerService mMobileManagerService;
 
     private final UserProfiles mUserProfiles = new UserProfiles();
     private NotificationListeners mListeners;
@@ -504,6 +532,8 @@ public class NotificationManagerService extends SystemService {
         @Override
         public void onSetDisabled(int status) {
             synchronized (mNotificationList) {
+                /// M: mtk add
+                mDisabledNotifications = status;
                 mDisableNotificationEffects =
                         (status & StatusBarManager.DISABLE_NOTIFICATION_ALERTS) != 0;
                 if (disableNotificationEffects(null) != null) {
@@ -769,8 +799,14 @@ public class NotificationManagerService extends SystemService {
                 mScreenOn = false;
                 updateNotificationPulse();
             } else if (action.equals(TelephonyManager.ACTION_PHONE_STATE_CHANGED)) {
-                mInCall = TelephonyManager.EXTRA_STATE_OFFHOOK
-                        .equals(intent.getStringExtra(TelephonyManager.EXTRA_STATE));
+                /// M: Treat it as inCall state while in OFFHOOK or RINGING state @{
+                String state = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+                mInCall = state.equals(TelephonyManager.EXTRA_STATE_OFFHOOK) ||
+                          state.equals(TelephonyManager.EXTRA_STATE_RINGING);
+
+                //mInCall = TelephonyManager.EXTRA_STATE_OFFHOOK
+                //        .equals(intent.getStringExtra(TelephonyManager.EXTRA_STATE));
+                /// Treat it as inCall state while in OFFHOOK or RINGING state @}
                 updateNotificationPulse();
             } else if (action.equals(Intent.ACTION_USER_STOPPED)) {
                 int userHandle = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1);
@@ -792,6 +828,19 @@ public class NotificationManagerService extends SystemService {
             } else if (action.equals(Intent.ACTION_USER_ADDED)) {
                 mUserProfiles.updateCache(context);
             }
+            /// M: DM/PPL Lock @{
+            else if (action.equals(OMADM_LAWMO_LOCK)) {
+                mNotificationLight.turnOff();
+                mDmLock = true;
+            } else if (action.equals(OMADM_LAWMO_UNLOCK)) {
+                mDmLock = false;
+            } else if (action.equals(PPL_LOCK)) {
+                mNotificationLight.turnOff();
+                mPplLock = true;
+            } else if (action.equals(PPL_UNLOCK)) {
+                mPplLock = false;
+            }
+            /// DM/PPL Lock @}
         }
     };
 
@@ -928,13 +977,26 @@ public class NotificationManagerService extends SystemService {
         // flag at least once and we'll go back to 0 after that.
         if (0 == Settings.Global.getInt(getContext().getContentResolver(),
                     Settings.Global.DEVICE_PROVISIONED, 0)) {
-            mDisableNotificationEffects = true;
+            /// M: [ALPS00787247] No notification sound after factory reset
+            //mDisableNotificationEffects = true;
         }
         mZenModeHelper.readZenModeFromSetting();
         mInterruptionFilter = mZenModeHelper.getZenModeListenerInterruptionFilter();
 
         mUserProfiles.updateCache(getContext());
         listenForCallState();
+
+        /// M: Update DM status @{
+        try {
+            IBinder binder = ServiceManager.getService("DmAgent");
+            if (binder != null) {
+                DmAgent dm = DmAgent.Stub.asInterface(binder);
+                mDmLock = dm.isLockFlagSet();
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "failed to get DM status!");
+        }
+        /// Update DM status @}
 
         // register for various Intents
         IntentFilter filter = new IntentFilter();
@@ -945,6 +1007,14 @@ public class NotificationManagerService extends SystemService {
         filter.addAction(Intent.ACTION_USER_STOPPED);
         filter.addAction(Intent.ACTION_USER_SWITCHED);
         filter.addAction(Intent.ACTION_USER_ADDED);
+
+        /// M: DM/PPL Lock @{
+        filter.addAction(OMADM_LAWMO_LOCK);
+        filter.addAction(OMADM_LAWMO_UNLOCK);
+        filter.addAction(PPL_LOCK);
+        filter.addAction(PPL_UNLOCK);
+        /// DM/PPL Lock@}
+
         getContext().registerReceiver(mIntentReceiver, filter);
 
         IntentFilter pkgFilter = new IntentFilter();
@@ -1540,6 +1610,25 @@ public class NotificationManagerService extends SystemService {
             dumpImpl(pw, DumpFilter.parseFromArguments(args));
         }
 
+        /// M: [Mobile Management] Force remove all notifications
+        public void removeAllNotifications(String pkg, int userId) {
+            checkCallerIsSystem();
+            if (DBG) {
+                Slog.v(TAG, " removeAllNotifications, for " + pkg);
+            }
+            // Now, cancel any outstanding notifications that are part of a just-disabled app
+            synchronized (mNotificationList) {
+                final int N = mNotificationList.size();
+                for (int i = 0; i < N; i++) {
+                    final NotificationRecord r = mNotificationList.get(i);
+                    if (r.sbn.getPackageName().equals(pkg)) {
+                        /// M: mtk add Need to modify reason
+                        cancelNotificationLocked(r, false, REASON_DELEGATE_CANCEL);
+                    }
+                }
+            }
+        }
+
         @Override
         public ComponentName getEffectsSuppressor() {
             enforceSystemOrSystemUI("INotificationManager.getEffectsSuppressor");
@@ -1762,20 +1851,38 @@ public class NotificationManagerService extends SystemService {
                 callingUid, incomingUserId, true, false, "enqueueNotification", pkg);
         final UserHandle user = new UserHandle(userId);
 
+        /// M: [ALPS00447419] Remove eldest entry in case the number of notifications reaches the limit @{
         // Limit the number of notifications that any given package except the android
         // package or a registered listener can enqueue.  Prevents DOS attacks and deals with leaks.
         if (!isSystemNotification && !isNotificationFromListener) {
             synchronized (mNotificationList) {
                 int count = 0;
+                int eldestIdx = 0;
+                long eldestTime = Long.MAX_VALUE;
                 final int N = mNotificationList.size();
                 for (int i=0; i<N; i++) {
-                    final NotificationRecord r = mNotificationList.get(i);
+                    NotificationRecord r = mNotificationList.get(i);
                     if (r.sbn.getPackageName().equals(pkg) && r.sbn.getUserId() == userId) {
+                        if ((r.getFlags() & (Notification.FLAG_ONGOING_EVENT
+                                           | Notification.FLAG_NO_CLEAR)) == 0) { // don't remove on-going or no-clear notifiations
+                            if (r.getNotification().when < eldestTime) {
+                                eldestTime = r.getNotification().when;
+                                eldestIdx = i;
+                            }
+                        }
+
                         count++;
                         if (count >= MAX_PACKAGE_NOTIFICATIONS) {
+                            /// M: [ALPS00447419] Remove eldest entry in case the number of notifications reaches the limit
+                            r = mNotificationList.get(eldestIdx);
+                            mNotificationList.remove(eldestIdx);
+                            /// M: mtk add Need to modify reason
+                            cancelNotificationLocked(r, true, REASON_DELEGATE_CANCEL);
+
                             Slog.e(TAG, "Package has already posted " + count
-                                    + " notifications.  Not showing more.  package=" + pkg);
-                            return;
+                                    + " notifications.  Not showing more.  package=" + pkg
+                                    + " . Removed notification id=" + r.sbn.getId());
+                            break;
                         }
                     }
                 }
@@ -1797,7 +1904,7 @@ public class NotificationManagerService extends SystemService {
             @Override
             public void run() {
 
-                synchronized (mNotificationList) {
+                 synchronized (mNotificationList) {
 
                     // === Scoring ===
 
@@ -1817,7 +1924,7 @@ public class NotificationManagerService extends SystemService {
                     }
 
                     // 1. initial score: buckets of 10, around the app [-20..20]
-                    final int score = notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
+                    int score = notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
 
                     // 2. extract ranking signals from the notification data
                     final StatusBarNotification n = new StatusBarNotification(
@@ -1859,6 +1966,11 @@ public class NotificationManagerService extends SystemService {
 
                     // 3. Apply local rules
 
+                    /// M: [Mobile Management] Check if apps are blocked by MoMS
+                    if (blockApps(pkg, id, notification)) {
+                        score = JUNK_SCORE;
+                    }
+
                     // blocked apps
                     if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg, callingUid)) {
                         if (!isSystemNotification) {
@@ -1894,12 +2006,18 @@ public class NotificationManagerService extends SystemService {
                     if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
                         notification.flags |= Notification.FLAG_ONGOING_EVENT
                                 | Notification.FLAG_NO_CLEAR;
+
+                        /// M: [ALPS01233835] Reuse old notification time to prevent notifications from jumping
+                        if (old != null)
+                            notification.when = old.getNotification().when;
                     }
 
                     applyZenModeLocked(r);
                     mRankingHelper.sort(mNotificationList);
 
-                    if (notification.icon != 0) {
+                    if (notification.icon != 0
+                        /// M: Do not show notifications if FLAG_HIDE_NOTIFICATION is on
+                        && (notification.flags & Notification.FLAG_HIDE_NOTIFICATION) == 0) {
                         StatusBarNotification oldSbn = (old != null) ? old.sbn : null;
                         mListeners.notifyPostedLocked(n, oldSbn);
                     } else {
@@ -2040,7 +2158,14 @@ public class NotificationManagerService extends SystemService {
         if (disableEffects != null) {
             ZenLog.traceDisableEffects(record, disableEffects);
         }
-        if (disableEffects == null
+        /// M: Determine if we should play alerts
+        final boolean enableAlerts = (((mDisabledNotifications & StatusBarManager.DISABLE_NOTIFICATION_ALERTS) == 0) // Nobody disables alerts
+                              || record.sbn.getPackageName().equals("com.android.mms")) // Phone app will disable alerts but we need the alert of mms
+                             && !mDmLock && !mPplLock; // Never play alerts when DM/PPL lock
+                             //&& !mDmLock; // Never play alerts in DM lock state
+
+        //if (disableEffects == null
+        if (enableAlerts && disableEffects == null
                 && (!(record.isUpdate
                     && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0 ))
                 && (record.getUserId() == UserHandle.USER_ALL ||
@@ -2063,6 +2188,13 @@ public class NotificationManagerService extends SystemService {
                            Settings.System.DEFAULT_NOTIFICATION_URI
                                    .equals(notification.sound);
 
+            /// M: Add log for sound debug @{
+            if (DBG) {
+                Log.d(TAG, "useDefaultSound=" + useDefaultSound);
+                Log.d(TAG, "notification.sound=" + notification.sound);
+            }
+            /// Add log for sound debug @}
+
             Uri soundUri = null;
             boolean hasValidSound = false;
 
@@ -2083,6 +2215,15 @@ public class NotificationManagerService extends SystemService {
                         (notification.flags & Notification.FLAG_INSISTENT) != 0;
                 AudioAttributes audioAttributes = audioAttributesForNotification(notification);
                 mSoundNotificationKey = record.getKey();
+
+                ///M: Add log for sound debug @{
+                if (DBG) {
+                    Log.d(TAG, "looping=" + looping);
+                    Log.d(TAG, "audioAttributes=" + audioAttributes);
+                    //Log.d(TAG, "StreamVolume=" + mAudioManager.getStreamVolume(audioStreamType));
+                }
+                /// Add log for sound debug @}
+
                 // do not play notifications if stream volume is 0 (typically because
                 // ringer mode is silent) or if there is a user of exclusive audio focus
                 if ((mAudioManager.getStreamVolume(
@@ -2096,7 +2237,7 @@ public class NotificationManagerService extends SystemService {
                             if (DBG) Slog.v(TAG, "Playing sound " + soundUri
                                     + " with attributes " + audioAttributes);
                             player.playAsync(soundUri, record.sbn.getUser(), looping,
-                                    audioAttributes);
+                                audioAttributes);
                             buzzBeepBlinked = true;
                         }
                     } catch (RemoteException e) {
@@ -2495,6 +2636,7 @@ public class NotificationManagerService extends SystemService {
                 Binder.restoreCallingIdentity(identity);
             }
         }
+        /// [ALPS00319925] use <pkg, tag, id> instead of entire NotificationRecord to identify a soundNotification. @}
 
         // vibrate
         if (canceledKey.equals(mVibrateNotificationKey)) {
@@ -2758,7 +2900,9 @@ public class NotificationManagerService extends SystemService {
         }
 
         // Don't flash while we are in a call or screen is on
-        if (ledNotification == null || mInCall || mScreenOn) {
+        //if (mLedNotification == null || mInCall || mScreenOn) {
+        /// M: [ALPS01244800] Flash Notification LED regardless of screen state
+        if (ledNotification == null || mInCall /*|| mScreenOn*/ || mDmLock || mPplLock) {
             mNotificationLight.turnOff();
             mStatusBar.notificationLightOff();
         } else {
@@ -2773,6 +2917,11 @@ public class NotificationManagerService extends SystemService {
             }
             if (mNotificationPulseEnabled) {
                 // pulse repeatedly
+                /// M: add log for lights debug @{
+                if (DBG) {
+                    Log.d(TAG, "notification setFlashing ledOnMS = " + ledOnMS + " ledOffMS = " + ledOffMS);
+                }
+                /// M: add log for lights debug @{
                 mNotificationLight.setFlashing(ledARGB, Light.LIGHT_FLASH_TIMED,
                         ledOnMS, ledOffMS);
             }
@@ -2848,7 +2997,7 @@ public class NotificationManagerService extends SystemService {
         try {
             ApplicationInfo ai = AppGlobals.getPackageManager().getApplicationInfo(
                     pkg, 0, UserHandle.getCallingUserId());
-            if (ai == null) {
+        if (ai == null) {
                 throw new SecurityException("Unknown package " + pkg);
             }
             if (!UserHandle.isSameApp(ai.uid, uid)) {
@@ -3270,4 +3419,49 @@ public class NotificationManagerService extends SystemService {
             return value;
         }
     }
+
+    /// M: [Mobile Management] Block apps
+        private boolean blockApps(final String pkg, final int id, final Notification notification) {
+            boolean isBlocked = false;
+
+            if (MobileManagerUtils.isSupported()) {
+                // We have to clear the identitiy before getting notification setting from MoMS.
+                // Otherwise, MoMS will block the unknown calling pid/uid.
+                long identity = Binder.clearCallingIdentity();
+
+                if (mMobileManagerService == null) {
+                    mMobileManagerService = IMobileManagerService.Stub.asInterface(
+                        ServiceManager.getService(Context.MOBILE_SERVICE));
+                }
+
+                try {
+                    if (mMobileManagerService != null &&
+                        !mMobileManagerService.getNotificationEnabledSetting(pkg)) {
+                        // This notification will be blocked by setting the score to JUNK
+                        isBlocked = true;
+                        Slog.e(TAG, "MoMS, Suppressing notification from package " + pkg);
+
+                        // Notify MoMS
+                        Bundle Options = new Bundle();
+                        CharSequence contentTitle =
+                            notification.extras.getCharSequence(Notification.EXTRA_TITLE);
+                        CharSequence contentText =
+                            notification.extras.getCharSequence(Notification.EXTRA_TEXT);
+                        Options.putString(IMobileManager.OPTION_NOTIFICATION_PKG, pkg);
+                        Options.putInt(IMobileManager.OPTION_NOTIFICATION_ID, id);
+                        Options.putCharSequence(IMobileManager.OPTION_NOTIFICATION_TITLE, contentTitle);
+                        Options.putCharSequence(IMobileManager.OPTION_NOTIFICATION_CONTENT, contentText);
+                        Slog.e(TAG, "MoMS, Notify the listener");
+                        mMobileManagerService.triggerManagerApListener
+                            (IMobileManager.CONTROLLER_NOTIFICATION, Options, 0);
+                    }
+                } catch (RemoteException e) {
+                    Log.e(TAG, "MoMS, Suppressing notification faild!");
+                } finally {
+                    Binder.restoreCallingIdentity(identity);
+                }
+            }
+
+            return isBlocked;
+        }
 }

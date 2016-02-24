@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -142,6 +147,12 @@ int NativeDisplayEventReceiver::handleEvent(int receiveFd, int events, void* dat
     int32_t vsyncDisplayId;
     uint32_t vsyncCount;
     if (processPendingEvents(&vsyncTimestamp, &vsyncDisplayId, &vsyncCount)) {
+#ifdef MTK_AOSP_ENHANCEMENT
+#ifndef MTK_USER_BUILD
+        ALOGD("rev(%p) w/ vsync, t=%lld, id=%d, c=%d",
+                this, vsyncTimestamp, vsyncDisplayId, vsyncCount);
+#endif
+#endif
         ALOGV("receiver %p ~ Vsync pulse: timestamp=%lld, id=%d, count=%d",
                 this, vsyncTimestamp, vsyncDisplayId, vsyncCount);
         mWaitingForVsync = false;

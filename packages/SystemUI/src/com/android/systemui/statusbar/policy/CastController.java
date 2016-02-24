@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +21,12 @@
 
 package com.android.systemui.statusbar.policy;
 
+import android.hardware.display.WifiDisplayStatus;
+import android.net.wifi.p2p.WifiP2pDevice;
+
 import java.util.Set;
 
-public interface CastController {
+public interface CastController extends Listenable {
     void addCallback(Callback callback);
     void removeCallback(Callback callback);
     void setDiscovering(boolean request);
@@ -26,9 +34,19 @@ public interface CastController {
     Set<CastDevice> getCastDevices();
     void startCasting(CastDevice device);
     void stopCasting(CastDevice device);
+    /// M: WFD sink support {@
+    boolean isWfdSinkSupported();
+    boolean isNeedShowWfdSink();
+    void updateWfdFloatMenu(boolean start);
+    WifiP2pDevice getWifiP2pDev();
+    /// @}
 
     public interface Callback {
         void onCastDevicesChanged();
+        /// M: WFD sink support {@
+        void onWfdStatusChanged(WifiDisplayStatus status, boolean sinkMode);
+        void onWifiP2pDeviceChanged(WifiP2pDevice device);
+        /// @}
     }
 
     public static final class CastDevice {

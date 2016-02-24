@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -3029,8 +3034,10 @@ public final class ProcessStats implements Parcelable {
             if (!mDead) {
                 return;
             }
-            Slog.wtfStack(TAG, "ProcessState dead: name=" + mName
-                    + " pkg=" + mPackage + " uid=" + mUid + " common.name=" + mCommonProcess.mName);
+            /// M: ALPS01258135, add for MTBF JE debug @{
+            Slog.e(TAG, "ProcessState dead: name=" + mName
+                    + " pkg=" + mPackage + " uid=" + mUid + " common.name=" + mCommonProcess.mName, new RuntimeException("here").fillInStackTrace());
+            /// @}
         }
 
         void writeToParcel(Parcel out, long now) {
@@ -3081,11 +3088,26 @@ public final class ProcessStats implements Parcelable {
         }
 
         public void makeActive() {
+            /// M: ALPS01258135, add for MTBF JE debug @{
+            if ("com.android.systemui".equals(mName)) {
+                Slog.d(TAG, "ProcessState makeActive : name=" + mName + " pkg=" + mPackage);
+            }
+            /// @}
             ensureNotDead();
             mActive = true;
         }
 
         public void makeInactive() {
+            /// M: ALPS01258135, add for MTBF JE debug @{
+            //Slog.d(TAG, "ProcessState makeInactive : name=" + mName + " pkg=" + mPackage);
+            if ("com.android.systemui".equals(mName)) {
+                RuntimeException here = new RuntimeException("here");
+                here.fillInStackTrace();
+                Slog.d(TAG, "ProcessState makeInactive : name=" + mName
+                        + " pkg=" + mPackage + " uid=" + mUid + " common.name=" + mCommonProcess.mName, here);
+            }
+            /// @}
+
             mActive = false;
         }
 
@@ -3170,8 +3192,10 @@ public final class ProcessStats implements Parcelable {
             }
             mNumActiveServices--;
             if (mNumActiveServices < 0) {
-                Slog.wtfStack(TAG, "Proc active services underrun: pkg=" + mPackage
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Proc active services underrun: pkg=" + mPackage
                         + " uid=" + mUid + " proc=" + mName + " service=" + serviceName);
+                /// @}
                 mNumActiveServices = 0;
             }
         }
@@ -3206,8 +3230,10 @@ public final class ProcessStats implements Parcelable {
             if (mNumStartedServices == 0 && (mCurState%STATE_COUNT) == STATE_SERVICE_RESTARTING) {
                 setState(STATE_NOTHING, now);
             } else if (mNumStartedServices < 0) {
-                Slog.wtfStack(TAG, "Proc started services underrun: pkg="
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Proc started services underrun: pkg="
                         + mPackage + " uid=" + mUid + " name=" + mName);
+                /// @}
                 mNumStartedServices = 0;
             }
         }
@@ -3544,25 +3570,31 @@ public final class ProcessStats implements Parcelable {
                     long now = SystemClock.uptimeMillis();
                     if (mStarted) {
                         if (!silently) {
-                            Slog.wtfStack(TAG, "Service owner " + owner
+                            /// M: prevent trigger AEE, it is not bug. @{
+                            Slog.e(TAG, "Service owner " + owner
                                     + " cleared while started: pkg=" + mPackage + " service="
                                     + mName + " proc=" + mProc);
+                            /// @}
                         }
                         setStarted(false, 0, now);
                     }
                     if (mBoundState != STATE_NOTHING) {
                         if (!silently) {
-                            Slog.wtfStack(TAG, "Service owner " + owner
+                            /// M: prevent trigger AEE, it is not bug. @{
+                            Slog.e(TAG, "Service owner " + owner
                                     + " cleared while bound: pkg=" + mPackage + " service="
                                     + mName + " proc=" + mProc);
+                            /// @}
                         }
                         setBound(false, 0, now);
                     }
                     if (mExecState != STATE_NOTHING) {
                         if (!silently) {
-                            Slog.wtfStack(TAG, "Service owner " + owner
+                            /// M: prevent trigger AEE, it is not bug. @{
+                            Slog.e(TAG, "Service owner " + owner
                                     + " cleared while exec: pkg=" + mPackage + " service="
                                     + mName + " proc=" + mProc);
+                            /// @}
                         }
                         setExecuting(false, 0, now);
                     }
@@ -3652,7 +3684,9 @@ public final class ProcessStats implements Parcelable {
 
         public void setStarted(boolean started, int memFactor, long now) {
             if (mOwner == null) {
-                Slog.wtf(TAG, "Starting service " + this + " without owner");
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Starting service " + this + " without owner");
+                /// @}
             }
             mStarted = started;
             updateStartedState(memFactor, now);
@@ -3690,7 +3724,9 @@ public final class ProcessStats implements Parcelable {
 
         public void setBound(boolean bound, int memFactor, long now) {
             if (mOwner == null) {
-                Slog.wtf(TAG, "Binding service " + this + " without owner");
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Binding service " + this + " without owner");
+                /// @}
             }
             final int state = bound ? memFactor : STATE_NOTHING;
             if (mBoundState != state) {
@@ -3708,7 +3744,9 @@ public final class ProcessStats implements Parcelable {
 
         public void setExecuting(boolean executing, int memFactor, long now) {
             if (mOwner == null) {
-                Slog.wtf(TAG, "Executing service " + this + " without owner");
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Executing service " + this + " without owner");
+                /// @}
             }
             final int state = executing ? memFactor : STATE_NOTHING;
             if (mExecState != state) {

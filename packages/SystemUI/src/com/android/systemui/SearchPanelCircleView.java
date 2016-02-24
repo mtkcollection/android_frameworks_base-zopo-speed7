@@ -491,7 +491,9 @@ public class SearchPanelCircleView extends FrameLayout {
         if (mFadeOutAnimator != null) {
             mFadeOutAnimator.cancel();
         }
-        mBackgroundPaint.setAlpha(255);
+        /// M: Fix [ALPS01848257] Add search icon
+        mBackgroundPaint.setAlpha(80);
+        //mBackgroundPaint.setAlpha(255);
         mOutlineAlpha = 1.0f;
     }
 

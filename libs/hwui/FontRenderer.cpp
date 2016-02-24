@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +20,7 @@
  */
 
 #define LOG_TAG "OpenGLRenderer"
+#include <utils/Trace.h>
 
 #include <SkGlyph.h>
 #include <SkUtils.h>
@@ -115,6 +121,28 @@ FontRenderer::FontRenderer() :
     mSmallCacheHeight = DEFAULT_TEXT_SMALL_CACHE_HEIGHT;
     mLargeCacheWidth = DEFAULT_TEXT_LARGE_CACHE_WIDTH;
     mLargeCacheHeight = DEFAULT_TEXT_LARGE_CACHE_HEIGHT;
+
+    /// M: scale cache size from HD @{
+    int lcm_width = atoi(LCM_WIDTH);
+    int lcm_height = atoi(LCM_HEIGHT);
+    int base_width = (lcm_width < lcm_height) ? (720) : (1280);
+    int base_height= (lcm_width < lcm_height) ? (1280) : (720);
+    if (lcm_width > base_width && lcm_height > base_height) {
+        float ratio_width = (float)lcm_width / base_width;
+        float ratio_height = (float)lcm_height / base_height;
+
+        ratio_width = (ratio_width < 1) ? (1) : (ratio_width);
+        ratio_height = (ratio_height < 1) ? (1) : (ratio_height);
+
+        mSmallCacheWidth *= ratio_width;
+        mSmallCacheHeight *= ratio_height;
+        mLargeCacheWidth *= ratio_width;
+        mLargeCacheHeight *= ratio_height;
+
+        INIT_LOGD("  Scale text cache size to (%d x %d) & (%d x %d)",
+            mSmallCacheWidth, mSmallCacheHeight, mLargeCacheWidth, mLargeCacheHeight);
+    }
+    /// @}
 
     char property[PROPERTY_VALUE_MAX];
     if (property_get(PROPERTY_TEXT_SMALL_CACHE_WIDTH, property, NULL) > 0) {
@@ -392,6 +420,18 @@ void FontRenderer::cacheBitmap(const SkGlyph& glyph, CachedGlyphInfo* cachedGlyp
             break;
     }
 
+    switch(format) {
+        case SkMask::kA8_Format:
+        case SkMask::kBW_Format:
+            DUMP_ALPHA_TEXTURE(srcStride, glyph.fHeight, bitmapBuffer, "Glyph", SkBitmap::kA8_Config);
+            break;
+        case SkMask::kARGB32_Format:
+            DUMP_ALPHA_TEXTURE(srcStride, glyph.fHeight, bitmapBuffer, "Glyph", SkBitmap::kARGB_8888_Config);
+            break;
+        default:
+            break;
+    }
+
     cachedGlyph->mIsValid = true;
 }
 
@@ -444,6 +484,11 @@ void checkTextureUpdateForCache(Caches& caches, Vector<CacheTexture*>& cacheText
     for (uint32_t i = 0; i < cacheTextures.size(); i++) {
         CacheTexture* cacheTexture = cacheTextures[i];
         if (cacheTexture->isDirty() && cacheTexture->getPixelBuffer()) {
+            char prefix[64];
+            sprintf(prefix, "FontTexture_%d_%d", i, cacheTexture->getTextureId());
+            DUMP_ALPHA_TEXTURE(cacheTexture->getWidth(), cacheTexture->getHeight(),
+                cacheTexture->getPixelBuffer()->getMappedPointer(), prefix, SkBitmap::kA8_Config);
+
             if (cacheTexture->getTextureId() != lastTextureId) {
                 lastTextureId = cacheTexture->getTextureId();
                 caches.activeTexture(0);
@@ -519,8 +564,10 @@ void FontRenderer::issueDrawCommand(Vector<CacheTexture*>& cacheTextures) {
             caches.bindTexCoordsVertexPointer(force, &mesh[0].u);
             force = false;
 
+            ATRACE_BEGIN_L2("glDrawElements");
             glDrawElements(GL_TRIANGLES, texture->meshElementCount(),
                     GL_UNSIGNED_SHORT, texture->indices());
+            ATRACE_END_L2();
 
             texture->resetMesh();
         }
@@ -552,8 +599,12 @@ void FontRenderer::appendMeshQuad(float x1, float y1, float u1, float v1,
 
     if (mClip &&
             (x1 > mClip->right || y1 < mClip->top || x2 < mClip->left || y4 > mClip->bottom)) {
+        FONT_RENDERER_LOGD("appendMeshQuad fail, mesh"RECT_STRING", clip"RECT_STRING,
+            x1, y4, x2, y1, mClip->left, mClip->top, mClip->right, mClip->bottom);
         return;
     }
+    FONT_RENDERER_LOGD("appendMeshQuad success, mesh"RECT_STRING", clip"RECT_STRING,
+        x1, y4, x2, y1, mClip->left, mClip->top, mClip->right, mClip->bottom);
 
     appendMeshQuadNoClip(x1, y1, u1, v1, x2, y2, u2, v2, x3, y3, u3, v3, x4, y4, u4, v4, texture);
 
@@ -593,6 +644,7 @@ void FontRenderer::setFont(const SkPaint* paint, const SkMatrix& matrix) {
 
 FontRenderer::DropShadow FontRenderer::renderDropShadow(const SkPaint* paint, const char *text,
         uint32_t startIndex, uint32_t len, int numGlyphs, float radius, const float* positions) {
+    ATRACE_CALL_L2();
     checkInit();
 
     DropShadow image;
@@ -730,8 +782,16 @@ void FontRenderer::removeFont(const Font* font) {
 
 void FontRenderer::blurImage(uint8_t** image, int32_t width, int32_t height, float radius) {
     uint32_t intRadius = Blur::convertRadiusToInt(radius);
+    char tmp[64]; /// M: for systrcae tag
+
 #ifdef ANDROID_ENABLE_RENDERSCRIPT
-    if (width * height * intRadius >= RS_MIN_INPUT_CUTOFF) {
+    if (((width * height * intRadius >= RS_MIN_INPUT_CUTOFF)
+        || (mRs != 0)) /// M: reuse RS if created
+        && (radius > 0) && (radius <= 25) /// M: RS can only accept 0-25 pixel bound
+        ) {
+        sprintf(tmp, "RS blur %dx%dx%.4f", width, height, radius);
+        ATRACE_BEGIN_L2(tmp);
+
         uint8_t* outImage = (uint8_t*) memalign(RS_CPU_ALLOCATION_ALIGNMENT, width * height);
 
         if (mRs == 0) {
@@ -765,10 +825,14 @@ void FontRenderer::blurImage(uint8_t** image, int32_t width, int32_t height, flo
             free(*image);
             *image = outImage;
 
+            ATRACE_END_L2();
             return;
         }
     }
 #endif
+
+    sprintf(tmp, "SF blur %dx%dx%.4f", width, height, radius);
+    ATRACE_BEGIN_L2(tmp);
 
     float *gaussian = new float[2 * intRadius + 1];
     Blur::generateGaussianWeights(gaussian, intRadius);
@@ -777,6 +841,7 @@ void FontRenderer::blurImage(uint8_t** image, int32_t width, int32_t height, flo
     Blur::horizontal(gaussian, intRadius, *image, scratch, width, height);
     Blur::vertical(gaussian, intRadius, scratch, *image, width, height);
 
+    ATRACE_END_L2();
     delete[] gaussian;
     delete[] scratch;
 }

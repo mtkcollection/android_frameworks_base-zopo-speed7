@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +70,10 @@ public:
     int drawFrame(nsecs_t frameTimeNanos, nsecs_t recordDurationNanos);
 
     virtual void run();
+
+    virtual const char* name() {
+        return "DrawFrame";
+    }
 
 private:
     void postAndWait();

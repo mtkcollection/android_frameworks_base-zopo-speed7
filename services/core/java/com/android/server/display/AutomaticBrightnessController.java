@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +26,8 @@ import com.android.server.twilight.TwilightListener;
 import com.android.server.twilight.TwilightManager;
 import com.android.server.twilight.TwilightState;
 
+import static com.android.server.display.DisplayManagerService.DEBUG_POWER;
+
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -41,8 +48,8 @@ import java.util.Arrays;
 
 class AutomaticBrightnessController {
     private static final String TAG = "AutomaticBrightnessController";
-
-    private static final boolean DEBUG = false;
+    @SuppressWarnings("checkstyle:staticvariablename")
+    private static boolean DEBUG = false;
     private static final boolean DEBUG_PRETEND_LIGHT_SENSOR_ABSENT = false;
 
     // If true, enables the use of the screen auto-brightness adjustment setting.
@@ -53,7 +60,12 @@ class AutomaticBrightnessController {
     private static final float SCREEN_AUTO_BRIGHTNESS_ADJUSTMENT_MAX_GAMMA = 3.0f;
 
     // Light sensor event rate in milliseconds.
-    private static final int LIGHT_SENSOR_RATE_MILLIS = 1000;
+    // Mediatek AAL modified
+    private static final int LIGHT_SENSOR_RATE_MILLIS = 200; // Default 1000
+
+    // Mediatek AAL support
+    // We only average the ambient light in short term to get better backlight animation
+    private static final long MTK_AAL_AMBIENT_LIGHT_HORIZON = 500;
 
     // Period of time in which to consider light samples in milliseconds.
     private static final int AMBIENT_LIGHT_HORIZON = 10000;
@@ -100,6 +112,9 @@ class AutomaticBrightnessController {
 
     private static final int MSG_UPDATE_AMBIENT_LUX = 1;
 
+    // Mediatek AAL support
+    private static final int MSG_UPDATE_RUNTIME_CONFIG = 2;
+
     // Callbacks for requesting updates to the the display's power state
     private final Callbacks mCallbacks;
 
@@ -114,7 +129,8 @@ class AutomaticBrightnessController {
 
     // The auto-brightness spline adjustment.
     // The brightness values have been scaled to a range of 0..1.
-    private final Spline mScreenAutoBrightnessSpline;
+    // Mediatek AAL modified
+    private Spline mScreenAutoBrightnessSpline;
 
     // The minimum and maximum screen brightnesses.
     private final int mScreenBrightnessRangeMinimum;
@@ -244,6 +260,8 @@ class AutomaticBrightnessController {
         pw.println("  mScreenAutoBrightnessAdjustment=" + mScreenAutoBrightnessAdjustment);
         pw.println("  mLastScreenAutoBrightnessGamma=" + mLastScreenAutoBrightnessGamma);
         pw.println("  mDozing=" + mDozing);
+
+        DEBUG = DEBUG_POWER;
     }
 
     private boolean setLightSensorEnabled(boolean enable) {
@@ -297,6 +315,8 @@ class AutomaticBrightnessController {
         mAmbientLux = lux;
         mBrighteningLuxThreshold = mAmbientLux * (1.0f + BRIGHTENING_LIGHT_HYSTERESIS);
         mDarkeningLuxThreshold = mAmbientLux * (1.0f - DARKENING_LIGHT_HYSTERESIS);
+
+        DisplayPowerController.nativeSetDebouncedAmbientLight((int)lux);
     }
 
     private float calculateAmbientLux(long now) {
@@ -310,6 +330,11 @@ class AutomaticBrightnessController {
         long endTime = AMBIENT_LIGHT_PREDICTION_TIME_MILLIS;
         for (int i = N - 1; i >= 0; i--) {
             long startTime = (mAmbientLightRingBuffer.getTime(i) - now);
+            // Mediatek AAL support
+            if (DisplayPowerController.MTK_AAL_SUPPORT) {
+                if (startTime < -MTK_AAL_AMBIENT_LIGHT_HORIZON && totalWeight > 0)
+                    break;
+            }
             float weight = calculateWeight(startTime, endTime);
             float lux = mAmbientLightRingBuffer.getLux(i);
             if (DEBUG) {
@@ -398,6 +423,13 @@ class AutomaticBrightnessController {
         long nextDarkenTransition = nextAmbientLightDarkeningTransition(time);
         float ambientLux = calculateAmbientLux(time);
 
+        if (DisplayPowerController.MTK_AAL_SUPPORT) {
+            Slog.d(TAG, "updateAmbientLux: ambientLux=" + ambientLux
+                        + ", timeToBrighten=" + (nextBrightenTransition - time)
+                        + ", timeToDarken=" + (nextDarkenTransition - time)
+                        + ", current=" + mAmbientLux);
+        }
+        
         if (ambientLux >= mBrighteningLuxThreshold && nextBrightenTransition <= time
                 || ambientLux <= mDarkeningLuxThreshold && nextDarkenTransition <= time) {
             setAmbientLux(ambientLux);
@@ -432,6 +464,9 @@ class AutomaticBrightnessController {
         if (!mAmbientLuxValid) {
             return;
         }
+
+        // Mediatek AAL modified
+        final boolean DEBUG = true;
 
         float value = mScreenAutoBrightnessSpline.interpolate(mAmbientLux);
         float gamma = 1.0f;
@@ -477,7 +512,7 @@ class AutomaticBrightnessController {
             if (DEBUG) {
                 Slog.d(TAG, "updateAutoBrightness: mScreenAutoBrightness="
                         + mScreenAutoBrightness + ", newScreenAutoBrightness="
-                        + newScreenAutoBrightness);
+                        + newScreenAutoBrightness + ", ambientLux=" + mAmbientLux);
             }
 
             mScreenAutoBrightness = newScreenAutoBrightness;
@@ -523,17 +558,35 @@ class AutomaticBrightnessController {
                 case MSG_UPDATE_AMBIENT_LUX:
                     updateAmbientLux();
                     break;
+
+                // Mediatek AAL support
+                case MSG_UPDATE_RUNTIME_CONFIG:
+                    updateRuntimeConfigInternal();
+                    break;
             }
         }
     }
 
     private final SensorEventListener mLightSensorListener = new SensorEventListener() {
+        // Mediatek AAL support
+        private long mPrevLogTime = 0L;
+        private float mPrevLogLux = 0.0f;
+    
         @Override
         public void onSensorChanged(SensorEvent event) {
             if (mLightSensorEnabled) {
                 final long time = SystemClock.uptimeMillis();
                 final float lux = event.values[0];
                 handleLightSensorEvent(time, lux);
+
+                // Mediatek AAL support
+                if (time - mPrevLogTime >= 500L || // long period
+                    mPrevLogLux * 1.2f <= lux || lux * 1.2f <= mPrevLogLux) // significant lux changed
+                {
+                    Slog.d(TAG, "onSensorChanged: lux = " + lux);
+                    mPrevLogTime = time;
+                    mPrevLogLux = lux;
+                }
             }
         }
 
@@ -697,5 +750,30 @@ class AutomaticBrightnessController {
             }
             return index;
         }
+    }
+
+
+    // Mediatek AAL support
+    private class RuntimeConfig {
+        public Spline mScreenAutoBrightnessSpline;
+
+        public RuntimeConfig() {
+            mScreenAutoBrightnessSpline = null;
+        }
+    }
+
+    private final RuntimeConfig mRuntimeConfig = new RuntimeConfig();
+
+    public void setScreenAutoBrightnessSpline(Spline spline) {
+        mRuntimeConfig.mScreenAutoBrightnessSpline = spline;
+    }
+
+    public void updateRuntimeConfig() {
+        mHandler.sendEmptyMessage(MSG_UPDATE_RUNTIME_CONFIG);
+    }
+
+    private void updateRuntimeConfigInternal() {
+        mScreenAutoBrightnessSpline = mRuntimeConfig.mScreenAutoBrightnessSpline;
+        updateAutoBrightness(true);
     }
 }

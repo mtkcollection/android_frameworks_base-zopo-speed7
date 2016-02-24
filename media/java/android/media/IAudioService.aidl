@@ -33,6 +33,7 @@ import android.media.audiopolicy.AudioPolicyConfig;
 import android.media.audiopolicy.IAudioPolicyCallback;
 import android.net.Uri;
 import android.view.KeyEvent;
+import com.mediatek.common.audioprofile.IAudioProfileListener;
 
 /**
  * {@hide}
@@ -132,6 +133,14 @@ interface IAudioService {
 
     int getCurrentAudioFocus();
 
+    // DOLBY_DAP
+    /**
+     * Check whether the dolby client application is in audio focus or not.
+     * @param name the application's package name.
+     */
+    boolean isAppInFocus(String name);
+    // DOLBY_END
+
     /**
      * Register an IRemoteControlDisplay.
      * Success of registration is subject to a check on
@@ -214,9 +223,16 @@ interface IAudioService {
 
     boolean isHdmiSystemAudioSupported();
 
-           String registerAudioPolicy(in AudioPolicyConfig policyConfig,
+    String registerAudioPolicy(in AudioPolicyConfig policyConfig,
                     in IAudioPolicyCallback pcb, boolean hasFocusListener);
     oneway void unregisterAudioPolicyAsync(in IAudioPolicyCallback pcb);
 
-           int setFocusPropertiesForPolicy(int duckingBehavior, in IAudioPolicyCallback pcb);
+    int setFocusPropertiesForPolicy(int duckingBehavior, in IAudioPolicyCallback pcb);
+
+    boolean setAudioPathToFMTx(IBinder cb);
+    boolean setAudioPathOutofFMTx();
+
+    void setAudioProfileStreamVolume(int streamType, int index, int flags);
+
+    oneway void listenRingerModeAndVolume(IAudioProfileListener callback, int event);
 }

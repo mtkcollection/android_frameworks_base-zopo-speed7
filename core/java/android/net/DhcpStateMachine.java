@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +55,7 @@ import android.util.Log;
 public class DhcpStateMachine extends StateMachine {
 
     private static final String TAG = "DhcpStateMachine";
-    private static final boolean DBG = false;
+    private static final boolean DBG = true;
 
 
     /* A StateMachine that controls the DhcpStateMachine */
@@ -68,6 +73,7 @@ public class DhcpStateMachine extends StateMachine {
 
     private static final int DHCP_RENEW = 0;
     private static final String ACTION_DHCP_RENEW = "android.net.wifi.DHCP_RENEW";
+    private static final String ACTION_DHCPV6_RENEW = "android.net.wifi.DHCPV6_RENEW";
 
     //Used for sanity check on setting up renewal
     private static final int MIN_RENEWAL_TIME_SECS = 5 * 60;  // 5 minutes
@@ -99,6 +105,8 @@ public class DhcpStateMachine extends StateMachine {
      * after pre DHCP action is complete */
     public static final int CMD_PRE_DHCP_ACTION_COMPLETE    = BASE + 7;
 
+    public static final int CMD_SETUP_V6                    = BASE + 8;
+
     /* Message.arg1 arguments to CMD_POST_DHCP notification */
     public static final int DHCP_SUCCESS = 1;
     public static final int DHCP_FAILURE = 2;
@@ -108,6 +116,27 @@ public class DhcpStateMachine extends StateMachine {
     private State mWaitBeforeStartState = new WaitBeforeStartState();
     private State mRunningState = new RunningState();
     private State mWaitBeforeRenewalState = new WaitBeforeRenewalState();
+
+    public static final int DHCPV4 = 1;
+    public static final int DHCPV6 = 2;
+    public static final int DHCPV4_V6 = 3;
+    private boolean mIsDhcpV6 = false;
+    private boolean mIsRegistered = false;
+    private boolean mIsQuitting = false;
+
+    private void setForDhcpV6(boolean isDhcpV6) {
+        mIsDhcpV6 = isDhcpV6;
+        Intent dhcpRenewalIntent = new Intent(ACTION_DHCPV6_RENEW, null);
+        mDhcpRenewalIntent = PendingIntent.getBroadcast(mContext, DHCP_RENEW + 1, dhcpRenewalIntent, 0);
+        if (mIsRegistered) {
+            mContext.unregisterReceiver(mBroadcastReceiver);
+            mIsRegistered = false;
+        }
+        Log.d(TAG, "Register receiver for dhcpv6!");
+        mContext.registerReceiver(mBroadcastReceiver, new IntentFilter(ACTION_DHCPV6_RENEW));
+        mIsRegistered = true;
+        mIsQuitting = false;
+    }
 
     private DhcpStateMachine(Context context, StateMachine controller, String intf) {
         super(TAG);
@@ -128,13 +157,14 @@ public class DhcpStateMachine extends StateMachine {
             @Override
             public void onReceive(Context context, Intent intent) {
                 //DHCP renew
-                if (DBG) Log.d(TAG, "Sending a DHCP renewal " + this);
+                if (DBG) Log.d(TAG, "Sending a DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " renewal " + this);
                 //Lock released after 40s in worst case scenario
                 mDhcpRenewWakeLock.acquire(40000);
                 sendMessage(CMD_RENEW_DHCP);
             }
         };
         mContext.registerReceiver(mBroadcastReceiver, new IntentFilter(ACTION_DHCP_RENEW));
+        mIsRegistered = true;
 
         addState(mDefaultState);
             addState(mStoppedState, mDefaultState);
@@ -171,25 +201,32 @@ public class DhcpStateMachine extends StateMachine {
      * @hide
      */
     public void doQuit() {
+        mIsQuitting = true;
         quit();
     }
 
     protected void onQuitting() {
-        mController.sendMessage(CMD_ON_QUIT);
+        mController.obtainMessage(CMD_ON_QUIT, mIsDhcpV6 ? DHCPV6 : DHCPV4, 0).sendToTarget();
     }
 
     class DefaultState extends State {
         @Override
         public void exit() {
-            mContext.unregisterReceiver(mBroadcastReceiver);
+            if (mIsRegistered) {
+                mContext.unregisterReceiver(mBroadcastReceiver);
+                mIsRegistered = false;
+            }
         }
         @Override
         public boolean processMessage(Message message) {
             if (DBG) Log.d(TAG, getName() + message.toString() + "\n");
             switch (message.what) {
                 case CMD_RENEW_DHCP:
-                    Log.e(TAG, "Error! Failed to handle a DHCP renewal on " + mInterfaceName);
+                    Log.e(TAG, "Error! Failed to handle a DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " renewal on " + mInterfaceName);
                     mDhcpRenewWakeLock.release();
+                    break;
+                case CMD_SETUP_V6:
+                    setForDhcpV6(true);
                     break;
                 default:
                     Log.e(TAG, "Error! unhandled message  " + message);
@@ -214,7 +251,7 @@ public class DhcpStateMachine extends StateMachine {
                 case CMD_START_DHCP:
                     if (mRegisteredForPreDhcpNotification) {
                         /* Notify controller before starting DHCP */
-                        mController.sendMessage(CMD_PRE_DHCP_ACTION);
+                        mController.obtainMessage(CMD_PRE_DHCP_ACTION, mIsDhcpV6 ? DHCPV6 : DHCPV4, 0).sendToTarget();
                         transitionTo(mWaitBeforeStartState);
                     } else {
                         if (runDhcp(DhcpAction.START)) {
@@ -278,15 +315,21 @@ public class DhcpStateMachine extends StateMachine {
             switch (message.what) {
                 case CMD_STOP_DHCP:
                     mAlarmManager.cancel(mDhcpRenewalIntent);
-                    if (!NetworkUtils.stopDhcp(mInterfaceName)) {
-                        Log.e(TAG, "Failed to stop Dhcp on " + mInterfaceName);
+                    if (!mIsDhcpV6) {
+                        if (!NetworkUtils.stopDhcp(mInterfaceName)) {
+                            Log.e(TAG, "Failed to stop Dhcp on " + mInterfaceName);
+                        }
+                    } else {
+                        if (!NetworkUtils.stopDhcpv6(mInterfaceName)) {
+                            Log.e(TAG, "Failed to stop Dhcpv6 on " + mInterfaceName);
+                        }
                     }
                     transitionTo(mStoppedState);
                     break;
                 case CMD_RENEW_DHCP:
                     if (mRegisteredForPreDhcpNotification) {
                         /* Notify controller before starting DHCP */
-                        mController.sendMessage(CMD_PRE_DHCP_ACTION);
+                        mController.obtainMessage(CMD_PRE_DHCP_ACTION, mIsDhcpV6 ? DHCPV6 : DHCPV4, 0).sendToTarget();
                         transitionTo(mWaitBeforeRenewalState);
                         //mDhcpRenewWakeLock is released in WaitBeforeRenewalState
                     } else {
@@ -319,8 +362,14 @@ public class DhcpStateMachine extends StateMachine {
             switch (message.what) {
                 case CMD_STOP_DHCP:
                     mAlarmManager.cancel(mDhcpRenewalIntent);
-                    if (!NetworkUtils.stopDhcp(mInterfaceName)) {
-                        Log.e(TAG, "Failed to stop Dhcp on " + mInterfaceName);
+                    if (!mIsDhcpV6) {
+                        if (!NetworkUtils.stopDhcp(mInterfaceName)) {
+                            Log.e(TAG, "Failed to stop Dhcp on " + mInterfaceName);
+                        }
+                    } else {
+                        if (!NetworkUtils.stopDhcpv6(mInterfaceName)) {
+                            Log.e(TAG, "Failed to stop Dhcpv6 on " + mInterfaceName);
+                        }
                     }
                     transitionTo(mStoppedState);
                     break;
@@ -352,45 +401,90 @@ public class DhcpStateMachine extends StateMachine {
 
         if (dhcpAction == DhcpAction.START) {
             /* Stop any existing DHCP daemon before starting new */
-            NetworkUtils.stopDhcp(mInterfaceName);
-            if (DBG) Log.d(TAG, "DHCP request on " + mInterfaceName);
-            success = NetworkUtils.runDhcp(mInterfaceName, dhcpResults);
+            if (!mIsDhcpV6) {
+                if (!NetworkUtils.stopDhcp(mInterfaceName)) {
+                    Log.e(TAG, "Failed to stop Dhcp on " + mInterfaceName);
+                }
+            } else {
+                if (!NetworkUtils.stopDhcpv6(mInterfaceName)) {
+                    Log.e(TAG, "Failed to stop Dhcpv6 on " + mInterfaceName);
+                }
+            }
+            if (DBG) Log.d(TAG, "DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " request on " + mInterfaceName);
+            if (!mIsDhcpV6) {
+                success = NetworkUtils.runDhcp(mInterfaceName, dhcpResults);
+            } else {
+                success = NetworkUtils.runDhcpv6(mInterfaceName, dhcpResults);
+            }
         } else if (dhcpAction == DhcpAction.RENEW) {
-            if (DBG) Log.d(TAG, "DHCP renewal on " + mInterfaceName);
-            success = NetworkUtils.runDhcpRenew(mInterfaceName, dhcpResults);
+            if (DBG) Log.d(TAG, "DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " renewal on " + mInterfaceName + ", pid:" + mDhcpResults.pidForRenew);
+            dhcpResults.pidForRenew = mDhcpResults.pidForRenew;
+            if (!mIsDhcpV6) {
+                success = NetworkUtils.runDhcpRenew(mInterfaceName, dhcpResults);
+            } else {
+                success = NetworkUtils.runDhcpv6Renew(mInterfaceName, dhcpResults);
+            }
             if (success) dhcpResults.updateFromDhcpRequest(mDhcpResults);
         }
-        if (success) {
-            if (DBG) Log.d(TAG, "DHCP succeeded on " + mInterfaceName);
+        if (success && !mIsQuitting) {
+            if (DBG) Log.d(TAG, "DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " succeeded on " + mInterfaceName);
             long leaseDuration = dhcpResults.leaseDuration; //int to long conversion
+                Log.d(TAG, "dhcpResults:" + dhcpResults);
 
             //Sanity check for renewal
             if (leaseDuration >= 0) {
-                //TODO: would be good to notify the user that his network configuration is
-                //bad and that the device cannot renew below MIN_RENEWAL_TIME_SECS
-                if (leaseDuration < MIN_RENEWAL_TIME_SECS) {
-                    leaseDuration = MIN_RENEWAL_TIME_SECS;
+                if (!mIsDhcpV6) {
+                    //TODO: would be good to notify the user that his network configuration is
+                    //bad and that the device cannot renew below MIN_RENEWAL_TIME_SECS
+                    if (leaseDuration < MIN_RENEWAL_TIME_SECS) {
+                        leaseDuration = MIN_RENEWAL_TIME_SECS;
+                    }
+                    //Do it a bit earlier than half the lease duration time
+                    //to beat the native DHCP client and avoid extra packets
+                    //48% for one hour lease time = 29 minutes
+                    mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            SystemClock.elapsedRealtime() +
+                            leaseDuration * 480, //in milliseconds
+                            mDhcpRenewalIntent);
+                } else {
+                    if (leaseDuration < MIN_RENEWAL_TIME_SECS * 0.48) {
+                        leaseDuration = (long) (MIN_RENEWAL_TIME_SECS * 0.48);
+                    }
+                        Log.d(TAG, "DHCPV6 leaseDuration:" + leaseDuration);
+                    mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            SystemClock.elapsedRealtime() +
+                            leaseDuration * 1000, //in milliseconds
+                            mDhcpRenewalIntent);
                 }
-                //Do it a bit earlier than half the lease duration time
-                //to beat the native DHCP client and avoid extra packets
-                //48% for one hour lease time = 29 minutes
-                mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                        SystemClock.elapsedRealtime() +
-                        leaseDuration * 480, //in milliseconds
-                        mDhcpRenewalIntent);
             } else {
                 //infinite lease time, no renewal needed
             }
 
             mDhcpResults = dhcpResults;
-            mController.obtainMessage(CMD_POST_DHCP_ACTION, DHCP_SUCCESS, 0, dhcpResults)
+            mController.obtainMessage(CMD_POST_DHCP_ACTION, DHCP_SUCCESS, mIsDhcpV6 ? DHCPV6 : DHCPV4, new DhcpResults(dhcpResults))
                 .sendToTarget();
         } else {
-            Log.e(TAG, "DHCP failed on " + mInterfaceName + ": " +
+            if (DBG && mIsQuitting) {
+                Log.d(TAG, "IsQuitting, ignore DHCP" + (mIsDhcpV6 ? "V6" : "V4") + " result:" + success + " on " + mInterfaceName);
+            }
+
+            if (!mIsDhcpV6) {
+                Log.e(TAG, "DHCPV4 failed on " + mInterfaceName + ": " +
                     NetworkUtils.getDhcpError());
-            NetworkUtils.stopDhcp(mInterfaceName);
-            mController.obtainMessage(CMD_POST_DHCP_ACTION, DHCP_FAILURE, 0)
-                .sendToTarget();
+                NetworkUtils.stopDhcp(mInterfaceName);
+            } else {
+                Log.e(TAG, "DHCPV6 failed on " + mInterfaceName + ": " + NetworkUtils.getDhcpv6Error());
+                NetworkUtils.stopDhcpv6(mInterfaceName);
+            }
+            if (!mIsQuitting) {
+                if (dhcpAction == DhcpAction.RENEW) {
+                    mController.obtainMessage(CMD_POST_DHCP_ACTION, DHCP_FAILURE, mIsDhcpV6 ? DHCPV6 : DHCPV4)
+                        .sendToTarget();
+                } else {
+                    mController.obtainMessage(CMD_POST_DHCP_ACTION, DHCP_FAILURE, mIsDhcpV6 ? DHCPV6 : DHCPV4)
+                        .sendToTarget();
+                }
+            }
         }
         return success;
     }

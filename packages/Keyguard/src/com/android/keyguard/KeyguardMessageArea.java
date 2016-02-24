@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,18 +32,24 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.MutableInt;
+import android.util.Slog;
 import android.view.View;
 import android.widget.TextView;
+
+//import libcore.util.MutableInt;
 
 import java.lang.ref.WeakReference;
 
 import com.android.internal.widget.LockPatternUtils;
 
+import com.mediatek.keyguard.AntiTheft.AntiTheftManager ;
+
 /***
  * Manages a number of views inside of the given layout. See below for a list of widgets.
  */
-class KeyguardMessageArea extends TextView {
+public class KeyguardMessageArea extends TextView {
     /** Handler token posted with accessibility announcement runnables. */
     private static final Object ANNOUNCE_TOKEN = new Object();
 
@@ -48,18 +59,38 @@ class KeyguardMessageArea extends TextView {
      */
     private static final long ANNOUNCEMENT_DELAY = 250;
 
-    static final int SECURITY_MESSAGE_DURATION = 5000;
-    protected static final int FADE_DURATION = 750;
+    static final int CHARGING_ICON = 0; //R.drawable.ic_lock_idle_charging;
+    static final int BATTERY_LOW_ICON = 0; //R.drawable.ic_lock_idle_low_battery;
+
+    public static final int SECURITY_MESSAGE_DURATION = 5000;
+    /// M: ALPS00682491 fix animation done may clear next message, so disable the effect.
+    protected static final int FADE_DURATION = 0;
 
     private static final String TAG = "KeyguardMessageArea";
 
+    /// M: Support multiple batteries feature
+    private static final int BATTERY_NUMBER = 2;
+
+    // are we showing battery information?
+    boolean mShowingBatteryInfo[];
+
     // is the bouncer up?
     boolean mShowingBouncer = false;
+
+    // last known plugged in state
+    boolean mCharging[];
+
+    // last known battery level
+    int mBatteryLevel[];
 
     KeyguardUpdateMonitor mUpdateMonitor;
 
     // Timeout before we reset the message to show charging/owner info
     long mTimeout = SECURITY_MESSAGE_DURATION;
+
+    // Shadowed text values
+    protected boolean mBatteryCharged[];
+    protected boolean mBatteryIsLow[];
 
     private Handler mHandler;
 
@@ -67,6 +98,8 @@ class KeyguardMessageArea extends TextView {
     boolean mShowingMessage;
     private CharSequence mSeparator;
     private LockPatternUtils mLockPatternUtils;
+
+    private KeyguardSecurityModel mSecurityModel;
 
     Runnable mClearMessageRunnable = new Runnable() {
         @Override
@@ -83,7 +116,7 @@ class KeyguardMessageArea extends TextView {
 
     public static class Helper implements SecurityMessageDisplay {
         KeyguardMessageArea mMessageArea;
-        Helper(View v) {
+        public Helper(View v) {
             mMessageArea = (KeyguardMessageArea) v.findViewById(R.id.keyguard_message_area);
             if (mMessageArea == null) {
                 throw new RuntimeException("Can't find keyguard_message_area in " + v.getClass());
@@ -130,6 +163,19 @@ class KeyguardMessageArea extends TextView {
     }
 
     private KeyguardUpdateMonitorCallback mInfoCallback = new KeyguardUpdateMonitorCallback() {
+        @Override
+        public void onRefreshBatteryInfo(KeyguardUpdateMonitor.BatteryStatus status) {
+            final int idx = status.index;
+            mShowingBatteryInfo[idx] = status.isPluggedIn() || status.isBatteryLow();
+            ///M: ALPS00602318, Charging status may be not updated immediately after plugged out charger
+            mCharging[idx] = status.isPluggedIn() &&
+                     (status.status == BatteryManager.BATTERY_STATUS_CHARGING
+                     || status.status == BatteryManager.BATTERY_STATUS_FULL);
+            mBatteryLevel[idx] = status.level;
+            mBatteryCharged[idx] = status.isCharged();
+            mBatteryIsLow[idx] = status.isBatteryLow();
+            update();
+        }
         public void onScreenTurnedOff(int why) {
             setSelected(false);
         };
@@ -147,6 +193,22 @@ class KeyguardMessageArea extends TextView {
         setLayerType(LAYER_TYPE_HARDWARE, null); // work around nested unclipped SaveLayer bug
 
         mLockPatternUtils = new LockPatternUtils(context);
+        mSecurityModel = new KeyguardSecurityModel(context) ;
+
+        ///M: support multiple batteries
+        mShowingBatteryInfo = new boolean[BATTERY_NUMBER];
+        mCharging = new boolean[BATTERY_NUMBER];
+        mBatteryCharged = new boolean[BATTERY_NUMBER];
+        mBatteryIsLow = new boolean[BATTERY_NUMBER];
+        mBatteryLevel = new int[BATTERY_NUMBER];
+        for (int i = 0; i < BATTERY_NUMBER; i++) {
+            mShowingBatteryInfo[i] = false;
+            mCharging[i] = false;
+            mBatteryCharged[i] = false;
+            mBatteryIsLow[i] = false;
+            mBatteryLevel[i] = 100;
+        }
+
 
         // Registering this callback immediately updates the battery state, among other things.
         mUpdateMonitor = KeyguardUpdateMonitor.getInstance(getContext());
@@ -186,15 +248,99 @@ class KeyguardMessageArea extends TextView {
      * @param showStatusLines status lines are shown if true
      */
     void update() {
+
+        CharSequence statusStr;
+        CharSequence deviceStatus[] = new CharSequence[BATTERY_NUMBER];
         MutableInt icon = new MutableInt(0);
-        CharSequence status = getCurrentMessage();
-        setCompoundDrawablesWithIntrinsicBounds(icon.value, 0, 0, 0);
-        setText(status);
+
+        if (isDockToDesk()) {  // show 2 batteries information
+            for (int i = 0; i < BATTERY_NUMBER; i++) {
+                CharSequence deviceName = null;
+                CharSequence chargingStr = getChargeInfo(icon, i);
+                switch (i) {
+                    case 0: // Phone
+                        deviceName = getContext().getString(
+                                com.android.internal.R.string.default_audio_route_name);
+                        break;
+                    case 1: // SmartBook
+                        deviceName = "SmartBook";
+                        break;
+                }
+                deviceStatus[i] = chargingStr != null ? (deviceName.toString() + " " + chargingStr.toString()) : null;
+            }
+            statusStr = deviceStatus[0] != null ? concat(deviceStatus[0], deviceStatus[1]) : null;
+            statusStr = concat(statusStr, getOwnerInfo(), getCurrentMessage());
+
+        } else {
+            statusStr = concat(getChargeInfo(icon, 0), getOwnerInfo(), getCurrentMessage());
+            setCompoundDrawablesWithIntrinsicBounds(icon.value, 0, 0, 0);
+        }
+
+        Log.d(TAG, "before update, statusStr=" + statusStr.toString());
+
+        /// M: fix ALPS01897062
+        /// M: If dm lock or PPL Lock is on, we should tell user here @{
+        if (mSecurityModel.getSecurityMode() == KeyguardSecurityModel.SecurityMode.AntiTheft) {
+            setText(AntiTheftManager.getAntiTheftMessageAreaText(statusStr, mSeparator));
+        } else {
+            setText(statusStr);
+        }
+        /// @}
+        Log.d(TAG, "after update, statusStr=" + statusStr.toString());
     }
 
+    private CharSequence concat(CharSequence... args) {
+        StringBuilder b = new StringBuilder();
+        if (!TextUtils.isEmpty(args[0])) {
+            b.append(args[0]);
+        }
+        for (int i = 1; i < args.length; i++) {
+            CharSequence text = args[i];
+            if (!TextUtils.isEmpty(text)) {
+                if (b.length() > 0) {
+                    b.append(mSeparator);
+                }
+                b.append(text);
+            }
+        }
+        return b.toString();
+    }
 
     CharSequence getCurrentMessage() {
         return mShowingMessage ? mMessage : null;
+    }
+
+    String getOwnerInfo() {
+        ContentResolver res = getContext().getContentResolver();
+        String info = null;
+        final boolean ownerInfoEnabled = mLockPatternUtils.isOwnerInfoEnabled();
+        if (ownerInfoEnabled && !mShowingMessage) {
+            info = mLockPatternUtils.getOwnerInfo(mLockPatternUtils.getCurrentUser());
+        }
+        return info;
+    }
+
+    private CharSequence getChargeInfo(MutableInt icon, int idx) {
+        CharSequence string = null;
+        if (mShowingBatteryInfo[idx] && !mShowingMessage) {
+            // Battery status
+            if (mCharging[idx]) {
+                // Charging, charged or waiting to charge.
+                string = getContext().getString(mBatteryCharged[idx]
+                        ? R.string.keyguard_charged
+                        : R.string.keyguard_plugged_in, mBatteryLevel[idx]);
+                icon.value = CHARGING_ICON;
+            } else if (mBatteryIsLow[idx]) {
+                // Battery is low
+                string = getContext().getString(R.string.keyguard_low_battery);
+                icon.value = BATTERY_LOW_ICON;
+            } else if (isDockToDesk()) { // only show battery level
+                string = getContext().getString(R.string.lockscreen_battery_short, mBatteryLevel[idx]);
+                icon.value = CHARGING_ICON;
+            }
+
+        }
+        return string;
     }
 
     private void hideMessage(int duration, boolean thenUpdate) {
@@ -247,5 +393,25 @@ class KeyguardMessageArea extends TextView {
                 host.announceForAccessibility(mTextToAnnounce);
             }
         }
+    }
+
+    /// M: [ALPS01413880] abnormal screen because of using HW layer
+    @Override
+    public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        buildLayer();
+    }
+
+    /// M: For memory leak issue
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        mHandler.removeCallbacks(mClearMessageRunnable);
+        mUpdateMonitor.removeCallback(mInfoCallback);
+        mUpdateMonitor = null;
+    }
+
+    private boolean isDockToDesk() {
+        return mUpdateMonitor != null && mUpdateMonitor.isDocktoDesk() ;
     }
 }

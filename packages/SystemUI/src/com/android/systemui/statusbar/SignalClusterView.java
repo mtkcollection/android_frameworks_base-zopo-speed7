@@ -30,6 +30,13 @@ import android.widget.LinearLayout;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.policy.NetworkControllerImpl;
 import com.android.systemui.statusbar.policy.SecurityController;
+import com.android.systemui.statusbar.policy.TelephonyIcons;
+import com.mediatek.systemui.ext.ISignalClusterExt;
+import com.mediatek.systemui.ext.NetworkType;
+import com.mediatek.systemui.ext.PhoneStateExt;
+import com.mediatek.systemui.ext.PluginFactory;
+import com.mediatek.systemui.statusbar.util.SIMHelper;
+import com.mediatek.xlog.Xlog;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -67,6 +74,25 @@ public class SignalClusterView
     private int mEndPadding;
     private int mEndPaddingNothingVisible;
 
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:06:11 +0800
+ * add signal up and down icon
+ */
+    static final int[] DATA_ACTIVITY = {
+        R.drawable.stat_sys_signal_in,
+        R.drawable.stat_sys_signal_out,
+        R.drawable.stat_sys_signal_inout
+    };
+// End of Vanzo:qiukai
+
+    /// M: Support "SystemUI - VoLTE icon".
+    private ImageView mVoLTEIcon;
+    /// M: Support "SIM Indicator".
+    private ImageView mSimIndicatorIcon;
+
+    /// M: Support "Operator plugin's ISignalClusterExt".@{
+    private ISignalClusterExt mSignalClusterExt = null;
+    /// M: Support "Operator plugin's ISignalClusterExt". @}
+
     public SignalClusterView(Context context) {
         this(context, null);
     }
@@ -75,13 +101,45 @@ public class SignalClusterView
         this(context, attrs, 0);
     }
 
+
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:07:03 +0800
+ * add signal up and down icon
+ */
+    public void setDataActivityMTK(boolean in, boolean out, int subId) {
+        Log.d(TAG, "setDataActivityMTK(in= " + in + "), out= " + out);
+
+        int imgDataActivityID=0;
+        if(in && out){
+            imgDataActivityID=DATA_ACTIVITY[2];
+        }else if(out){
+            imgDataActivityID=DATA_ACTIVITY[1];
+        }else if(in){
+            imgDataActivityID=DATA_ACTIVITY[0];
+        }else {
+            imgDataActivityID=0;
+        }
+        PhoneState state = getOrInflateState(subId);
+        state.mDataActivityId = imgDataActivityID;
+    }
+// End of Vanzo:qiukai
+
     public SignalClusterView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
+
+        /// M: Support "Operator plugin's ISignalClusterExt".@{
+        mSignalClusterExt = PluginFactory.getStatusBarPlugin(this.getContext())
+                .customizeSignalCluster();
+        mSignalClusterExt.setSignalClusterInfo(new SignalClusterInfo());
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
     }
 
     public void setNetworkController(NetworkControllerImpl nc) {
         if (DEBUG) Log.d(TAG, "NetworkController=" + nc);
         mNC = nc;
+
+        /// M: Support "Operator plugin's ISignalClusterExt".@{
+        mSignalClusterExt.setNetworkControllerExt(nc.getNetworkControllerExt());
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
     }
 
     public void setSecurityController(SecurityController sc) {
@@ -120,6 +178,18 @@ public class SignalClusterView
             mMobileSignalGroup.addView(state.mMobileGroup);
         }
 
+        /// M: Support "SystemUI - VoLTE icon". @{
+        mVoLTEIcon      = (ImageView) findViewById(R.id.volte_icon);
+        mVoLTEIcon.setVisibility(View.GONE);
+        /// M: Support "SystemUI - VoLTE icon". @}
+
+        /// M: [SystemUI] Support "SIM indicator".
+        mSimIndicatorIcon = (ImageView) findViewById(R.id.sim_indicator_internet_or_alwaysask);
+
+        /// M: Support "Operator plugin's ISignalClusterExt".@{
+        mSignalClusterExt.onAttachedToWindow(mMobileSignalGroup, mNoSims);
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
+
         apply();
     }
 
@@ -131,6 +201,10 @@ public class SignalClusterView
         mAirplane       = null;
         mMobileSignalGroup.removeAllViews();
         mMobileSignalGroup = null;
+
+        /// M: Support "Operator plugin's ISignalClusterExt".@{
+        mSignalClusterExt.onDetachedFromWindow();
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
 
         super.onDetachedFromWindow();
     }
@@ -152,6 +226,9 @@ public class SignalClusterView
         mWifiVisible = visible;
         mWifiStrengthId = strengthIcon;
         mWifiDescription = contentDescription;
+        Xlog.d(TAG, "setWifiIndicators, visible=" + visible
+            + ", strengthIcon=" + strengthIcon
+            + ", contentDescription=" + contentDescription);
 
         apply();
     }
@@ -167,6 +244,17 @@ public class SignalClusterView
         state.mMobileDescription = contentDescription;
         state.mMobileTypeDescription = typeContentDescription;
         state.mIsMobileTypeIconWide = isTypeIconWide;
+        Xlog.d(TAG, "setMobileDataIndicators(" + subId + "), visible=" + visible
+            + ", strengthIcon= " + strengthIcon
+            + ", mMobileTypeId= " + typeIcon
+            + ", isTypeIconWide= " + isTypeIconWide);
+
+        /// M: Support "Operator plugin's ISignalClusterExt". @{
+        mSignalClusterExt.setMobileDataIndicators(subId, visible, state.mMobileGroup,
+                state.mSignalNetworkType, (ViewGroup) (state.mMobile.getParent()), state.mMobile,
+                state.mMobileType, strengthIcon, typeIcon, contentDescription,
+                typeContentDescription, isTypeIconWide);
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
 
         apply();
     }
@@ -174,10 +262,16 @@ public class SignalClusterView
     @Override
     public void setNoSims(boolean show) {
         mNoSimsVisible = show;
+        Log.d(TAG, "setNoSims(), mNoSimsVisible= " + mNoSimsVisible);
+
+        /// M: Support "Operator plugin's ISignalClusterExt". @{
+        mNoSimsVisible = PluginFactory.getStatusBarPlugin(mContext).customizeHasNoSims(show);
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
     }
 
     @Override
     public void setSubs(List<SubscriptionInfo> subs) {
+        Xlog.d(TAG, "setSubs(), subs= " + subs);
         // Clear out all old subIds.
         mPhoneStates.clear();
         if (mMobileSignalGroup != null) {
@@ -187,6 +281,10 @@ public class SignalClusterView
         for (int i = 0; i < n; i++) {
             inflatePhoneState(subs.get(i).getSubscriptionId());
         }
+
+        /// M: Support "Operator plugin's ISignalClusterExt". @{
+        mSignalClusterExt.setSubs(subs, inflatePhoneStateExt(subs));
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
     }
 
     private PhoneState getOrInflateState(int subId) {
@@ -249,6 +347,10 @@ public class SignalClusterView
             mAirplane.setImageDrawable(null);
         }
 
+        /// M: Support "Operator plugin's ISignalClusterExt". @{
+        mSignalClusterExt.onRtlPropertiesChanged(layoutDirection);
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
+
         apply();
     }
 
@@ -278,6 +380,7 @@ public class SignalClusterView
 
         boolean anyMobileVisible = false;
         int firstMobileTypeId = 0;
+        Log.d(TAG, "apply() PhoneState state : " + mPhoneStates);
         for (PhoneState state : mPhoneStates) {
             if (state.apply(anyMobileVisible)) {
                 if (!anyMobileVisible) {
@@ -308,11 +411,26 @@ public class SignalClusterView
             mWifiSignalSpacer.setVisibility(View.GONE);
         }
 
+        Log.d(TAG, "mNoSims.setVisibility: " + mNoSimsVisible);
+/* Vanzo:luanshijun on: Sat, 25 Apr 2015 16:58:36 +0800
+ * remove sim icon when there is no sim
+ */
+        if (com.android.featureoption.FeatureOption.VANZO_FEATURE_HIDEN_SIM_ICON_WHEN_NO_SIM){
+            mNoSims.setVisibility(View.GONE);
+        } else {
+
         mNoSims.setVisibility(mNoSimsVisible ? View.VISIBLE : View.GONE);
+        }
+
+// End of Vanzo:luanshijun
 
         boolean anythingVisible = mNoSimsVisible || mWifiVisible || mIsAirplaneMode
                 || anyMobileVisible || mVpnVisible;
         setPaddingRelative(0, 0, anythingVisible ? mEndPadding : mEndPaddingNothingVisible, 0);
+
+        /// M: Support "Operator plugin's ISignalClusterExt". @{
+        mSignalClusterExt.apply();
+        /// M: Support "Operator plugin's ISignalClusterExt". @}
     }
 
     private class PhoneState {
@@ -321,9 +439,22 @@ public class SignalClusterView
         private int mMobileStrengthId = 0, mMobileTypeId = 0;
         private boolean mIsMobileTypeIconWide;
         private String mMobileDescription, mMobileTypeDescription;
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:12:20 +0800
+ * add signal up and down icon
+ */
+        private ImageView mDataActivityInOut;
+        private int mDataActivityId = 0;
+// End of Vanzo:qiukai
 
         private ViewGroup mMobileGroup;
         private ImageView mMobile, mMobileType;
+
+        /// M: Support "Service Network Type on Statusbar". @{
+        private NetworkType mNetworkType;
+        private ImageView mSignalNetworkType;
+        /// M: Support "Service Network Type on Statusbar". @}
+        /// M: Support "Default SIM Indicator".
+        private boolean mShowSimIndicator;
 
         public PhoneState(int subId, Context context) {
             ViewGroup root = (ViewGroup) LayoutInflater.from(context)
@@ -336,9 +467,18 @@ public class SignalClusterView
             mMobileGroup    = root;
             mMobile         = (ImageView) root.findViewById(R.id.mobile_signal);
             mMobileType     = (ImageView) root.findViewById(R.id.mobile_type);
+            /// M: Support "Service Network Type on Statusbar".
+            mSignalNetworkType     = (ImageView) root.findViewById(R.id.network_type);
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:08:55 +0800
+ * add signal up and down icon
+ */
+            mDataActivityInOut = (ImageView) root.findViewById(R.id.data_inout);
+// End of Vanzo:qiukai
         }
 
         public boolean apply(boolean isSecondaryIcon) {
+            Xlog.d(TAG, "apply(" + mSubId + ")," + " mMobileVisible= " + mMobileVisible +
+                   ", mIsAirplaneMode= " + mIsAirplaneMode);
             if (mMobileVisible && !mIsAirplaneMode) {
                 mMobile.setImageResource(mMobileStrengthId);
                 mMobileType.setImageResource(mMobileTypeId);
@@ -348,6 +488,39 @@ public class SignalClusterView
             } else {
                 mMobileGroup.setVisibility(View.GONE);
             }
+
+            /// M: Support "Service Network Type on Statusbar". @{
+            if (!mIsAirplaneMode && mNetworkType != null) {
+                int id = TelephonyIcons.getNetworkTypeIcon(mNetworkType);
+                Xlog.d(TAG, "apply(), mNetworkType= " + mNetworkType + " resId= " + id);
+                mSignalNetworkType.setImageResource(id);
+                mSignalNetworkType.setVisibility(View.VISIBLE);
+            } else {
+                mSignalNetworkType.setImageDrawable(null);
+                mSignalNetworkType.setVisibility(View.GONE);
+            }
+            /// M: Support "Service Network Type on Statusbar". @}
+
+/* Vanzo:qiukai on: Sat, 08 Aug 2015 16:13:10 +0800
+ * add signal up and down icon
+ */
+            if (com.android.featureoption.FeatureOption.VANZO_FEATURE_SYSTEMUI_SHOW_SIGNAL_UP_DOWN_ICON) {
+                if (mDataActivityId!=0) {
+                    mDataActivityInOut.setImageResource(mDataActivityId);
+                    mDataActivityInOut.setVisibility(View.VISIBLE);
+                } else {
+                    mDataActivityInOut.setImageDrawable(null);
+                    mDataActivityInOut.setVisibility(View.GONE);
+                }
+            }
+// End of Vanzo:qiukai
+            /// M: Support "Default SIM Indicator". @{
+            if (mShowSimIndicator) {
+                mMobileGroup.setBackgroundResource(R.drawable.stat_sys_default_sim_indicator);
+            } else {
+                mMobileGroup.setBackgroundDrawable(null);
+            }
+            /// M: Support "Default SIM Indicator". @}
 
             // When this isn't next to wifi, give it some extra padding between the signals.
             mMobileGroup.setPaddingRelative(isSecondaryIcon ? mSecondaryTelephonyPadding : 0,
@@ -370,5 +543,137 @@ public class SignalClusterView
             }
         }
     }
+
+    /// M: Support "Default SIM Indicator". @{
+    /**
+        * M: Set Default SIM Indicator.
+        * @param showSimIndicator : Show SIM indicator or not
+        * @param subID : subID
+        */
+    public void setShowSimIndicator(boolean showSimIndicator, int subID) {
+        boolean isSecondaryIcon = false;
+        for (PhoneState state : mPhoneStates) {
+            if (state.mSubId == subID) {
+                state.mShowSimIndicator = showSimIndicator;
+                state.apply(isSecondaryIcon);
+            }
+            isSecondaryIcon = true;
+        }
+    }
+    /**
+         * M: Set AlwaysAsk Or InternetCall icon.
+         * @param selectID : AlwaysAsk or InternetCall.
+         * public static final long VOICE_CALL_SIM_SETTING_INTERNET = -2;
+         * public static final long DEFAULT_SIM_SETTING_ALWAYS_ASK = -1;
+         * public static final long SMS_SIM_SETTING_AUTO = -3;
+         */
+    public void setShowAlwaysAskOrInternetCall(long selectID) {
+        if (selectID == android.provider.Settings.System.VOICE_CALL_SIM_SETTING_INTERNET) {
+            mSimIndicatorIcon.setBackgroundResource(R.drawable.sim_indicator_internet_call);
+        } else if (selectID == android.provider.Settings.System.SMS_SIM_SETTING_AUTO) {
+            mSimIndicatorIcon.setBackgroundResource(R.drawable.sim_indicator_auto);
+        } else {
+            mSimIndicatorIcon.setBackgroundResource(R.drawable.sim_indicator_always_ask);
+        }
+        if (!mIsAirplaneMode) {
+            mSimIndicatorIcon.setVisibility(View.VISIBLE);
+        } else {
+            mSimIndicatorIcon.setVisibility(View.GONE);
+        }
+    }
+    /**
+         * M: hide AlwaysAsk Or InternetCall icon.
+         */
+    public void setHideAlwaysAskOrInternetCall() {
+        mSimIndicatorIcon.setVisibility(View.GONE);
+    }
+    /// M: Support "Default SIM Indicator". @}
+
+    /// M: Support "SystemUI - VoLTE icon". @{
+    public void setVoLTE(boolean isShowed) {
+        if (isShowed == true) {
+            // VoLTE is on
+            Xlog.d(TAG, "set VoLTE Icon on");
+            mVoLTEIcon.setBackgroundResource(R.drawable.stat_sys_volte);
+            mVoLTEIcon.setVisibility(View.VISIBLE);
+        } else {
+            // VoLTE is off
+            Xlog.d(TAG, "set VoLTE Icon off");
+            mVoLTEIcon.setVisibility(View.GONE);
+        }
+    }
+    /// M: Support "SystemUI - VoLTE icon". @}
+
+    /// M: Support "Operator plugin's ISignalClusterExt". @{
+    private final PhoneStateExt[] inflatePhoneStateExt(List<SubscriptionInfo> subs) {
+        final int slotCount = SIMHelper.getSlotCount();
+        final PhoneStateExt[] phoneStateExts = new PhoneStateExt[slotCount];
+        for (int i = SIMHelper.SLOT_INDEX_DEFAULT; i < slotCount; i++) {
+            for (SubscriptionInfo subInfo : subs) {
+                if (subInfo.getSimSlotIndex() == i) {
+                    phoneStateExts[i] = inflatePhoneStateExt(subInfo);
+                    break;
+                }
+            }
+        }
+
+        return phoneStateExts;
+    }
+
+    private final PhoneStateExt inflatePhoneStateExt(SubscriptionInfo subInfo) {
+        final int slotId = subInfo.getSimSlotIndex();
+        final int subId = subInfo.getSubscriptionId();
+        final PhoneState state = getOrInflateState(subId);
+        final PhoneStateExt phoneStateExt = new PhoneStateExt(slotId, subId);
+        phoneStateExt.setViews(state.mMobileGroup, state.mSignalNetworkType,
+                (ViewGroup) (state.mMobile.getParent()), state.mMobile,
+                state.mMobileType);
+        return phoneStateExt;
+    }
+
+    /**
+     * SignalCluster Info Support "Operator plugin's ISignalClusterExt.
+     */
+    private class SignalClusterInfo implements ISignalClusterExt.ISignalClusterInfo {
+
+        @Override
+        public boolean isWifiIndicatorsVisible() {
+            return mWifiVisible;
+        }
+
+        @Override
+        public boolean isNoSimsVisible() {
+            return mNoSimsVisible;
+        }
+
+        @Override
+        public boolean isAirplaneMode() {
+            return mIsAirplaneMode;
+        }
+
+        @Override
+        public int getWideTypeIconStartPadding() {
+            return mWideTypeIconStartPadding;
+        }
+
+        @Override
+        public int getSecondaryTelephonyPadding() {
+            return mSecondaryTelephonyPadding;
+        }
+    }
+    /// M: Support "Operator plugin's ISignalClusterExt". @}
+
+    /// M: Support "Service Network Type on Statusbar". @{
+    /**
+     * M: setNetworkType For Network icon.
+     * @param networkType : Network Type
+     * @param subId : SubID
+     */
+    public void setNetworkType(NetworkType networkType, int subId) {
+        Xlog.d(TAG, "setNetworkType(" + subId + "), NetworkType= " + networkType);
+        PhoneState state = getOrInflateState(subId);
+        state.mNetworkType = networkType;
+    }
+    /// M: Support "Service Network Type on Statusbar". @}
 }
 

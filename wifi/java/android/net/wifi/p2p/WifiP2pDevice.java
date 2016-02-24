@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,6 +116,47 @@ public class WifiP2pDevice implements Parcelable {
     /** @hide */
     public WifiP2pWfdInfo wfdInfo;
 
+    /**
+     * device IP
+     * M: ALPS01303168: for wfd sink
+     *
+     * @hide
+     * @internal
+     */
+    public String deviceIP;
+
+    /** M: NFC Float II @{ */
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int ROLE_DEVICE = 0;
+
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int ROLE_GC     = 1;
+
+    /**
+     * @hide
+     * @internal
+     */
+    public static final int ROLE_GO     = 2;
+
+    /**
+     * @hide
+     * @internal
+     */
+    public String goIface = "";
+
+    /**
+     * @hide
+     * @internal
+     */
+    public int oobRoleIndication = 0;
+    /** @} */
+
     /** Detailed device string pattern with WFD info
      * Example:
      *  P2P-DEVICE-FOUND 00:18:6b:de:a3:6e p2p_dev_addr=00:18:6b:de:a3:6e
@@ -126,7 +172,11 @@ public class WifiP2pDevice implements Parcelable {
         "config_methods=(0x[0-9a-fA-F]+) " +
         "dev_capab=(0x[0-9a-fA-F]+) " +
         "group_capab=(0x[0-9a-fA-F]+)" +
-        "( wfd_dev_info=0x([0-9a-fA-F]{12}))?"
+        "( wfd_dev_info=0x([0-9a-fA-F]{12}))?" +
+        /** M: NFC Float II @{ */
+        "( go_iface=((?:[0-9a-f]{2}:){5}[0-9a-f]{2}))?" +
+        "( oob_role_indication=(\\d+))?"
+        /** @} */
     );
 
     /** 2 token device address pattern
@@ -196,7 +246,12 @@ public class WifiP2pDevice implements Parcelable {
                 deviceAddress = match.group(1);
                 return;
             default:
-                match = detailedDevicePattern.matcher(string);
+                ///M: ALPS01471205  @{
+                //match = detailedDevicePattern.matcher(string);
+                String modifiedString = string.replaceAll("\n", "_");
+                match = detailedDevicePattern.matcher(modifiedString);
+                ///@}
+
                 if (!match.find()) {
                     throw new IllegalArgumentException("Malformed supplicant event");
                 }
@@ -213,12 +268,26 @@ public class WifiP2pDevice implements Parcelable {
                             parseHex(str.substring(4,8)),
                             parseHex(str.substring(8,12)));
                 }
+                /** M: NFC Float II @{ */
+                if (match.group(11) != null) {
+                    goIface = match.group(12);
+                }
+                if (match.group(13) != null) {
+                    try {
+                        oobRoleIndication = Integer.parseInt(match.group(14));
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "NumberFormatException:" + e.toString());
+                    }
+                }
+                /** @} */
                 break;
         }
 
-        if (tokens[0].startsWith("P2P-DEVICE-FOUND")) {
+        if (tokens[0].startsWith("P2P-DEVICE-FOUND") || tokens[0].startsWith("P2P-NFC-DEVICE-FOUND")) {
             status = AVAILABLE;
         }
+
+        deviceIP = null;
     }
 
     /** Returns true if WPS push button configuration is supported */
@@ -291,6 +360,11 @@ public class WifiP2pDevice implements Parcelable {
         deviceCapability = device.deviceCapability;
         groupCapability = device.groupCapability;
         wfdInfo = device.wfdInfo;
+        deviceIP = device.deviceIP;
+        /** M: NFC Float II @{ */
+        goIface = device.goIface;
+        oobRoleIndication = device.oobRoleIndication;
+        /** @} */
     }
 
     @Override
@@ -316,6 +390,11 @@ public class WifiP2pDevice implements Parcelable {
         sbuf.append("\n devcapab: ").append(deviceCapability);
         sbuf.append("\n status: ").append(status);
         sbuf.append("\n wfdInfo: ").append(wfdInfo);
+        sbuf.append("\n deviceIP: ").append(deviceIP);
+        /** M: NFC Float II @{ */
+        sbuf.append("\n goIface: ").append(goIface);
+        sbuf.append("\n oobRoleIndication: ").append(oobRoleIndication);
+        /** @} */
         return sbuf.toString();
     }
 
@@ -336,6 +415,11 @@ public class WifiP2pDevice implements Parcelable {
             groupCapability = source.groupCapability;
             status = source.status;
             wfdInfo = new WifiP2pWfdInfo(source.wfdInfo);
+            deviceIP = source.deviceIP;
+            /** M: NFC Float II @{ */
+            goIface = source.goIface;
+            oobRoleIndication = source.oobRoleIndication;
+            /** @} */
         }
     }
 
@@ -355,6 +439,11 @@ public class WifiP2pDevice implements Parcelable {
         } else {
             dest.writeInt(0);
         }
+        dest.writeString(deviceIP);
+        /** M: NFC Float II @{ */
+        dest.writeString(goIface);
+        dest.writeInt(oobRoleIndication);
+        /** @} */
     }
 
     /** Implement the Parcelable interface */
@@ -373,6 +462,11 @@ public class WifiP2pDevice implements Parcelable {
                 if (in.readInt() == 1) {
                     device.wfdInfo = WifiP2pWfdInfo.CREATOR.createFromParcel(in);
                 }
+                device.deviceIP = in.readString();
+                /** M: NFC Float II @{ */
+                device.goIface = in.readString();
+                device.oobRoleIndication = in.readInt();
+                /** @} */
                 return device;
             }
 
@@ -382,7 +476,8 @@ public class WifiP2pDevice implements Parcelable {
         };
 
     //supported formats: 0x1abc, 0X1abc, 1abc
-    private int parseHex(String hexString) {
+    /** @hide */
+    public static int parseHex(String hexString) {
         int num = 0;
         if (hexString.startsWith("0x") || hexString.startsWith("0X")) {
             hexString = hexString.substring(2);

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +50,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.telecom.TelecomManager;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Slog;
@@ -52,6 +58,7 @@ import android.util.SparseArray;
 import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.Surface;
+import android.view.SurfaceControl;
 import android.view.WindowManagerInternal;
 
 import com.android.server.DisplayThread;
@@ -65,6 +72,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+
 
 /**
  * Manages attached displays.
@@ -111,7 +119,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public final class DisplayManagerService extends SystemService {
     private static final String TAG = "DisplayManagerService";
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
+    @SuppressWarnings("checkstyle:staticvariablename")
+    static boolean DEBUG_POWER = false;
 
     // When this system property is set to 0, WFD is forcibly disabled on boot.
     // When this system property is set to 1, WFD is forcibly enabled on boot.
@@ -219,6 +229,11 @@ public final class DisplayManagerService extends SystemService {
     // Only used by requestDisplayState.  The field is self-synchronized and only
     // intended for use inside of the requestGlobalDisplayStateInternal function.
     private final ArrayList<Runnable> mTempDisplayStateWorkQueue = new ArrayList<Runnable>();
+    /// M:[SmartBook] @{
+    private static int mExtraDisplayId = -1;
+    private Object mPendingTaskLock = new Object();
+    private Runnable mPendingAddDeviceTask = null;
+    /// @}
 
     public DisplayManagerService(Context context) {
         super(context);
@@ -350,9 +365,29 @@ public final class DisplayManagerService extends SystemService {
 
     private DisplayInfo getDisplayInfoInternal(int displayId, int callingUid) {
         synchronized (mSyncRoot) {
+            /// M:[SmartBook]Ignore extra display devicee info @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                if (displayId == mExtraDisplayId) {
+                    return null;
+                }
+            }
+            /// @}
             LogicalDisplay display = mLogicalDisplays.get(displayId);
             if (display != null) {
-                DisplayInfo info = display.getDisplayInfoLocked();
+                /// M: Do not change display info object, return a new one
+                DisplayInfo displayInfo = display.getDisplayInfoLocked();
+                DisplayInfo info = new DisplayInfo();
+                info.copyFrom(displayInfo);
+
+                /// M:[SmartBook]Always set display state ON for main display @{
+                if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                    if (displayId == Display.DEFAULT_DISPLAY &&
+                        isSmartBookPluggedInInternal()) {
+                        info.state = Display.STATE_ON;
+                    }
+                }
+                /// @}
+
                 if (info.hasAccess(callingUid)) {
                     return info;
                 }
@@ -361,16 +396,48 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
+    private int getRealStateInternal(int displayId, int callingUid) {
+        synchronized (mSyncRoot) {
+            LogicalDisplay display = mLogicalDisplays.get(displayId);
+            if (display != null) {
+                DisplayInfo info = display.getDisplayInfoLocked();
+
+                if (info.hasAccess(callingUid)) {
+                    return info.state;
+                }
+            }
+            return Display.STATE_UNKNOWN;
+        }
+    }
+
     private int[] getDisplayIdsInternal(int callingUid) {
         synchronized (mSyncRoot) {
             final int count = mLogicalDisplays.size();
-            int[] displayIds = new int[count];
+            int[] displayIds;
+            /// M:[SmartBook]Ignore extra display device @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                if (mExtraDisplayId > 0)
+                    displayIds = new int[count - 1];
+                else
+                    displayIds = new int[count];
+            } else {
+                displayIds = new int[count];
+            }
+            /// @}
             int n = 0;
             for (int i = 0; i < count; i++) {
                 LogicalDisplay display = mLogicalDisplays.valueAt(i);
                 DisplayInfo info = display.getDisplayInfoLocked();
                 if (info.hasAccess(callingUid)) {
-                    displayIds[n++] = mLogicalDisplays.keyAt(i);
+                    /// M:[SmartBook]Ignore extra display device @{
+                    if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                        if (display.getDisplayIdLocked() != mExtraDisplayId) {
+                           displayIds[n++] = mLogicalDisplays.keyAt(i);
+                        }
+                    } else {
+                        displayIds[n++] = mLogicalDisplays.keyAt(i);
+                    }
+                    /// @}
                 }
             }
             if (n != count) {
@@ -512,6 +579,20 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
+    private boolean isSmartBookPluggedInInternal() {
+        synchronized (mSyncRoot) {
+            if (mExtraDisplayId == -1)
+                return false;
+            LogicalDisplay display = mLogicalDisplays.get(mExtraDisplayId);
+            DisplayDevice device = display.getPrimaryDisplayDeviceLocked();
+            DisplayDeviceInfo deviceInfo = device.getDisplayDeviceInfoLocked();
+            if (deviceInfo.subtype == DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK)
+                return true;
+            else
+                return false;
+        }
+    }
+
     private int createVirtualDisplayInternal(IVirtualDisplayCallback callback,
             IMediaProjection projection, int callingUid, String packageName,
             String name, int width, int height, int densityDpi, Surface surface, int flags) {
@@ -605,7 +686,8 @@ public final class DisplayManagerService extends SystemService {
     private void registerWifiDisplayAdapterLocked() {
         if (mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_enableWifiDisplay)
-                || SystemProperties.getInt(FORCE_WIFI_DISPLAY_ENABLE, -1) == 1) {
+                || SystemProperties.getInt(FORCE_WIFI_DISPLAY_ENABLE, -1) == 1
+                || SystemProperties.get("ro.mtk_wfd_support").equals("1")) { /*M: add for wifidisplay */
             mWifiDisplayAdapter = new WifiDisplayAdapter(
                     mSyncRoot, mContext, mHandler, mDisplayAdapterListener,
                     mPersistentDataStore);
@@ -635,9 +717,15 @@ public final class DisplayManagerService extends SystemService {
     }
 
     private void handleDisplayDeviceAdded(DisplayDevice device) {
-        synchronized (mSyncRoot) {
-            handleDisplayDeviceAddedLocked(device);
+        ///M:[ALPS01809241]Don't add Smartbook display until boot animation done @{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            handleDisplayDeviceAddedPermitted(device);
+        } else {
+            synchronized (mSyncRoot) {
+                handleDisplayDeviceAddedLocked(device);
+            }
         }
+        /// @}
     }
 
     private void handleDisplayDeviceAddedLocked(DisplayDevice device) {
@@ -651,7 +739,29 @@ public final class DisplayManagerService extends SystemService {
 
         mDisplayDevices.add(device);
         addLogicalDisplayLocked(device);
+        /// M:[SmartBook] Pending to unblank SmartBook@{
+        DisplayDeviceInfo deviceInfo = device.getDisplayDeviceInfoLocked();
         Runnable work = updateDisplayStateLocked(device);
+        if (deviceInfo.subtype == DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK) {
+            TelecomManager telecomm =
+                    (TelecomManager) mContext.getSystemService(Context.TELECOM_SERVICE);
+            if (telecomm == null || !telecomm.isInCall()) {
+                final int count = mDisplayDevices.size();
+                for (int i = 0; i < count; i++) {
+                    DisplayDevice dev = mDisplayDevices.get(i);
+                    LogicalDisplay disp  = findLogicalDisplayForDeviceLocked(dev);
+                    int state = Display.STATE_OFF;
+                    if (disp != null && disp.getDisplayIdLocked() == Display.DEFAULT_DISPLAY) {
+                        Slog.d(TAG, "requestDisplayState(" + Display.stateToString(state)
+                                        + ", id=" + Display.DEFAULT_DISPLAY + ")");
+                        SurfaceControl.setDisplayPowerMode(
+                            dev.getDisplayTokenLocked(), SurfaceControl.POWER_MODE_OFF);
+                        break;
+                    }
+                }
+            }
+        }
+        /// @}
         if (work != null) {
             work.run();
         }
@@ -676,6 +786,11 @@ public final class DisplayManagerService extends SystemService {
     }
 
     private void handleDisplayDeviceRemoved(DisplayDevice device) {
+        ///M:[ALPS01809241]Don't add Smartbook display until boot animation done @{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            resetPendingAddDeviceTask();
+        }
+        /// @}
         synchronized (mSyncRoot) {
             handleDisplayDeviceRemovedLocked(device);
         }
@@ -697,6 +812,20 @@ public final class DisplayManagerService extends SystemService {
         final int count = mDisplayDevices.size();
         for (int i = 0; i < count; i++) {
             DisplayDevice device = mDisplayDevices.get(i);
+            Slog.d(TAG, "Update global display state for " + device.getDisplayDeviceInfoLocked());
+            /// M:[SmartBook]Intercept blank operation for Smartbook @{
+            if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                LogicalDisplay display = findLogicalDisplayForDeviceLocked(device);
+                if (display != null) {
+                    int id = display.getDisplayIdLocked();
+                    if (id == mExtraDisplayId) {
+                        Slog.d(TAG, "To dismissColorFade for Smartbook");
+                        mDisplayPowerController.dismissColorFade();
+                        continue;
+                    }
+                }
+            }
+            /// @}
             Runnable runnable = updateDisplayStateLocked(device);
             if (runnable != null) {
                 workQueue.add(runnable);
@@ -750,7 +879,26 @@ public final class DisplayManagerService extends SystemService {
             mSyncRoot.notifyAll();
         }
 
-        sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_ADDED);
+        /// M:[SmartBook]Don't send added event if device is smartbook @{
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            if (deviceInfo.subtype == DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK) {
+                mExtraDisplayId = displayId;
+                DisplayInfo out = display.getDisplayInfoLocked();
+                int width = out.appWidth;
+                int height = out.appHeight;
+                Slog.d(TAG, "Extra display " + deviceInfo.subtype +
+                            " plugged and display change to " + out.appHeight +
+                            " x " + out.appWidth +
+                            ", density:" + out.logicalDensityDpi);
+                mWindowManagerInternal.requestExtraDisplayRefreshFromDisplayManager(out.appHeight, out.appWidth, out.logicalDensityDpi);
+                Slog.d(TAG, "Display change end:");
+            } else {
+                sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_ADDED);
+            }
+        } else {
+            sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_ADDED);
+        }
+        /// @}
     }
 
     private int assignDisplayIdLocked(boolean isDefault) {
@@ -776,10 +924,31 @@ public final class DisplayManagerService extends SystemService {
             display.updateLocked(mDisplayDevices);
             if (!display.isValidLocked()) {
                 mLogicalDisplays.removeAt(i);
-                sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_REMOVED);
+                /// M:[SmartBook]Don't send added event if device is smartbook @{
+                if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                    if (displayId != mExtraDisplayId) {
+                        sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_REMOVED);
+                    } else {
+                        mExtraDisplayId = -1;
+                        Slog.d(TAG, "Extra display unplugged and display reset");
+                        mWindowManagerInternal.requestExtraDisplayRefreshFromDisplayManager(0, 0, 0);
+                        Slog.d(TAG, "Display reset end:");
+                    }
+                } else {
+                    sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_REMOVED);
+                }
+                /// @}
                 changed = true;
             } else if (!mTempDisplayInfo.equals(display.getDisplayInfoLocked())) {
-                sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
+                /// M:[SmartBook]Don't send added event if device is smartbook @{
+                if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+                    if (displayId != mExtraDisplayId) {
+                        sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
+                    }
+                } else {
+                    sendDisplayEventLocked(displayId, DisplayManagerGlobal.EVENT_DISPLAY_CHANGED);
+                }
+                /// @}
                 changed = true;
             }
         }
@@ -997,6 +1166,118 @@ public final class DisplayManagerService extends SystemService {
             }
         }
     }
+
+    private boolean isSinkEnabledInternal() {
+        if (SystemProperties.get("ro.mtk_wfd_sink_support").equals("1")) {
+            boolean enabled = false;
+            synchronized (mSyncRoot) {
+                if (mWifiDisplayAdapter != null) {
+                    enabled = mWifiDisplayAdapter.getIfSinkEnabledLocked();
+                }
+            }
+            return enabled;
+        } else {
+            return false;
+        }
+    }
+
+    private void enableSinkInternal(boolean enable) {
+        if (SystemProperties.get("ro.mtk_wfd_sink_support").equals("1")) {
+            synchronized (mSyncRoot) {
+                if (mWifiDisplayAdapter != null) {
+                    mWifiDisplayAdapter.requestEnableSinkLocked(enable);
+                }
+            }
+        }
+    }
+
+    private void waitWifiDisplayConnectionInternal(Surface surface) {
+        if (SystemProperties.get("ro.mtk_wfd_sink_support").equals("1")) {
+            synchronized (mSyncRoot) {
+                if (mWifiDisplayAdapter != null) {
+                    mWifiDisplayAdapter.requestWaitConnectionLocked(surface);
+                }
+            }
+        }
+    }
+
+    private void suspendWifiDisplayInternal(boolean suspend, Surface surface) {
+        if (SystemProperties.get("ro.mtk_wfd_sink_support").equals("1")) {
+            synchronized (mSyncRoot) {
+                if (mWifiDisplayAdapter != null) {
+                    mWifiDisplayAdapter.requestSuspendDisplayLocked(suspend, surface);
+                }
+            }
+        }
+    }
+
+    private void sendUibcInputEventInternal(String input) {
+        if (SystemProperties.get("ro.mtk_wfd_sink_uibc_support").equals("1")) {
+            synchronized (mSyncRoot) {
+                if (mWifiDisplayAdapter != null) {
+                    mWifiDisplayAdapter.sendUibcInputEventLocked(input);
+                }
+            }
+        }
+    }
+
+    ///M:[ALPS01809241]Don't add Smartbook display until boot animation done @{
+    private void notifyBootAnimationDoneInternal() {
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            synchronized (mPendingTaskLock) {
+                if (mPendingAddDeviceTask != null) {
+                    mHandler.postAtFrontOfQueue(mPendingAddDeviceTask);
+                    mPendingAddDeviceTask = null;
+                }
+            }
+        }
+    }
+
+    private void handleDisplayDeviceAddedPermitted(final DisplayDevice device) {
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            Runnable task = new Runnable() {
+                @Override
+                public void run() {
+                    synchronized (mSyncRoot) {
+                        handleDisplayDeviceAddedLocked(device);
+                    }
+                }
+            };
+
+            boolean isSmartBook = false;
+            synchronized (mSyncRoot) {
+                isSmartBook = device.getDisplayDeviceInfoLocked().subtype
+                        == DisplayDeviceInfo.EXTRA_TYPE_SMARTBOOK;
+            }
+            boolean isDisplayEnabled = false;
+            if (mWindowManagerInternal == null) {
+                isDisplayEnabled = isSmartBook ? false : true;
+            } else {
+                isDisplayEnabled = isSmartBook ?
+                        mWindowManagerInternal.isDisplayEnabled() : true;
+            }
+            Slog.d(TAG, "isSmartBook:" + isSmartBook + ", isDisplayEnabled:" + isDisplayEnabled);
+            if (!isSmartBook || isDisplayEnabled) {
+                task.run();
+            } else if (!isDisplayEnabled) {
+                synchronized (mPendingTaskLock) {
+                    mPendingAddDeviceTask = task;
+                }
+            }
+        }
+    }
+
+    private void resetPendingAddDeviceTask() {
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            synchronized (mPendingTaskLock) {
+                if (mPendingAddDeviceTask != null) {
+                    mPendingAddDeviceTask = null;
+                    return;
+                }
+            }
+        }
+    }
+    /// @}
 
     /**
      * This is the object that everything in the display manager locks on.
@@ -1279,6 +1560,16 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override // Binder call
+        public boolean isSmartBookPluggedIn() {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return isSmartBookPluggedInInternal();
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
         public int createVirtualDisplay(IVirtualDisplayCallback callback,
                 IMediaProjection projection, String packageName, String name,
                 int width, int height, int densityDpi, Surface surface, int flags) {
@@ -1384,11 +1675,80 @@ public final class DisplayManagerService extends SystemService {
 
             final long token = Binder.clearCallingIdentity();
             try {
+                runDebug(pw, args);
                 dumpInternal(pw);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
         }
+
+        /// M: runtime switch debug flags @{
+        private String[] mArgs;
+        private int mNextArg;
+        private PrintWriter mDebugWriter;
+        private String nextArg() {
+            if (mNextArg >= mArgs.length) {
+                return null;
+            }
+            String arg = mArgs[mNextArg];
+            mNextArg++;
+            return arg;
+        }
+
+        private void runDebug(final PrintWriter pw, String[] args) {
+            mDebugWriter = new PrintWriter(pw);
+            mArgs = args;
+            mNextArg = 1;
+            int opti = 0;
+            while (opti < args.length) {
+                String opt = args[opti];
+                if (opt == null || opt.length() <= 0 || opt.charAt(0) != '-') {
+                    break;
+                }
+                opti++;
+                if ("-d".equals(opt)) {
+                    runTypeCheck(mDebugWriter);
+                    pw.println("\n");
+                } else {
+                    mDebugWriter.println("Unknown argument: " + opt);
+                    mDebugWriter.println("Usage: ");
+                    mDebugWriter.println("Enable log: dumpsys display -d enable power");
+                    mDebugWriter.println("Disable log: dumpsys display -d disable power");
+                }
+            }
+        }
+
+        private void runTypeCheck(final PrintWriter pw) {
+            String type = nextArg();
+            boolean enable = false;
+            if ("enable".equals(type)) {
+                enable = true;
+            } else if (!"disable".equals(type)) {
+                pw.println("Unknown argument: " + type +
+                    "; use -d enable power to enable log, -d disable power to disable log");
+                return;
+            }
+
+            type = nextArg();
+            if (enable) {
+                if ("power".equals(type)) {
+                    pw.println("Enable power subsystem log");
+                    DEBUG_POWER = true;
+                } else {
+                    pw.println("Unknown argument: " + type +
+                        "; use -d enable power to enable log, -d disable power to disable log");
+                }
+            } else {
+                if ("power".equals(type)) {
+                    pw.println("Disable power subsystem log");
+                    DEBUG_POWER = false;
+                } else {
+                    pw.println("Unknown argument: " + type +
+                        "; use -d enable power to enable log, -d disable power to disable log");
+                }
+            }
+        }
+        /// @}
 
         private boolean validatePackageName(int uid, String packageName) {
             if (packageName != null) {
@@ -1436,6 +1796,73 @@ public final class DisplayManagerService extends SystemService {
                     android.Manifest.permission.CAPTURE_SECURE_VIDEO_OUTPUT)
                     == PackageManager.PERMISSION_GRANTED;
         }
+
+        @Override // Binder call
+        public boolean isSinkEnabled() {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return isSinkEnabledInternal();
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
+        public void enableSink(boolean enable) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                enableSinkInternal(enable);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
+        public void waitWifiDisplayConnection(Surface surface) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                waitWifiDisplayConnectionInternal(surface);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
+        public void suspendWifiDisplay(boolean suspend, Surface surface) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                suspendWifiDisplayInternal(suspend, surface);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override // Binder call
+        public void sendUibcInputEvent(String input) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                sendUibcInputEventInternal(input);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        /**
+         * Get real state of the specified display no matter whether SmartBook plug in/out.
+         *
+         * @param displayId The logical display id.
+         * @return The real state of the specified display.
+         */
+        @Override // Binder call
+        public int getRealState(int displayId) {
+            final int callingUid = Binder.getCallingUid();
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return getRealStateInternal(displayId, callingUid);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
     }
 
     private final class LocalService extends DisplayManagerInternal {
@@ -1476,6 +1903,11 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override
+        public void setIPOScreenOnDelay(int msec) {
+            mDisplayPowerController.setIPOScreenOnDelay(msec);
+        }
+
+        @Override
         public DisplayInfo getDisplayInfo(int displayId) {
             return getDisplayInfoInternal(displayId, Process.myUid());
         }
@@ -1512,6 +1944,11 @@ public final class DisplayManagerService extends SystemService {
         public void setDisplayProperties(int displayId, boolean hasContent,
                 float requestedRefreshRate, boolean inTraversal) {
             setDisplayPropertiesInternal(displayId, hasContent, requestedRefreshRate, inTraversal);
+        }
+
+        @Override
+        public void notifyBootAnimationDone() {
+            notifyBootAnimationDoneInternal();
         }
     }
 }

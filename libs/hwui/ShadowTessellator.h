@@ -1,3 +1,8 @@
+/*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
 
 /*
  * Copyright (C) 2013 The Android Open Source Project
@@ -25,6 +30,16 @@
 
 namespace android {
 namespace uirenderer {
+
+#if DEBUG_SHADOW
+    #define SHADOW_LOGD(...)     \
+    {                            \
+        if (g_HWUI_debug_shadow) \
+            ALOGD(__VA_ARGS__);  \
+    }
+#else
+    #define SHADOW_LOGD(...)
+#endif
 
 // All SHADOW_* are used to define all the geometry property of shadows.
 // Use a simplified example to illustrate the geometry setup here.

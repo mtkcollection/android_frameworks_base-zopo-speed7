@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,17 +59,42 @@ import com.android.systemui.statusbar.policy.SecurityController;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
 import com.android.systemui.statusbar.policy.ZenModeController;
 
+/// M: add DataUsage in quicksetting @{
+import com.mediatek.systemui.ext.IQuickSettingsPlugin;
+import com.mediatek.systemui.ext.PluginFactory;
+/// add DataUsage in quicksetting @}
+
+/// M: add  quicksetting feature @{
+import com.mediatek.systemui.qs.tiles.ApnSettingsTile;
+import com.mediatek.systemui.qs.tiles.AudioProfileTile;
+import com.mediatek.systemui.qs.tiles.DualSimSettingsTile;
+import com.mediatek.systemui.qs.tiles.HotKnotTile;
+import com.mediatek.systemui.qs.tiles.MobileDataTile;
+import com.mediatek.systemui.qs.tiles.SimDataConnectionTile;
+import com.mediatek.systemui.statusbar.policy.AudioProfileController;
+import com.mediatek.systemui.statusbar.policy.DataConnectionController;
+import com.mediatek.systemui.statusbar.policy.HotKnotController;
+import com.mediatek.systemui.statusbar.util.SIMHelper;
+/// add HotKnot in quicksetting @}
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+/* Vanzo:yinjun on: Thu, 19 Mar 2015 10:17:40 +0800
+ * for timeout tile
+ */
+import com.android.systemui.qs.tiles.TimeOutTile;
+import com.android.featureoption.FeatureOption;
+// End of Vanzo: yinjun
 
 /** Platform implementation of the quick settings tile host **/
 public class QSTileHost implements QSTile.Host {
     private static final String TAG = "QSTileHost";
-    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    // M: For Debug
+    private static final boolean DEBUG = true;
 
     private static final String TILES_SETTING = "sysui_qs_tiles";
 
@@ -86,6 +116,13 @@ public class QSTileHost implements QSTile.Host {
     private final KeyguardMonitor mKeyguard;
     private final SecurityController mSecurity;
 
+    /// M: add HotKnot in quicksetting
+    private final HotKnotController mHotKnot;
+    /// M: add AudioProfile in quicksetting
+    private final AudioProfileController mAudioProfile;
+    /// M: add DataConnection in quicksetting
+    private final DataConnectionController mDataConnection;
+    
     private Callback mCallback;
 
     public QSTileHost(Context context, PhoneStatusBar statusBar,
@@ -94,7 +131,14 @@ public class QSTileHost implements QSTile.Host {
             ZenModeController zen, HotspotController hotspot,
             CastController cast, FlashlightController flashlight,
             UserSwitcherController userSwitcher, KeyguardMonitor keyguard,
-            SecurityController security) {
+            SecurityController security,
+            /// M: add HotKnot in quicksetting
+            HotKnotController hotknot,
+            /// M: add AudioProfile in quicksetting
+            AudioProfileController audioprofile,
+            /// M: add DataConnection in quicksetting
+            DataConnectionController dataconnection
+            ) {
         mContext = context;
         mStatusBar = statusBar;
         mBluetooth = bluetooth;
@@ -108,6 +152,13 @@ public class QSTileHost implements QSTile.Host {
         mUserSwitcherController = userSwitcher;
         mKeyguard = keyguard;
         mSecurity = security;
+
+        /// M: add HotKnot in quicksetting
+        mHotKnot = hotknot;
+        /// M: add AudioProfile in quicksetting
+        mAudioProfile = audioprofile;
+        /// M: add DataConnection in quicksetting
+        mDataConnection = dataconnection;
 
         final HandlerThread ht = new HandlerThread(QSTileHost.class.getSimpleName(),
                 Process.THREAD_PRIORITY_BACKGROUND);
@@ -220,6 +271,27 @@ public class QSTileHost implements QSTile.Host {
         return mSecurity;
     }
 
+    /// M: add HotKnot in quicksetting @{
+    @Override
+    public HotKnotController getHotKnotController() {
+        return mHotKnot;
+    }    
+    /// add HotKnot in quicksetting @}
+
+    /// M: add AudioProfile in quicksetting @{
+    @Override
+    public AudioProfileController getAudioProfileController() {
+        return mAudioProfile;
+    }
+    /// add AudioProfile in quicksetting @}
+
+    /// M: add DataConnection in quicksetting @{
+    @Override
+    public DataConnectionController getDataConnectionController() {
+        return mDataConnection;
+    }
+    /// M: add DataConnection in quicksetting @}
+
     private void recreateTiles() {
         if (DEBUG) Log.d(TAG, "Recreating tiles");
         final List<String> tileSpecs = loadTileSpecs();
@@ -251,6 +323,8 @@ public class QSTileHost implements QSTile.Host {
     }
 
     private QSTile<?> createTile(String tileSpec) {
+        IQuickSettingsPlugin quickSettingsPlugin = PluginFactory
+                .getQuickSettingsPlugin(mContext);
         if (tileSpec.equals("wifi")) return new WifiTile(this);
         else if (tileSpec.equals("bt")) return new BluetoothTile(this);
         else if (tileSpec.equals("inversion")) return new ColorInversionTile(this);
@@ -259,15 +333,54 @@ public class QSTileHost implements QSTile.Host {
         else if (tileSpec.equals("rotation")) return new RotationLockTile(this);
         else if (tileSpec.equals("flashlight")) return new FlashlightTile(this);
         else if (tileSpec.equals("location")) return new LocationTile(this);
-        else if (tileSpec.equals("cast")) return new CastTile(this);
+        // M: Remove CastTile when WFD is not support in quicksetting
+        else if (tileSpec.equals("cast") && SIMHelper.isWifiDisplaySupport())
+            return new CastTile(this);
         else if (tileSpec.equals("hotspot")) return new HotspotTile(this);
+/* Vanzo:yinjun on: Thu, 19 Mar 2015 10:21:04 +0800
+ * for timeout tile
+ */
+        else if (tileSpec.equals("timeout") && FeatureOption.VANZO_FEATURE_SYSTEMUI_TIMEOUT_TILE)
+            return new TimeOutTile(this,mUserTracker);
+// End of Vanzo: yinjun
+
+        /// M: add HotKnot in quicksetting @{
+        else if (tileSpec.equals("hotknot") && SIMHelper.isMtkHotKnotSupport())
+            return new HotKnotTile(this);
+        /// add HotKnot in quicksetting @}
+        /// M: add AudioProfile in quicksetting @{
+        else if (tileSpec.equals("audioprofile") && SIMHelper.isMtkAudioProfilesSupport())
+            return new AudioProfileTile(this);
+        /// add AudioProfile in quicksetting @}
+        /// M: add DataConnection in quicksetting @{
+        else if (tileSpec.equals("dataconnection") && !SIMHelper.isWifiOnlyDevice())
+            return new MobileDataTile(this);
+        /// M: add DataConnection in quicksetting @}
+        /// M: Customize the quick settings tiles for operator. @{
+        else if (quickSettingsPlugin.customizeAddQSTile(false) &&
+                tileSpec.equals("simdataconnection") && !SIMHelper.isWifiOnlyDevice()) {
+            return new SimDataConnectionTile(this);
+        } else if (quickSettingsPlugin.customizeAddQSTile(false) &&
+                tileSpec.equals("dulsimsettings") && !SIMHelper.isWifiOnlyDevice()) {
+            return new DualSimSettingsTile(this);
+        } else if (quickSettingsPlugin.customizeApnSettingsTile(false) &&
+                tileSpec.equals("apnsettings") && !SIMHelper.isWifiOnlyDevice()) {
+            return new ApnSettingsTile(this);
+        }
+        /// @}
         else if (tileSpec.startsWith(IntentTile.PREFIX)) return IntentTile.create(this,tileSpec);
         else throw new IllegalArgumentException("Bad tile spec: " + tileSpec);
     }
 
     private List<String> loadTileSpecs() {
         final Resources res = mContext.getResources();
-        final String defaultTileList = res.getString(R.string.quick_settings_tiles_default);
+        String defaultTileList = res.getString(R.string.quick_settings_tiles_default);
+
+        /// M: Customize the quick settings tile order for operator. @{
+        IQuickSettingsPlugin quickSettingsPlugin = PluginFactory.getQuickSettingsPlugin(mContext);
+        defaultTileList = quickSettingsPlugin.customizeQuickSettingsTileOrder(defaultTileList);
+        /// M: Customize the quick settings tile order for operator. @}
+
         String tileList = Secure.getStringForUser(mContext.getContentResolver(), TILES_SETTING,
                 mUserTracker.getCurrentUserId());
         if (tileList == null) {

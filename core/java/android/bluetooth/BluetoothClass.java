@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -201,6 +206,18 @@ public final class BluetoothClass implements Parcelable {
         //public static final int AUDIO_VIDEO_RESERVED              = 0x0444;
         public static final int AUDIO_VIDEO_VIDEO_GAMING_TOY        = 0x0448;
 
+        /* M: FOR BPP PROFILE @{ */
+        //Devices in the IMAGING major class
+        /** @hide */
+        public static final int IMAGING_DISPLAY                     = 0x0610;
+        /** @hide */
+        public static final int IMAGING_CAMERA                      = 0x0620;
+        /** @hide */
+        public static final int IMAGING_SCANNER                     = 0x0640;
+        /** @hide */
+        public static final int IMAGING_PRINTER                     = 0x0680;
+        /* @}  */
+
         // Devices in the WEARABLE major class
         public static final int WEARABLE_UNCATEGORIZED              = 0x0700;
         public static final int WEARABLE_WRIST_WATCH                = 0x0704;
@@ -284,6 +301,16 @@ public final class BluetoothClass implements Parcelable {
     /** @hide */
     public static final int PROFILE_NAP = 5;
 
+    /* M: FOR BPP PROFILE @{ */
+    /**
+      * @hide
+      * @internal
+      */
+    public static final int PROFILE_BPP = 6;
+    /** @hide */
+    public static final int PROFILE_FMP = 7;
+    /* @}  */
+
     /**
      * Check class bits for possible bluetooth profile support.
      * This is a simple heuristic that tries to guess if a device with the
@@ -356,6 +383,22 @@ public final class BluetoothClass implements Parcelable {
                 return true;
             }
             return (getDeviceClass() & Device.Major.NETWORKING) == Device.Major.NETWORKING;
+
+        /* M: FOR BPP PROFILE @{ */
+        } else if (profile == PROFILE_BPP) {
+            if (hasService(Service.RENDER) &&
+                hasService(Service.OBJECT_TRANSFER)) {
+                return true;
+            }
+
+            switch (getDeviceClass() & 0x1F80) {
+                case Device.IMAGING_PRINTER:
+                    return true;
+                default:
+                    return false;
+            }
+        /* @}  */
+
         } else {
             return false;
         }

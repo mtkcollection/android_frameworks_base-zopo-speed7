@@ -550,12 +550,12 @@ class DatePickerCalendarDelegate extends DatePicker.AbstractDatePickerDelegate i
         SavedState ss = (SavedState) state;
 
         mCurrentDate.set(ss.getSelectedYear(), ss.getSelectedMonth(), ss.getSelectedDay());
-        mCurrentView = ss.getCurrentView();
+        final int currentView = ss.getCurrentView();
         mMinDate.setTimeInMillis(ss.getMinDate());
         mMaxDate.setTimeInMillis(ss.getMaxDate());
 
         updateDisplay(false);
-        setCurrentView(mCurrentView);
+        setCurrentView(currentView);
 
         final int listPosition = ss.getListPosition();
         if (listPosition != -1) {

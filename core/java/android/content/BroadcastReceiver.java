@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -416,6 +421,14 @@ public abstract class BroadcastReceiver {
                         mResultExtras.setAllowFds(false);
                     }
                     if (mOrderedHint) {
+                        /// M: ActivityThread log enhancement @{
+                        if (!ActivityThread.mIsUserBuild && (mType == TYPE_REGISTERED)) {
+                                Slog.d(ActivityThread.TAG,
+                                "BDC-Calling finishReceiver"
+                                + ": IIntentReceiver="
+                                + Integer.toHexString(System.identityHashCode(mToken)));
+                        }
+                        /// @}
                         am.finishReceiver(mToken, mResultCode, mResultData, mResultExtras,
                                 mAbortBroadcast);
                     } else {

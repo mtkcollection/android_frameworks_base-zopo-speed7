@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,7 +106,9 @@ public final class ProcessStatsService extends IProcessStats.Stub {
             return super.onTransact(code, data, reply, flags);
         } catch (RuntimeException e) {
             if (!(e instanceof SecurityException)) {
-                Slog.wtf(TAG, "Process Stats Crash", e);
+                /// M: prevent trigger AEE, it is not bug. @{
+                Slog.e(TAG, "Process Stats Crash", e);
+                /// @}
             }
             throw e;
         }

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +64,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.wallpaper.IWallpaperPlugin;
+import com.mediatek.xlog.Xlog;
+
 /**
  * Provides access to the system wallpaper. With WallpaperManager, you can
  * get the current wallpaper, get the desired dimensions for the wallpaper, set
@@ -67,7 +76,7 @@ import java.util.List;
  */
 public class WallpaperManager {
     private static String TAG = "WallpaperManager";
-    private static boolean DEBUG = false;
+    private static boolean DEBUG = true;
     private float mWallpaperXStep = -1;
     private float mWallpaperYStep = -1;
 
@@ -291,6 +300,9 @@ public class WallpaperManager {
                 if (fd != null) {
                     try {
                         BitmapFactory.Options options = new BitmapFactory.Options();
+                        //M: Enable PQ support for all static wallpaper bitmap decoding
+                        options.inPostProc = true;
+                        options.inPostProcFlag = 1;
                         return BitmapFactory.decodeFileDescriptor(
                                 fd.getFileDescriptor(), null, options);
                     } catch (OutOfMemoryError e) {
@@ -309,11 +321,39 @@ public class WallpaperManager {
             return null;
         }
         
+
+        /// M: if operator WallpaperPlugin doesn't exist, use the default one.
+        private InputStream openDefaultWallpaperRes(Context context) {
+            IWallpaperPlugin mWallpaperPlugin = null;
+            InputStream is = null;
+            /// M: Init mWallpaperPlugin for Operators @{
+            try {
+                mWallpaperPlugin = (IWallpaperPlugin) MPlugin.createInstance(
+                        IWallpaperPlugin.class.getName(), context);
+            } catch (Exception e) {
+                Log.e(TAG, "Catch IWallpaperPlugin exception: ", e);
+            }
+            /// @}
+            if (mWallpaperPlugin == null || mWallpaperPlugin.getPluginResources(context) == null) {
+                is = context.getResources().openRawResource(
+                        com.android.internal.R.drawable.default_wallpaper);
+            } else {
+                Xlog.d(TAG, "get the wallpaper image from the plug-in");
+                is = mWallpaperPlugin.getPluginResources(context).openRawResource(
+                        mWallpaperPlugin.getPluginDefaultImage());
+            }
+            return is;
+        }
+
         private Bitmap getDefaultWallpaperLocked(Context context) {
-            InputStream is = openDefaultWallpaper(context);
+                /// M: if operator WallpaperPlugin doesn't exist, use the default one.
+                InputStream is = openDefaultWallpaperRes(context);
             if (is != null) {
                 try {
                     BitmapFactory.Options options = new BitmapFactory.Options();
+                    // M: Enable PQ support for all static wallpaper bitmap decoding
+                    options.inPostProc = true;
+                    options.inPostProcFlag = 1;
                     return BitmapFactory.decodeStream(is, null, options);
                 } catch (OutOfMemoryError e) {
                     Log.w(TAG, "Can't decode stream", e);
@@ -408,7 +448,7 @@ public class WallpaperManager {
         horizontalAlignment = Math.max(0, Math.min(1, horizontalAlignment));
         verticalAlignment = Math.max(0, Math.min(1, verticalAlignment));
 
-        InputStream is = new BufferedInputStream(openDefaultWallpaper(mContext));
+        InputStream is = new BufferedInputStream(sGlobals.openDefaultWallpaperRes(mContext));
 
         if (is == null) {
             Log.e(TAG, "default wallpaper input stream is null");
@@ -433,7 +473,7 @@ public class WallpaperManager {
                     }
                 }
 
-                is = new BufferedInputStream(openDefaultWallpaper(mContext));
+                is = new BufferedInputStream(sGlobals.openDefaultWallpaperRes(mContext));
 
                 RectF cropRectF;
 
@@ -482,7 +522,7 @@ public class WallpaperManager {
 
                 if (crop == null) {
                     // BitmapRegionDecoder has failed, try to crop in-memory
-                    is = new BufferedInputStream(openDefaultWallpaper(mContext));
+                    is = new BufferedInputStream(sGlobals.openDefaultWallpaperRes(mContext));
                     Bitmap fullSize = null;
                     if (is != null) {
                         BitmapFactory.Options options = new BitmapFactory.Options();
@@ -805,7 +845,12 @@ public class WallpaperManager {
                 }
             }
         } catch (RemoteException e) {
+/* Vanzo:songlixin on: Fri, 16 Mar 2012 17:01:57 +0800
+ * Should not eat it!
             // Ignore
+ */
+            throw new IOException(e);
+// End of Vanzo:songlixin
         }
     }
 
@@ -813,9 +858,25 @@ public class WallpaperManager {
             throws IOException {
         byte[] buffer = new byte[32768];
         int amt;
+/* Vanzo:songlixin on: Fri, 16 Mar 2012 20:45:35 +0800
+ * totao bytes at least min_bytes, otherwise throw IOException
+ * Fix BUG #8585
         while ((amt=data.read(buffer)) > 0) {
             fos.write(buffer, 0, amt);
         }
+ */
+        final int min_bytes = 500;
+        int totalBytes = 0;
+
+        while ((amt = data.read(buffer)) > 0) {
+            fos.write(buffer, 0, amt);
+            totalBytes += amt;
+        }
+
+        if (totalBytes < min_bytes) {
+            throw new IOException("Abnormal InputStream, at least " + min_bytes + " bytes");
+        }
+// End of Vanzo: songlixin
     }
 
     /**
@@ -1086,7 +1147,8 @@ public class WallpaperManager {
      * wallpaper.
      */
     public void clear() throws IOException {
-        setStream(openDefaultWallpaper(mContext));
+        InputStream is = sGlobals.openDefaultWallpaperRes(mContext);
+        setStream(is);
     }
 
     /**
@@ -1135,4 +1197,21 @@ public class WallpaperManager {
 
         return null;
     }
+
+    // /M: To DFO resolution feature @{
+    /**
+     * @hide
+     */
+    public void resetWallpaper() {
+        try {
+            if (sGlobals.mService == null) {
+                Log.w(TAG, "WallpaperService not running");
+            } else {
+                sGlobals.mService.resetWallpaper();
+            }
+        } catch (RemoteException e) {
+            // Ignore.
+        }
+    }
+    // /@}
 }

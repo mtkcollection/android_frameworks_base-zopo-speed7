@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1070,6 +1075,33 @@ href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Lo
      * smaps.
      */
     public static native long getPss();
+
+
+    /**
+     * Retrieves the PSwap memory used by the process as given by the
+     * smaps. @hide
+     */
+    public static native long getPswap(int pid);
+
+    /**
+     * Retrieves the compressed zram size. @hide
+     */
+    public static native long getCompZram();
+
+    /**
+     * Retrieves the uncompressed zram size. @hide
+     */
+    public static native long getOrigZram();
+
+    /**
+     * Retrieves the total zram size. @hide
+     */
+    public static native long getTotalZram();
+
+    /**
+     * Retrieves the zram compress method. @hide
+     */
+    public static native short getZramCompressMethod();
 
     /**
      * Retrieves the PSS memory used by the process as given by the

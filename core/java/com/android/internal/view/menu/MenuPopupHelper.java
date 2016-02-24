@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +24,7 @@ package com.android.internal.view.menu;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.Parcelable;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -130,10 +136,28 @@ public class MenuPopupHelper implements AdapterView.OnItemClickListener, View.On
 
     public boolean tryShow() {
         mPopup = new ListPopupWindow(mContext, null, mPopupStyleAttr, mPopupStyleRes);
-        mPopup.setOnDismissListener(this);
+        /// M: manipulate multiple instances of popup window
+        final ListPopupWindow savedPopup = mPopup;
+        mPopup.setOnDismissListener(new PopupWindow.OnDismissListener() {
+            @Override
+            public void onDismiss() {
+                /// M: avoid memory leaks of observer
+                if (savedPopup != null) {
+                    savedPopup.setAdapter(null);
+                }
+                MenuPopupHelper.this.onDismiss();
+            }
+        });
+        //mPopup.setOnDismissListener(this);
         mPopup.setOnItemClickListener(this);
         mPopup.setAdapter(mAdapter);
         mPopup.setModal(true);
+
+        ArrayList<MenuItemImpl> items = mMenu.getVisibleItems();
+        int count = items.size();
+        for (int i = 0; i < count; ++i) {
+            Log.i("MenuPopupHelper", "tryShow: title = " + items.get(i).getTitle());
+        }
 
         View anchor = mAnchorView;
         if (anchor != null) {

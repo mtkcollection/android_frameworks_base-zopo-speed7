@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -198,6 +203,7 @@ void Layer::setColorFilter(SkColorFilter* filter) {
 
 void Layer::bindTexture() const {
     if (texture.id) {
+        LAYER_LOGD("Layer %p bindTexture: glBindTexture(0x%x, %d)", this, renderTarget, texture.id);
         caches.bindTexture(renderTarget, texture.id);
     }
 }
@@ -211,29 +217,32 @@ void Layer::bindStencilRenderBuffer() const {
 void Layer::generateTexture() {
     if (!texture.id) {
         glGenTextures(1, &texture.id);
+        LAYER_LOGD("Layer %p generateTexture: glGenTextures(1, %d)", this, texture.id);
     }
 }
 
 void Layer::deleteTexture() {
     if (texture.id) {
+        LAYER_LOGD("Layer %p deleteTexture: glDeleteTextures(1, %d)", this, texture.id);
+        TT_REMOVE(texture.id, "[Layer.cpp] deleteTexture -");
         texture.deleteTexture();
         texture.id = 0;
     }
 }
 
 void Layer::clearTexture() {
+    LAYER_LOGD("Layer %p clearTexture %d, renderTarget 0x%x", this, texture.id, renderTarget);
     caches.unbindTexture(texture.id);
     texture.id = 0;
 }
 
 void Layer::allocateTexture() {
-#if DEBUG_LAYERS
-    ALOGD("  Allocate layer: %dx%d", getWidth(), getHeight());
-#endif
+    LAYER_LOGD("Layer %p allocateTexture: glTexImage2D(0x%x, 0, %d, %d, 0, NULL)", this, renderTarget, getWidth(), getHeight());
     if (texture.id) {
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexImage2D(renderTarget, 0, GL_RGBA, getWidth(), getHeight(), 0,
                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        /// M: don't add TT_ADD here because OpenGLRenderer handled
     }
 }
 
@@ -260,7 +269,9 @@ void Layer::defer(const OpenGLRenderer& rootRenderer) {
             dirtyRect.right, dirtyRect.bottom, !isBlend());
 
     renderNode->computeOrdering();
+    LAYER_LOGD("--defer layer start (%dx%d, Layer %p) frame#%d <%p>", renderer->getWidth(), renderer->getHeight(), this, renderer->getFrameCount(), renderer);
     renderNode->defer(deferredState, 0);
+    LAYER_LOGD("--defer layer end frame#%d <%p>", renderer->getFrameCount(), renderer);
 
     deferredUpdateScheduled = false;
 }
@@ -280,14 +291,23 @@ void Layer::flush() {
         ATRACE_LAYER_WORK("Issue");
         renderer->startMark((renderNode.get() != NULL) ? renderNode->getName() : "Layer");
 
+        if (renderNode != NULL) {
+            TT_UPDATE(texture.id, false, String8(renderNode->getName()));
+        } else {
+            ALOGE("flush without renderNode %d", texture.id);
+        }
+
         renderer->setViewport(layer.getWidth(), layer.getHeight());
         renderer->prepareDirty(dirtyRect.left, dirtyRect.top, dirtyRect.right, dirtyRect.bottom,
                 !isBlend());
 
+        LAYER_LOGD("--flush layer start (%dx%d, Layer %p) frame#%d <%p>", renderer->getWidth(), renderer->getHeight(), this, renderer->getFrameCount(), renderer);
         deferredList->flush(*renderer, dirtyRect);
+        LAYER_LOGD("--flush layer end frame#%d <%p>", renderer->getFrameCount(), renderer);
 
         renderer->finish();
 
+        DUMP_LAYER(layer.getWidth(), layer.getHeight(), getFbo(), renderer->getFrameCount(), renderer, this);
         dirtyRect.setEmpty();
         renderNode = NULL;
 

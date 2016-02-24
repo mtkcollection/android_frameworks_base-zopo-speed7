@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +25,10 @@ import android.util.Log;
 import android.util.Printer;
 
 import java.lang.reflect.Modifier;
+/// M: MSG Logger Manager @{
+import java.util.Iterator;
+/// M: MSG Logger Manager @}
+
 
 /**
  * A Handler allows you to send and process {@link Message} and Runnable
@@ -622,6 +631,73 @@ public class Handler {
         }
         return enqueueMessage(queue, msg, 0);
     }
+
+    /// M: MSG Logger Manager @{
+   /**
+     * @hide
+     */
+    public final void sendMonitorMessage(Message msg, long delayMillis, long executiontimeout, long pendingtimeout, String msgLoggerName) {
+        if (null != MessageMonitorLogger.mMsgLoggerHandler) {
+            MessageMonitorLogger.MonitorMSGInfo msgMonitorInfo = new MessageMonitorLogger.MonitorMSGInfo();
+            msgMonitorInfo.msg = msg;
+            msgMonitorInfo.msgLoggerName = msgLoggerName;
+            msgMonitorInfo.executionTimeout = executiontimeout;
+            MessageMonitorLogger.monitorMsg.put(msg, msgMonitorInfo);
+
+            try {
+                if (pendingtimeout > 100) {
+                    Message msg1 = MessageMonitorLogger.mMsgLoggerHandler.obtainMessage(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, msgMonitorInfo);
+                    MessageMonitorLogger.mMsgLoggerHandler.sendMessageDelayed(msg1, delayMillis + pendingtimeout);
+                } else {
+                    if (pendingtimeout != MessageMonitorLogger.DISABLE_MONITOR_PENDING_TIMEOUT_MSG)
+                        throw new IllegalArgumentException("Pendingtimeout <100 ms!");
+                }
+            } catch (IllegalArgumentException e) {
+                Log.d("Handler", "Pending timeout exception " + e);
+            }
+        } else {
+            Log.d("Handler", "You didn't register message logger");
+        }
+        sendMessageDelayed(msg, delayMillis);
+    }
+
+   /**
+     * @hide
+     */
+    public final void removeMonitorMessage(int what) {
+        Iterator iter = MessageMonitorLogger.monitorMsg.keySet().iterator();
+        while (iter.hasNext()) {
+            Message msg = (Message) iter.next();
+            if (msg.what == what) {
+                MessageMonitorLogger.MonitorMSGInfo monitorMsg = MessageMonitorLogger.monitorMsg.get(msg);
+                if (MessageMonitorLogger.mMsgLoggerHandler.hasMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg)) {
+                    Log.d("Looper", "Remove monitor msg= " + msg);
+                    MessageMonitorLogger.mMsgLoggerHandler.removeMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg);
+                    MessageMonitorLogger.monitorMsg.remove(msg);
+                }
+            }
+        }
+        mQueue.removeMessages(this, what, null);
+    }
+   /**
+     * @hide
+     */
+    public final void removeMonitorMessage(int what, Object object) {
+        Iterator iter = MessageMonitorLogger.monitorMsg.keySet().iterator();
+        while (iter.hasNext()) {
+            Message msg = (Message) iter.next();
+            if (msg.what == what && msg.obj == object) {
+                MessageMonitorLogger.MonitorMSGInfo monitorMsg = MessageMonitorLogger.monitorMsg.get(msg);
+                if (MessageMonitorLogger.mMsgLoggerHandler.hasMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg)) {
+                    Log.d("Looper", "Remove monitor msg= " + msg);
+                    MessageMonitorLogger.mMsgLoggerHandler.removeMessages(MessageMonitorLogger.START_MONITOR_PENDING_TIMEOUT_MSG, monitorMsg);
+                    MessageMonitorLogger.monitorMsg.remove(msg);
+                }
+            }
+        }
+        mQueue.removeMessages(this, what, object);
+    }
+    /// MSG Logger Manager @}
 
     private boolean enqueueMessage(MessageQueue queue, Message msg, long uptimeMillis) {
         msg.target = this;

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,9 +22,12 @@
 package com.android.photos;
 
 import android.annotation.TargetApi;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Resources;
+import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Bitmap.CompressFormat;
 import android.graphics.Bitmap.Config;
 import android.graphics.BitmapFactory;
 import android.graphics.BitmapRegionDecoder;
@@ -29,6 +37,10 @@ import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Build.VERSION_CODES;
+import android.os.SystemProperties;
+import android.provider.MediaStore;
+import android.provider.MediaStore.Images;
+import android.webkit.MimeTypeMap;
 import android.util.Log;
 
 import com.android.gallery3d.common.BitmapUtils;
@@ -38,7 +50,11 @@ import com.android.gallery3d.glrenderer.BasicTexture;
 import com.android.gallery3d.glrenderer.BitmapTexture;
 import com.android.photos.views.TiledImageRenderer;
 
+import com.mediatek.dcfdecoder.DcfDecoder;
+
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -155,6 +171,9 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
     // due to decodePreview being allowed to be up to 2x the size of the target
     public static final int MAX_PREVIEW_SIZE = GL_SIZE_LIMIT / 2;
 
+    private static final boolean mIsOmaDrmSupport =
+        (SystemProperties.getInt("ro.mtk_oma_drm_support", 0) == 1) ? true : false;
+
     public static abstract class BitmapSource {
         private SimpleBitmapRegionDecoder mDecoder;
         private Bitmap mPreview;
@@ -258,19 +277,53 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
     public static class UriBitmapSource extends BitmapSource {
         private Context mContext;
         private Uri mUri;
+
+        //for DRM
+        private Bitmap mBitmap;
         public UriBitmapSource(Context context, Uri uri, int previewSize) {
             super(previewSize);
             mContext = context;
             mUri = uri;
         }
         private InputStream regenerateInputStream() throws FileNotFoundException {
-            InputStream is = mContext.getContentResolver().openInputStream(mUri);
-            return new BufferedInputStream(is);
+            if (mIsOmaDrmSupport && BitmapRegionTileSource.isDrmFormat(mContext, mUri) == true) {
+                String filePath = BitmapRegionTileSource.getDrmFilePath(mContext, mUri);
+                if (filePath != null) {
+	                byte[] buffer = BitmapRegionTileSource.forceDecryptFile(filePath, false);
+                    if (buffer != null) {
+						mBitmap = null;
+                        mBitmap = BitmapFactory.decodeByteArray(buffer, 0, buffer.length, null);
+                        return getByteArrayInputStream(mBitmap);
+                    } else {
+                        Log.w(TAG, "buffer is null");
+                    }
+                } else {
+                    Log.w(TAG, "file path is null");
+                }
+            } else if (isGifFormat(mContext, mUri) == true) {
+                try {
+					mBitmap = null;
+                    mBitmap = MediaStore.Images.Media.getBitmap(mContext.getContentResolver(), mUri);
+                } catch (Exception e) {
+                    Log.w(TAG, "get gif bitmap failed", e);
+                }
+                if (mBitmap != null) {
+                    return getByteArrayInputStream(mBitmap);
+                }
+            } else {
+                InputStream is = mContext.getContentResolver().openInputStream(mUri);
+                return new BufferedInputStream(is);
+            }
+            return null;			
         }
         @Override
         public SimpleBitmapRegionDecoder loadBitmapRegionDecoder() {
             try {
                 InputStream is = regenerateInputStream();
+                if (is == null) {
+                    Log.e("BitmapRegionTileSource", "loadBitmapRegionDecoder,is " + is);
+                    return null;
+                }
                 SimpleBitmapRegionDecoder regionDecoder =
                         SimpleBitmapRegionDecoderWrapper.newInstance(is, false);
                 Utils.closeSilently(is);
@@ -288,10 +341,22 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
         @Override
         public Bitmap loadPreviewBitmap(BitmapFactory.Options options) {
             try {
-                InputStream is = regenerateInputStream();
-                Bitmap b = BitmapFactory.decodeStream(is, null, options);
-                Utils.closeSilently(is);
-                return b;
+                Bitmap b = null;
+                /// M: DRM file
+                if ((mIsOmaDrmSupport && BitmapRegionTileSource
+                    .isDrmFormat(mContext, mUri) == true)
+                    || (isGifFormat(mContext, mUri) == true)) {
+                    return mBitmap;
+                } else {
+                    InputStream is = regenerateInputStream();
+                    if (is == null) {
+                        Log.e("BitmapRegionTileSource", "loadPreviewBitmap,is " + is);
+                        return null;
+                    }
+                    b = BitmapFactory.decodeStream(is, null, options);
+                    Utils.closeSilently(is);
+                    return b;
+                }
             } catch (FileNotFoundException e) {
                 Log.e("BitmapRegionTileSource", "Failed to load URI " + mUri, e);
                 return null;
@@ -302,6 +367,11 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
             InputStream is = null;
             try {
                 is = regenerateInputStream();
+                if (is == null) {
+                    Log.e("BitmapRegionTileSource", "readExif failed ");
+                    return false;
+                }
+
                 ei.readExif(is);
                 Utils.closeSilently(is);
                 return true;
@@ -394,15 +464,20 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
                 // loaded, the lifecycle is different and interactions are on a different
                 // thread. Thus to simplify, this source will decode its own bitmap.
                 Bitmap preview = decodePreview(source, previewSize);
-                if (preview.getWidth() <= GL_SIZE_LIMIT && preview.getHeight() <= GL_SIZE_LIMIT) {
-                    mPreview = new BitmapTexture(preview);
-                } else {
-                    Log.w(TAG, String.format(
-                            "Failed to create preview of apropriate size! "
-                            + " in: %dx%d, out: %dx%d",
-                            mWidth, mHeight,
-                            preview.getWidth(), preview.getHeight()));
-                }
+				/// M:ALPS01756370, null pointer protection of preview bitmap
+				if (preview != null) {
+	                if (preview.getWidth() <= GL_SIZE_LIMIT && preview.getHeight() <= GL_SIZE_LIMIT) {
+	                    mPreview = new BitmapTexture(preview);
+	                } else {
+	                    Log.w(TAG, String.format(
+	                            "Failed to create preview of apropriate size! "
+	                            + " in: %dx%d, out: %dx%d",
+	                            mWidth, mHeight,
+	                            preview.getWidth(), preview.getHeight()));
+                    }
+				} else {
+                	Log.w(TAG, "Failed to create preview!");
+            	}
             }
         }
     }
@@ -521,5 +596,98 @@ public class BitmapRegionTileSource implements TiledImageRenderer.TileSource {
         Bitmap newBitmap = bitmap.copy(Config.ARGB_8888, false);
         bitmap.recycle();
         return newBitmap;
+    }
+
+    public static boolean isGifFormat(Context context, Uri uri) {
+        ContentResolver contentResolver = context.getContentResolver();
+        MimeTypeMap mimeType = MimeTypeMap.getSingleton();
+        String type = mimeType.getExtensionFromMimeType(contentResolver.getType(uri));
+        boolean isGif = false;
+
+        if (type != null && type.equalsIgnoreCase("gif")) {
+            isGif = true;
+        }
+        return isGif;
+    }
+
+    /**
+     * isDrmFormat
+     */
+    public static boolean isDrmFormat(Context context, Uri uri) {
+        ContentResolver contentResolver = context.getContentResolver();
+        Cursor cursor = null;
+        int drmIndex = -1;
+
+        try {
+            cursor = contentResolver.query(uri, 
+			    new String[] { Images.ImageColumns.IS_DRM }, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                 drmIndex = cursor.getInt(0);
+            }
+        } catch (Exception e) {
+            Log.e("TAG", "Exception when trying to get Drm", e);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        return drmIndex == 1;
+    }
+
+    /**
+     * getDrmFilePath
+     */
+    public static String getDrmFilePath(Context context, Uri uri) {
+        ContentResolver contentResolver = context.getContentResolver();
+        Cursor cursor = null;
+        String filePath = null;
+
+        try {
+            cursor = contentResolver.query(uri, 
+			    new String[] { Images.ImageColumns.DATA }, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                 filePath = cursor.getString(0);
+            }
+        } catch (Exception e) {
+            Log.e("TAG", "Exception when trying to get Drm", e);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        return filePath;
+    }
+
+    /**
+     * getByteArrayInputStream
+     */
+    public static ByteArrayInputStream getByteArrayInputStream(Bitmap bitmap) {
+        ByteArrayInputStream bs = null;
+        if (bitmap != null) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bitmap.compress(CompressFormat.PNG, 0 /*ignored for PNG*/, bos);
+            byte[] bitmapData = bos.toByteArray();
+            bs = new ByteArrayInputStream(bitmapData);
+        }
+        return bs;
+    }
+
+   /**
+     * Decrypt drm file.
+     *
+     * @return byte: byte
+     
+     * @param filepath
+     * @param consume
+     *
+     * 
+     */
+    public static byte[] forceDecryptFile(String filePath, boolean consume) {
+        if (filePath == null  || !filePath.toLowerCase().endsWith(".dcf")) {
+            return null;
+        }
+
+        DcfDecoder dcfDecoder = new DcfDecoder();
+        return dcfDecoder.forceDecryptFile(filePath, consume);
     }
 }

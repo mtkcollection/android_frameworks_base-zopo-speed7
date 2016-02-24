@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +29,8 @@ import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.os.Trace;
+import android.os.SystemProperties;
 import android.util.Slog;
 import android.view.Display;
 import android.view.DisplayInfo;
@@ -35,12 +42,14 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.view.animation.Transformation;
 
+
 class ScreenRotationAnimation {
     static final String TAG = "ScreenRotationAnimation";
-    static final boolean DEBUG_STATE = false;
-    static final boolean DEBUG_TRANSFORMS = false;
-    static final boolean TWO_PHASE_ANIMATION = false;
-    static final boolean USE_CUSTOM_BLACK_FRAME = false;
+    /** M: Let the debug flags writable */
+    static boolean DEBUG_STATE = false;
+    static boolean DEBUG_TRANSFORMS = false;
+    static boolean TWO_PHASE_ANIMATION = false;
+    static boolean USE_CUSTOM_BLACK_FRAME = false;
 
     static final int FREEZE_LAYER = WindowManagerService.TYPE_LAYER_MULTIPLIER * 200;
 
@@ -273,9 +282,10 @@ class ScreenRotationAnimation {
                 Slog.w(TAG, "Unable to allocate freeze surface", e);
             }
 
-            if (WindowManagerService.SHOW_TRANSACTIONS ||
-                    WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(WindowManagerService.TAG,
-                            "  FREEZE " + mSurfaceControl + ": CREATE");
+            /// M: Add systrace for orientation chagnge performance analysis
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "ScreenRotationAnimation:Create");
+            Slog.i(WindowManagerService.TAG, "  FREEZE " + mSurfaceControl + ": CREATE, w = " + mWidth + ", h = " + mHeight + ", r=" + originalRotation);
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
 
             setRotationInTransaction(originalRotation);
         } finally {
@@ -284,6 +294,56 @@ class ScreenRotationAnimation {
                 if (WindowManagerService.SHOW_LIGHT_TRANSACTIONS) Slog.i(WindowManagerService.TAG,
                         "<<< CLOSE TRANSACTION ScreenRotationAnimation");
             }
+        }
+    }
+
+    public void setSnapshotScaleForSMB(int rotation, int width, int height) {
+        if (SystemProperties.get("ro.mtk_smartbook_support").equals("1")) {
+            int shortSize = 0;
+            int longSize = 0;
+            if (mOriginalWidth < mOriginalHeight) {
+                shortSize = mOriginalWidth;
+                longSize = mOriginalHeight;
+            } else {
+                shortSize = mOriginalHeight;
+                longSize = mOriginalWidth;
+            }
+
+            float wScale = 1.0f;
+            float hScale = 1.0f;
+            if (width < height) {
+                if (width == shortSize && height == longSize) {
+                    return;
+                } else {
+                    wScale = (float) width / (float) shortSize;
+                    hScale = (float) height / (float) longSize;
+                }
+            } else {
+                if (width == longSize && height == shortSize) {
+                    return;
+                } else {
+                    wScale = (float) width / (float) longSize;
+                    hScale = (float) height / (float) shortSize;
+                }
+            }
+            Slog.d(TAG, "Apply new resolution to freezing surface " + width + "x" + height + ", r:" + rotation);
+
+            //Resolution is different with original freezing surface size, scale it
+            mSnapshotInitialMatrix.reset();
+            int delta = deltaRotation(rotation, Surface.ROTATION_0);
+            createRotationMatrix(delta, width, height, mSnapshotInitialMatrix);
+
+            if (rotation == mOriginalRotation) {
+                mSnapshotInitialMatrix.preScale(wScale, hScale);
+                Slog.d(TAG, "no rotation, scale:" + wScale + "x" + hScale);
+            } else if (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_180) {
+                mSnapshotInitialMatrix.preScale(hScale, wScale);
+                Slog.d(TAG, "rotation to portrait, scale:" + hScale + "x" + wScale);
+            } else {
+                mSnapshotInitialMatrix.preScale(wScale, hScale);
+                Slog.d(TAG, "rotation to landscape, scale:" + wScale + "x" + hScale);
+            }
+            setSnapshotTransformInTransaction(mSnapshotInitialMatrix, 1.0f);
         }
     }
 
@@ -312,13 +372,30 @@ class ScreenRotationAnimation {
                     mTmpFloats[Matrix.MSCALE_X], mTmpFloats[Matrix.MSKEW_Y],
                     mTmpFloats[Matrix.MSKEW_X], mTmpFloats[Matrix.MSCALE_Y]);
             mSurfaceControl.setAlpha(alpha);
+
+            /// M: Add systrace for orientation detail matrix information
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "ScreenRotationAnimation:SetMatrix"
+                    + " dsdx=" + mTmpFloats[Matrix.MSCALE_X]
+                    + " dtdx=" + mTmpFloats[Matrix.MSKEW_Y]
+                    + " dsdy=" + mTmpFloats[Matrix.MSKEW_X]
+                    + " dtdy=" + mTmpFloats[Matrix.MSCALE_Y]);
+            if (DEBUG_TRANSFORMS) {
+                Slog.v(WindowManagerService.TAG, "SetSnapshotTransformInTransaction SetMatrix"
+                        + " dsdx=" + mTmpFloats[Matrix.MSCALE_X]
+                        + " dtdx=" + mTmpFloats[Matrix.MSKEW_Y]
+                        + " dsdy=" + mTmpFloats[Matrix.MSKEW_X]
+                        + " dtdy=" + mTmpFloats[Matrix.MSCALE_Y]);
+            }
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+
             if (DEBUG_TRANSFORMS) {
                 float[] srcPnts = new float[] { 0, 0, mWidth, mHeight };
                 float[] dstPnts = new float[4];
                 matrix.mapPoints(dstPnts, srcPnts);
-                Slog.i(TAG, "Original  : (" + srcPnts[0] + "," + srcPnts[1]
+                /** M:Change the tag to WindowManager */
+                Slog.i(WindowManagerService.TAG, "Original  : (" + srcPnts[0] + "," + srcPnts[1]
                         + ")-(" + srcPnts[2] + "," + srcPnts[3] + ")");
-                Slog.i(TAG, "Transformed: (" + dstPnts[0] + "," + dstPnts[1]
+                Slog.i(WindowManagerService.TAG, "Transformed: (" + dstPnts[0] + "," + dstPnts[1]
                         + ")-(" + dstPnts[2] + "," + dstPnts[3] + ")");
             }
         }
@@ -355,7 +432,8 @@ class ScreenRotationAnimation {
         int delta = deltaRotation(rotation, Surface.ROTATION_0);
         createRotationMatrix(delta, mWidth, mHeight, mSnapshotInitialMatrix);
 
-        if (DEBUG_STATE) Slog.v(TAG, "**** ROTATION: " + delta);
+        /** M:Change the tag to WindowManager */
+        if (DEBUG_STATE) Slog.v(WindowManagerService.TAG, "**** ROTATION: " + delta);
         setSnapshotTransformInTransaction(mSnapshotInitialMatrix, 1.0f);
     }
 
@@ -634,7 +712,10 @@ class ScreenRotationAnimation {
      */
     public boolean dismiss(SurfaceSession session, long maxAnimationDuration,
             float animationScale, int finalWidth, int finalHeight, int exitAnim, int enterAnim) {
-        if (DEBUG_STATE) Slog.v(TAG, "Dismiss!");
+        /// M: Add systrace for orientation chagnge performance analysis
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "ScreenRotationAnimation:Begin");
+        Slog.v(WindowManagerService.TAG, "Dismiss!");
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
         if (mSurfaceControl == null) {
             // Can't do animation.
             return false;
@@ -654,9 +735,10 @@ class ScreenRotationAnimation {
     public void kill() {
         if (DEBUG_STATE) Slog.v(TAG, "Kill!");
         if (mSurfaceControl != null) {
-            if (WindowManagerService.SHOW_TRANSACTIONS ||
-                    WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(WindowManagerService.TAG,
-                            "  FREEZE " + mSurfaceControl + ": DESTROY");
+            /// M: Add systrace for orientation chagnge performance analysis
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "ScreenRotationAnimation:End");
+            Slog.i(WindowManagerService.TAG, "  FREEZE " + mSurfaceControl + ": DESTROY");
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
             mSurfaceControl.destroy();
             mSurfaceControl = null;
         }
@@ -1006,5 +1088,15 @@ class ScreenRotationAnimation {
 
     public Transformation getEnterTransformation() {
         return mEnterTransformation;
+    }
+
+    /**
+     * M: API for runtime debug flag switching
+     */
+    public void enableDebugLog(boolean en) {
+        DEBUG_STATE = false;
+        DEBUG_TRANSFORMS = false;
+        TWO_PHASE_ANIMATION = false;
+        USE_CUSTOM_BLACK_FRAME = false;
     }
 }

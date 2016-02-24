@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +41,8 @@
 #include "UvMapper.h"
 #include "utils/LinearAllocator.h"
 
+#include "DisplayListLogBuffer.h"
+
 #define CRASH() do { \
     *(int *)(uintptr_t) 0xbbadbeef = 0; \
     ((void(*)())0)(); /* More reliable, but doesn't say BBADBEEF */ \
@@ -43,7 +50,11 @@
 
 // Use OP_LOG for logging with arglist, OP_LOGS if just printing char*
 #define OP_LOGS(s) OP_LOG("%s", (s))
-#define OP_LOG(s, ...) ALOGD( "%*s" s, level * 2, "", __VA_ARGS__ )
+#define OP_LOG(s, ...) \
+    OpenGLRenderer* renderer = DisplayListLogBuffer::getInstance().currentRenderer; \
+    Rect localRect(-1, -1, -1, -1);                                                 \
+    const Rect* clipRect = renderer ? renderer->currentClipRect() : &localRect;     \
+    ALOGD("%*s" s, level * 2, "", __VA_ARGS__ )
 
 namespace android {
 namespace uirenderer {
@@ -72,7 +83,9 @@ public:
 
     enum OpLogFlag {
         kOpLogFlag_Recurse = 0x1,
-        kOpLogFlag_JSON = 0x2 // TODO: add?
+        kOpLogFlag_JSON = 0x2, // TODO: add?
+        kOpLogFlag_MTK = 0x4,
+        kOpLogFlag_MTK_PROPERTY = 0x8
     };
 
     virtual void defer(DeferStateStruct& deferStruct, int saveCount, int level,
@@ -121,6 +134,9 @@ public:
     virtual void defer(DeferStateStruct& deferStruct, int saveCount, int level,
             bool useQuickReject) {
         if (mQuickRejected && CC_LIKELY(useQuickReject)) {
+#if DEBUG_DEFER
+            if (g_HWUI_debug_defer) ALOGD("%s <%p> defer but quick rejected", name(), this);
+#endif
             return;
         }
 
@@ -150,7 +166,9 @@ public:
         status_t status = DrawGlInfo::kStatusDone;
         for (unsigned int i = 0; i < ops.size(); i++) {
             renderer.restoreDisplayState(*(ops[i].state), true);
+            ATRACE_BEGIN_L2(ops[i].op->viewName);
             status |= ops[i].op->applyDraw(renderer, dirty);
+            ATRACE_END_L2();
         }
         return status;
     }
@@ -197,6 +215,9 @@ public:
         // since higher levels of the view hierarchy can change scale out from underneath it.
         return fmaxf(mPaint->getStrokeWidth(), 1) * 0.5f;
     }
+
+    /// M: view's name for log
+    char* viewName;
 
 protected:
     const SkPaint* getPaint(OpenGLRenderer& renderer) {
@@ -297,7 +318,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Save flags %x", mFlags);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Save flags 0x%x, count %d <%p>%s", mFlags, renderer->getSaveCount() - 1,
+                this, logFlags & DisplayListOp::kOpLogFlag_MTK_PROPERTY ? " by property" : "");
+        } else {
+            OP_LOG("Save flags %x", mFlags);
+        }
     }
 
     virtual const char* name() { return "Save"; }
@@ -310,13 +336,15 @@ private:
 class RestoreToCountOp : public StateOp {
 public:
     RestoreToCountOp(int count)
-            : mCount(count) {}
+            : mCount(count), mSaveCount(0) {}
 
     virtual void defer(DeferStateStruct& deferStruct, int saveCount, int level,
             bool useQuickReject) {
         deferStruct.mDeferredList.addRestoreToCount(deferStruct.mRenderer,
                 this, saveCount + mCount);
         deferStruct.mRenderer.restoreToCount(saveCount + mCount);
+
+        mSaveCount = saveCount;
     }
 
     virtual void applyState(OpenGLRenderer& renderer, int saveCount) const {
@@ -324,13 +352,21 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Restore to count %d", mCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Restore to count %d <%p>%s", mSaveCount + mCount, this,
+                logFlags & DisplayListOp::kOpLogFlag_MTK_PROPERTY ? " by property" : "");
+        } else {
+            OP_LOG("Restore to count %d", mCount);
+        }
     }
 
     virtual const char* name() { return "RestoreToCount"; }
 
 private:
     int mCount;
+
+    /// M: savecount for log
+    int mSaveCount;
 };
 
 class SaveLayerOp : public StateOp {
@@ -368,8 +404,15 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("SaveLayer%s of area " RECT_STRING,
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("SaveLayer%s " RECT_STRING ", alpha %d, flags 0x%x, count %d <%p>%s",
+                (isSaveLayerAlpha() ? "Alpha" : ""), RECT_ARGS(mArea),
+                OpenGLRenderer::getAlphaDirect(mPaint), mFlags, renderer->getSaveCount() - 1, this,
+                logFlags & DisplayListOp::kOpLogFlag_MTK_PROPERTY ? " by property" : "");
+        } else {
+            OP_LOG("SaveLayer%s of area " RECT_STRING,
                 (isSaveLayerAlpha() ? "Alpha" : ""),RECT_ARGS(mArea));
+        }
     }
 
     virtual const char* name() { return isSaveLayerAlpha() ? "SaveLayerAlpha" : "SaveLayer"; }
@@ -408,7 +451,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Translate by %f %f", mDx, mDy);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Translate by (%.2f, %.2f) ===> currTrans" MATRIX_4_STRING, mDx, mDy,
+                MATRIX_4_ARGS(renderer->currentTransform()));
+        } else {
+            OP_LOG("Translate by %f %f", mDx, mDy);
+        }
     }
 
     virtual const char* name() { return "Translate"; }
@@ -428,7 +476,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Rotate by %f degrees", mDegrees);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Rotate by %f degrees ===> currTrans" MATRIX_4_STRING, mDegrees,
+                MATRIX_4_ARGS(renderer->currentTransform()));
+        } else {
+            OP_LOG("Rotate by %f degrees", mDegrees);
+        }
     }
 
     virtual const char* name() { return "Rotate"; }
@@ -447,7 +500,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Scale by %f %f", mSx, mSy);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Scale by (%.2f, %.2f) ===> currTrans" MATRIX_4_STRING, mSx, mSy,
+                MATRIX_4_ARGS(renderer->currentTransform()));
+        } else {
+            OP_LOG("Scale by %f %f", mSx, mSy);
+        }
     }
 
     virtual const char* name() { return "Scale"; }
@@ -467,7 +525,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Skew by %f %f", mSx, mSy);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Skew by (%.2f, %.2f) ===> currTrans" MATRIX_4_STRING, mSx, mSy,
+                MATRIX_4_ARGS(renderer->currentTransform()));
+        } else {
+            OP_LOG("Skew by %f %f", mSx, mSy);
+        }
     }
 
     virtual const char* name() { return "Skew"; }
@@ -487,8 +550,9 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        if (mMatrix.isIdentity()) {
-            OP_LOGS("SetMatrix (reset)");
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("SetMatrix " SK_MATRIX_STRING " ===> currTrans" MATRIX_4_STRING,
+                SK_MATRIX_ARGS(&mMatrix), MATRIX_4_ARGS(renderer->currentTransform()));
         } else {
             OP_LOG("SetMatrix " SK_MATRIX_STRING, SK_MATRIX_ARGS(&mMatrix));
         }
@@ -510,7 +574,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("ConcatMatrix " SK_MATRIX_STRING, SK_MATRIX_ARGS(&mMatrix));
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("ConcatMatrix " SK_MATRIX_STRING " ===> currTrans" MATRIX_4_STRING,
+                SK_MATRIX_ARGS(&mMatrix), MATRIX_4_ARGS(renderer->currentTransform()));
+        } else {
+            OP_LOG("ConcatMatrix " SK_MATRIX_STRING, SK_MATRIX_ARGS(&mMatrix));
+        }
     }
 
     virtual const char* name() { return "ConcatMatrix"; }
@@ -552,7 +621,14 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("ClipRect " RECT_STRING, RECT_ARGS(mArea));
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("ClipRect " RECT_STRING " <%p>%s ===> currClip"RECT_STRING, RECT_ARGS(mArea),
+                this, logFlags & DisplayListOp::kOpLogFlag_MTK_PROPERTY ? " by property" : "",
+                RECT_ARGS(*clipRect));
+            renderer->outputClipRegion();
+        } else {
+            OP_LOG("ClipRect " RECT_STRING, RECT_ARGS(mArea));
+        }
     }
 
     virtual const char* name() { return "ClipRect"; }
@@ -575,8 +651,16 @@ public:
 
     virtual void output(int level, uint32_t logFlags) const {
         SkRect bounds = mPath->getBounds();
-        OP_LOG("ClipPath bounds " RECT_STRING,
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("ClipPath bounds "RECT_STRING" <%p>%s ===> currClip"RECT_STRING,
+                bounds.left(), bounds.top(), bounds.right(), bounds.bottom(), this,
+                logFlags & DisplayListOp::kOpLogFlag_MTK_PROPERTY ? " by property" : "",
+                RECT_ARGS(*clipRect));
+            renderer->outputClipRegion();
+        } else {
+            OP_LOG("ClipPath bounds " RECT_STRING,
                 bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+        }
     }
 
     virtual const char* name() { return "ClipPath"; }
@@ -596,10 +680,15 @@ public:
 
     virtual void output(int level, uint32_t logFlags) const {
         SkIRect bounds = mRegion->getBounds();
-        OP_LOG("ClipRegion bounds %d %d %d %d",
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("ClipRegion bounds (%d, %d, %d, %d) ===> currClip"RECT_STRING,
+                bounds.left(), bounds.top(), bounds.right(), bounds.bottom(), RECT_ARGS(*clipRect));
+            renderer->outputClipRegion();
+        } else {
+            OP_LOG("ClipRegion bounds %d %d %d %d",
                 bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+        }
     }
-
     virtual const char* name() { return "ClipRegion"; }
 
 private:
@@ -613,7 +702,11 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOGS("ResetPaintFilter");
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("%s", "ResetPaintFilter");
+        } else {
+            OP_LOGS("ResetPaintFilter");
+        }
     }
 
     virtual const char* name() { return "ResetPaintFilter"; }
@@ -629,7 +722,11 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("SetupPaintFilter, clear %#x, set %#x", mClearBits, mSetBits);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("SetupPaintFilter, clear 0x%08x, set 0x%08x", mClearBits, mSetBits);
+        } else {
+            OP_LOG("SetupPaintFilter, clear %#x, set %#x", mClearBits, mSetBits);
+        }
     }
 
     virtual const char* name() { return "SetupPaintFilter"; }
@@ -686,6 +783,7 @@ public:
         // TODO: manually handle rect clip for bitmaps by adjusting texCoords per op,
         // and allowing them to be merged in getBatchId()
         for (unsigned int i = 0; i < ops.size(); i++) {
+            ATRACE_BEGIN_L2(ops[i].op->viewName);
             const DeferredDisplayState& state = *(ops[i].state);
             const Rect& opBounds = state.mBounds;
             // When we reach multiDraw(), the matrix can be either
@@ -707,6 +805,7 @@ public:
             if (hasLayer) {
                 renderer.dirtyLayer(opBounds.left, opBounds.top, opBounds.right, opBounds.bottom);
             }
+            ATRACE_END_L2();
         }
 
         return renderer.drawBitmaps(mBitmap, mEntry, ops.size(), &vertices[0],
@@ -714,8 +813,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw bitmap %p at %f %f%s", mBitmap, mLocalBounds.left, mLocalBounds.top,
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw bitmap %p%s at "RECT_STRING" <%p>", mBitmap,
+                mEntry ? " using AssetAtlas" : "", RECT_ARGS(mLocalBounds), this);
+        } else {
+            OP_LOG("Draw bitmap %p at %f %f%s", mBitmap, mLocalBounds.left, mLocalBounds.top,
                 mEntry ? " using AssetAtlas" : "");
+        }
     }
 
     virtual const char* name() { return "DrawBitmap"; }
@@ -764,8 +868,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw bitmap %p src=" RECT_STRING ", dst=" RECT_STRING,
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw bitmap %p src="RECT_STRING", dst="RECT_STRING" <%p>",
+                mBitmap, RECT_ARGS(mSrc), RECT_ARGS(mLocalBounds), this);
+        } else {
+            OP_LOG("Draw bitmap %p src=" RECT_STRING ", dst=" RECT_STRING,
                 mBitmap, RECT_ARGS(mSrc), RECT_ARGS(mLocalBounds));
+        }
     }
 
     virtual const char* name() { return "DrawBitmapRect"; }
@@ -790,7 +899,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw bitmap %p", mBitmap);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw bitmap %p data at "RECT_STRING" <%p>",
+                mBitmap, RECT_ARGS(mLocalBounds), this);
+        } else {
+            OP_LOG("Draw bitmap %p", mBitmap);
+        }
     }
 
     virtual const char* name() { return "DrawBitmapData"; }
@@ -815,7 +929,12 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw bitmap %p mesh %d x %d", mBitmap, mMeshWidth, mMeshHeight);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw bitmap %p mesh %d x %d at "RECT_STRING" <%p>",
+                mBitmap, mMeshWidth, mMeshHeight, RECT_ARGS(mLocalBounds), this);
+        } else {
+            OP_LOG("Draw bitmap %p mesh %d x %d", mBitmap, mMeshWidth, mMeshHeight);
+        }
     }
 
     virtual const char* name() { return "DrawBitmapMesh"; }
@@ -852,6 +971,7 @@ public:
 
     const Patch* getMesh(OpenGLRenderer& renderer) {
         if (!mMesh || renderer.getCaches().patchCache.getGenerationId() != mGenerationId) {
+            ATRACE_CALL_L2();
             PatchCache& cache = renderer.getCaches().patchCache;
             mMesh = cache.get(getAtlasEntry(renderer), mBitmap->width(), mBitmap->height(),
                     mLocalBounds.getWidth(), mLocalBounds.getHeight(), mPatch);
@@ -896,6 +1016,7 @@ public:
             uint32_t vertexCount = opMesh->verticesCount;
             if (vertexCount == 0) continue;
 
+            ATRACE_BEGIN_L2(ops[i].op->viewName);
             // We use the bounds to know where to translate our vertices
             // Using patchOp->state.mBounds wouldn't work because these
             // bounds are clipped
@@ -933,6 +1054,7 @@ public:
             }
 
             indexCount += opMesh->indexCount;
+            ATRACE_END_L2();
         }
 
         return renderer.drawPatches(mBitmap, getAtlasEntry(renderer),
@@ -948,8 +1070,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw patch " RECT_STRING "%s", RECT_ARGS(mLocalBounds),
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw patch %p%s at "RECT_STRING" <%p>", mBitmap,
+                mEntry ? " with AssetAtlas" : "", RECT_ARGS(mLocalBounds), this);
+        } else {
+            OP_LOG("Draw patch " RECT_STRING "%s", RECT_ARGS(mLocalBounds),
                 mEntry ? " with AssetAtlas" : "");
+        }
     }
 
     virtual const char* name() { return "DrawPatch"; }
@@ -984,7 +1111,11 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw color %#x, mode %d", mColor, mMode);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw color 0x%08x, mode %d <%p>", mColor, mMode, this);
+        } else {
+            OP_LOG("Draw color %#x, mode %d", mColor, mMode);
+        }
     }
 
     virtual const char* name() { return "DrawColor"; }
@@ -1032,7 +1163,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Rect " RECT_STRING, RECT_ARGS(mLocalBounds));
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Rect "RECT_STRING", style %d, AA %d, mode %d, color 0x%08x <%p>",
+                RECT_ARGS(mLocalBounds), mPaint->getStyle(), mPaint->isAntiAlias(),
+                OpenGLRenderer::getXfermode(mPaint->getXfermode()), mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw Rect " RECT_STRING, RECT_ARGS(mLocalBounds));
+        }
     }
 
     virtual void onDefer(OpenGLRenderer& renderer, DeferInfo& deferInfo,
@@ -1040,6 +1177,46 @@ public:
         DrawStrokableOp::onDefer(renderer, deferInfo, state);
         deferInfo.opaqueOverBounds = isOpaqueOverBounds(state) &&
                 mPaint->getStyle() == SkPaint::kFill_Style;
+
+        /// M: performance enhancement
+        if (g_HWUI_debug_enhancement) {
+            deferInfo.mergeId = reinterpret_cast<mergeid_t>(mPaint->getColor());
+
+            // only handle the case which use drawColorRect in OpenGLRenderer
+            deferInfo.mergeable =
+                    state.mMatrix.isSimple() && state.mMatrix.positiveScale() &&
+                    !state.mClipSideFlags &&
+                    OpenGLRenderer::getXfermodeDirect(mPaint) == SkXfermode::kSrcOver_Mode &&
+                    mPaint->getStyle() == SkPaint::kFill_Style && !mPaint->isAntiAlias();
+        }
+    }
+
+    /// M: performance enhancement, if mergable is false, this function won't be called
+    virtual status_t multiDraw(OpenGLRenderer& renderer, Rect& dirty,
+            const Vector<OpStatePair>& ops, const Rect& bounds) {
+        const DeferredDisplayState& firstState = *(ops[0].state);
+        renderer.restoreDisplayState(firstState, true); // restore all but the clip
+
+        const bool hasLayer = renderer.hasLayer();
+        unsigned int size = ops.size();
+
+        Vertex vertices[4 * size];
+        Vertex* vertex = &vertices[0];
+
+        for (unsigned int i = 0; i < size; i++) {
+            ATRACE_BEGIN_L2(ops[i].op->viewName);
+            const DeferredDisplayState& state = *(ops[i].state);
+            const Rect& opBounds = state.mBounds;
+            Vertex::set(vertex++, opBounds.left, opBounds.top);
+            Vertex::set(vertex++, opBounds.right, opBounds.top);
+            Vertex::set(vertex++, opBounds.left, opBounds.bottom);
+            Vertex::set(vertex++, opBounds.right, opBounds.bottom);
+            if (hasLayer) {
+                renderer.dirtyLayer(opBounds.left, opBounds.top, opBounds.right, opBounds.bottom);
+            }
+            ATRACE_END_L2();
+        }
+        return renderer.drawRects(&vertices[0], ops.size(), mPaint);
     }
 
     virtual const char* name() { return "DrawRect"; }
@@ -1056,7 +1233,11 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Rects count %d", mCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Rects count %d <%p>", mCount, this);
+        } else {
+            OP_LOG("Draw Rects count %d", mCount);
+        }
     }
 
     virtual const char* name() { return "DrawRects"; }
@@ -1083,7 +1264,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw RoundRect " RECT_STRING ", rx %f, ry %f", RECT_ARGS(mLocalBounds), mRx, mRy);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw RoundRect "RECT_STRING", rx %f, ry %f, style %d, AA %d, color 0x%08x <%p>",
+                RECT_ARGS(mLocalBounds), mRx, mRy, mPaint->getStyle(), mPaint->isAntiAlias(),
+                mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw RoundRect " RECT_STRING ", rx %f, ry %f", RECT_ARGS(mLocalBounds), mRx, mRy);
+        }
     }
 
     virtual void onDefer(OpenGLRenderer& renderer, DeferInfo& deferInfo,
@@ -1115,8 +1302,14 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw RoundRect Props " RECT_STRING ", rx %f, ry %f",
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw RoundRect Props " RECT_STRING ", rx %f, ry %f, style %d, AA %d, color "
+                "0x%08x <%p>", *mLeft, *mTop, *mRight, *mBottom, *mRx, *mRy, mPaint->getStyle(),
+                mPaint->isAntiAlias(), mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw RoundRect Props " RECT_STRING ", rx %f, ry %f",
                 *mLeft, *mTop, *mRight, *mBottom, *mRx, *mRy);
+        }
     }
 
     virtual const char* name() { return "DrawRoundRectProps"; }
@@ -1141,7 +1334,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Circle x %f, y %f, r %f", mX, mY, mRadius);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Circle x %f, y %f, r %f, style %d, width %f, AA %d, color 0x%08x <%p>",
+                mX, mY, mRadius, mPaint->getStyle(), mPaint->getStrokeWidth(),
+                mPaint->isAntiAlias(), mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw Circle x %f, y %f, r %f", mX, mY, mRadius);
+        }
     }
 
     virtual const char* name() { return "DrawCircle"; }
@@ -1162,7 +1361,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Circle Props x %p, y %p, r %p", mX, mY, mRadius);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Circle Props x %f, y %f, r %f, style %d, width %f, AA %d, color 0x%08x"
+                " <%p>", *mX, *mY, *mRadius, mPaint->getStyle(), mPaint->getStrokeWidth(),
+                mPaint->isAntiAlias(), mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw Circle Props x %p, y %p, r %p", mX, mY, mRadius);
+        }
     }
 
     virtual const char* name() { return "DrawCircleProps"; }
@@ -1184,7 +1389,13 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Oval " RECT_STRING, RECT_ARGS(mLocalBounds));
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Oval "RECT_STRING", style %d, AA %d, color 0x%08x <%p>",
+                RECT_ARGS(mLocalBounds), mPaint->getStyle(), mPaint->isAntiAlias(),
+                mPaint->getColor(), this);
+        } else {
+            OP_LOG("Draw Oval " RECT_STRING, RECT_ARGS(mLocalBounds));
+        }
     }
 
     virtual const char* name() { return "DrawOval"; }
@@ -1204,8 +1415,16 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Arc " RECT_STRING ", start %f, sweep %f, useCenter %d",
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Arc "RECT_STRING", start %f, sweep %f, useCenter %d, style %d,"
+                "AA %d, color 0x%08x, width %f, join %d, cap %d <%p>", RECT_ARGS(mLocalBounds),
+                mStartAngle, mSweepAngle, mUseCenter, mPaint->getStyle(), mPaint->isAntiAlias(),
+                mPaint->getColor(), mPaint->getStrokeWidth(), mPaint->getStrokeJoin(),
+                mPaint->getStrokeCap(), this);
+        } else {
+            OP_LOG("Draw Arc " RECT_STRING ", start %f, sweep %f, useCenter %d",
                 RECT_ARGS(mLocalBounds), mStartAngle, mSweepAngle, mUseCenter);
+        }
     }
 
     virtual const char* name() { return "DrawArc"; }
@@ -1241,7 +1460,20 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Path %p in " RECT_STRING, mPath, RECT_ARGS(mLocalBounds));
+        if (logFlags & kOpLogFlag_MTK) {
+            int total = mPath->countPoints();
+            String8 log;
+            for (int i = 0; i < total; i++) {
+                SkPoint p = mPath->getPoint(i);
+                log.appendFormat("(%d,%d)", (int) (p.x()), (int) (p.y()));
+            }
+            OP_LOG("Draw Path count %d, color 0x%08x, width %f, join %d, cap %d in "
+                RECT_STRING" <%p> ===> Points(%s)", mPath->countPoints(), mPaint->getColor(),
+                mPaint->getStrokeWidth(), mPaint->getStrokeJoin(),
+                mPaint->getStrokeCap(), RECT_ARGS(mLocalBounds), this, log.string());
+        } else {
+            OP_LOG("Draw Path %p in " RECT_STRING, mPath, RECT_ARGS(mLocalBounds));
+        }
     }
 
     virtual const char* name() { return "DrawPath"; }
@@ -1263,7 +1495,18 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Lines count %d", mCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            String8 log;
+            for (int i = 0; i < mCount; i += 2) {
+                log.appendFormat("(%d,%d)", (int) mPoints[i], (int) mPoints[i + 1]);
+            }
+            OP_LOG("Draw Lines count %d, color 0x%08x, width %f, join %d, cap %d in "
+                RECT_STRING" <%p> ===> Points(%s)", mCount, mPaint->getColor(),
+                mPaint->getStrokeWidth(), mPaint->getStrokeJoin(),
+                mPaint->getStrokeCap(), RECT_ARGS(mLocalBounds), this, log.string());
+        } else {
+            OP_LOG("Draw Lines count %d", mCount);
+        }
     }
 
     virtual const char* name() { return "DrawLines"; }
@@ -1290,7 +1533,18 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Points count %d", mCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            String8 log;
+            for (int i = 0; i < mCount; i += 2) {
+                log.appendFormat("(%d,%d)", (int) mPoints[i], (int) mPoints[i + 1]);
+            }
+            OP_LOG("Draw Points count %d, color 0x%08x, width %f, join %d, cap %d in "
+                RECT_STRING" <%p> ===> Points(%s)", mCount, mPaint->getColor(),
+                mPaint->getStrokeWidth(), mPaint->getStrokeJoin(),
+                mPaint->getStrokeCap(), RECT_ARGS(mLocalBounds), this, log.string());
+        } else {
+            OP_LOG("Draw Points count %d", mCount);
+        }
     }
 
     virtual const char* name() { return "DrawPoints"; }
@@ -1302,7 +1556,20 @@ public:
             : DrawOp(paint), mText(text), mBytesCount(bytesCount), mCount(count) {};
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw some text, %d bytes", mBytesCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            SkUnichar *tmpText = (SkUnichar*)malloc(mCount * sizeof(SkUnichar));
+            memset(tmpText, 0, mCount * sizeof(SkUnichar));
+            mPaint->glyphsToUnichars((uint16_t*)mText, mCount, tmpText);
+            int total = utf32_to_utf8_length((char32_t*)tmpText, mCount) + 1;
+            char* str = (char*)malloc(total * sizeof(char));
+            memset(str, 0, total * sizeof(char));
+            utf32_to_utf8((char32_t*)tmpText, mCount, str);
+            OP_LOG("Draw some text \"%s\", %d bytes <%p>", str, mBytesCount, this);
+            free(tmpText);
+            free(str);
+        } else {
+            OP_LOG("Draw some text, %d bytes", mBytesCount);
+        }
     }
 
     virtual bool hasTextShadow() const {
@@ -1411,6 +1678,7 @@ public:
             const Vector<OpStatePair>& ops, const Rect& bounds) {
         status_t status = DrawGlInfo::kStatusDone;
         for (unsigned int i = 0; i < ops.size(); i++) {
+            ATRACE_BEGIN_L2(ops[i].op->viewName);
             const DeferredDisplayState& state = *(ops[i].state);
             DrawOpMode drawOpMode = (i == ops.size() - 1) ? kDrawOpMode_Flush : kDrawOpMode_Defer;
             renderer.restoreDisplayState(state, true); // restore all but the clip
@@ -1421,12 +1689,27 @@ public:
             status |= renderer.drawText(op.mText, op.mBytesCount, op.mCount, op.mX, op.mY,
                     op.mPositions, op.getPaint(renderer), op.mTotalAdvance, op.mLocalBounds,
                     drawOpMode);
+            ATRACE_END_L2();
         }
         return status;
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Text of count %d, bytes %d", mCount, mBytesCount);
+        if (logFlags & kOpLogFlag_MTK) {
+            SkUnichar *tmpText = (SkUnichar*)malloc(mCount * sizeof(SkUnichar));
+            memset(tmpText, 0, mCount * sizeof(SkUnichar));
+            mPaint->glyphsToUnichars((uint16_t*)mText, mCount, tmpText);
+            int total = utf32_to_utf8_length((char32_t*)tmpText, mCount) + 1;
+            char* str = (char*)malloc(total * sizeof(char));
+            memset(str, 0, total * sizeof(char));
+            utf32_to_utf8((char32_t*)tmpText, mCount, str);
+            OP_LOG("Draw Text \"%s\", count %d, bytes %d, color 0x%08x at " RECT_STRING " <%p>",
+                str, mCount, mBytesCount, mPaint->getColor(), RECT_ARGS(mLocalBounds), this);
+            free(tmpText);
+            free(str);
+        } else {
+            OP_LOG("Draw Text of count %d, bytes %d", mCount, mBytesCount);
+        }
     }
 
     virtual const char* name() { return "DrawText"; }
@@ -1459,7 +1742,11 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Functor %p", mFunctor);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Functor %p <%p>", mFunctor, this);
+        } else {
+            OP_LOG("Draw Functor %p", mFunctor);
+        }
     }
 
     virtual const char* name() { return "DrawFunctor"; }
@@ -1480,6 +1767,9 @@ public:
             bool useQuickReject) {
         if (mRenderNode->isRenderable() && !mSkipInOrderDraw) {
             mRenderNode->defer(deferStruct, level + 1);
+        } else if (mRenderNode && !mRenderNode->isRenderable()) {
+            DISPLAY_LIST_LOGD("%*sDraw Display List (%p, %s) but not renderable <%p>",
+                (level + 1) * 2, "", mRenderNode, mRenderNode->getName(), this);
         }
     }
 
@@ -1496,8 +1786,9 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw RenderNode %p %s, flags %#x", mRenderNode, mRenderNode->getName(), mFlags);
         if (mRenderNode && (logFlags & kOpLogFlag_Recurse)) {
+            /// M: only keep this log for default because it's duplicate to "Start display list .."
+            OP_LOG("Draw RenderNode %p %s, flags %#x", mRenderNode, mRenderNode->getName(), mFlags);
             mRenderNode->output(level + 1);
         }
     }
@@ -1563,7 +1854,15 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOGS("DrawShadow");
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Shadow center (%f, %f, %f), radius %f, alpha %f, transformXY "
+                MATRIX_4_STRING", transformZ "MATRIX_4_STRING" <%p>",
+                renderer->getLightCenter().x, renderer->getLightCenter().y,
+                renderer->getLightCenter().z, renderer->getLightRadius(), mCasterAlpha,
+                MATRIX_4_ARGS(&mTransformXY), MATRIX_4_ARGS(&mTransformZ), this);
+        } else {
+            OP_LOGS("DrawShadow");
+        }
     }
 
     virtual const char* name() { return "DrawShadow"; }
@@ -1587,7 +1886,16 @@ public:
     }
 
     virtual void output(int level, uint32_t logFlags) const {
-        OP_LOG("Draw Layer %p at %f %f", mLayer, mX, mY);
+        if (logFlags & kOpLogFlag_MTK) {
+            OP_LOG("Draw Layer %p at (%.2f, %.2f), textureSize (%d, %d), layerSize"
+                " (%.2f, %.2f), alpha %d, isIdentity %d, isBlend %d, isTextureLayer %d <%p>",
+                mLayer, mX, mY, mLayer->getWidth(), mLayer->getHeight(),
+                mLayer->layer.getWidth(), mLayer->layer.getHeight(), mLayer->getAlpha(),
+                mLayer->getTransform().isIdentity(), mLayer->isBlend(), mLayer->isTextureLayer(),
+                this);
+        } else {
+            OP_LOG("Draw Layer %p at %f %f", mLayer, mX, mY);
+        }
     }
 
     virtual const char* name() { return "DrawLayer"; }

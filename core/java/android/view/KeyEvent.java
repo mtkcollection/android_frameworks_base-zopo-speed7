@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -748,8 +753,39 @@ public class KeyEvent extends InputEvent implements Parcelable {
     public static final int KEYCODE_TV_TIMER_PROGRAMMING = 258;
     /** Key code constant: Help key. */
     public static final int KEYCODE_HELP = 259;
+    /**
+    * M:[SmartBook] Key code constant: Wifi toggle key.
+    * @hide
+    */
+    public static final int KEYCODE_WIFI_TOGGLE     = 260;
+    /**
+    * M:[SmartBook] Key code constant: Bluetooth toggle key.
+    * @hide
+    */
+    public static final int KEYCODE_BT_TOGGLE       = 261;
+    /**
+    *M:[SmartBook] Key code constant: Lock toggle(enable/dismiss) key.
+    * @hide
+    */
+    public static final int KEYCODE_LOCK_TOGGLE     = 262;
+    /**
+    * M:[SmartBook] Key code constant: IME toggle(show/hide) key.
+    * @hide
+    */
+    public static final int KEYCODE_IME_TOGGLE      = 263;
+    /** M:[SmartBook] Key code constant: messaging key.
+     * Starts the system messaging activity.
+     * @hide
+     */
+    public static final int KEYCODE_MESSAGING        = 264;
 
-    private static final int LAST_KEYCODE = KEYCODE_HELP;
+    /** M:[SmartBook] Key code constant: gallery key.
+     * Starts the system gallery activity.
+     * @hide
+     */
+    public static final int KEYCODE_GALLERY        = 265;
+
+    private static final int LAST_KEYCODE = KEYCODE_GALLERY;
 
     // NOTE: If you add a new keycode here you must also add it to:
     //  isSystem()
@@ -765,7 +801,7 @@ public class KeyEvent extends InputEvent implements Parcelable {
     //  MUST contribute a patch to the open source project to define
     //  those new codes.  This is intended to maintain a consistent
     //  set of key code definitions across all Android devices.
-
+    //  set of key code definitions across all Android devices.
     // Symbolic names of all metakeys in bit order from least significant to most significant.
     // Accordingly there are exactly 32 values in this table.
     private static final String[] META_SYMBOLIC_NAMES = new String[] {

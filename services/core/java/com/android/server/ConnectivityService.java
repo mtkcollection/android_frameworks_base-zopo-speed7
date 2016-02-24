@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,11 +25,12 @@ import static android.Manifest.permission.MANAGE_NETWORK_POLICY;
 import static android.Manifest.permission.RECEIVE_DATA_ACTIVITY_CHANGE;
 import static android.net.ConnectivityManager.CONNECTIVITY_ACTION;
 import static android.net.ConnectivityManager.CONNECTIVITY_ACTION_IMMEDIATE;
+import static android.net.ConnectivityManager.ROVE_OUT_ALERT;
 import static android.net.ConnectivityManager.TYPE_NONE;
 import static android.net.ConnectivityManager.TYPE_VPN;
+import static android.net.ConnectivityManager.TYPE_MOBILE_MMS;
 import static android.net.ConnectivityManager.getNetworkTypeName;
 import static android.net.ConnectivityManager.isNetworkTypeValid;
-import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED;
 import static android.net.NetworkPolicyManager.RULE_ALLOW_ALL;
 import static android.net.NetworkPolicyManager.RULE_REJECT_METERED;
 
@@ -104,13 +110,20 @@ import com.android.internal.net.NetworkStatsFactory;
 import com.android.internal.net.VpnConfig;
 import com.android.internal.net.VpnProfile;
 import com.android.internal.telephony.DctConstants;
+///Support for ePDG
+import com.android.internal.telephony.PhoneConstants;
+import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.IndentingPrintWriter;
+///Support for ePDG
+import com.android.internal.util.Protocol;
 import com.android.internal.util.XmlUtils;
 import com.android.server.am.BatteryStatsService;
 import com.android.server.connectivity.DataConnectionStats;
 import com.android.server.connectivity.Nat464Xlat;
 import com.android.server.connectivity.NetworkAgentInfo;
+///Support for ePDG
+import com.android.server.connectivity.NetworkAgentInfo.HandoverType;
 import com.android.server.connectivity.NetworkMonitor;
 import com.android.server.connectivity.PacManager;
 import com.android.server.connectivity.PermissionMonitor;
@@ -120,6 +133,15 @@ import com.android.server.net.BaseNetworkObserver;
 import com.android.server.net.LockdownVpnTracker;
 import com.google.android.collect.Lists;
 import com.google.android.collect.Sets;
+
+///M: for operator plugin @{
+import com.mediatek.common.MPlugin;
+import com.mediatek.common.net.IConnectivityServiceExt;
+/// @}
+///M: for ePDG feature @{
+import com.mediatek.epdg.EpdgManager;
+import com.mediatek.rns.RnsManager;
+/// @}
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -131,6 +153,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -143,7 +166,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.NoSuchElementException;
 
+/* Vanzo:zhangjingzhi on: Fri, 06 Mar 2015 11:36:00 +0800
+ */
+ import com.android.featureoption.FeatureOption;
+// End of Vanzo:zhangjingzhi
 /**
  * @hide
  */
@@ -152,12 +180,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private static final String TAG = "ConnectivityService";
 
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
 
     // network sampling debugging
     private static final boolean SAMPLE_DBG = false;
 
-    private static final boolean LOGD_RULES = false;
+    private static final boolean LOGD_RULES = true;
 
     // TODO: create better separation between radio types and network types
 
@@ -377,6 +405,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
      */
     private static final int EVENT_RELEASE_NETWORK_REQUEST_WITH_INTENT = 27;
 
+    /** M: for ePDG feature. {@ */
+    private static final int EVENT_HANDOVER_EXPIRED = 100;
+    private static final int EVENT_HANDOVER_CONNECT = 101;
+    private static final int EVENT_PDN_RETRY = 102;
+    /* @} */
+
+
 
     /** Handler used for internal events. */
     final private InternalHandler mHandler;
@@ -432,6 +467,34 @@ public class ConnectivityService extends IConnectivityManager.Stub
     // sequence number of NetworkRequests
     private int mNextNetworkRequestId = 1;
 
+    ///M: Issues fixing & NS-IOT
+    private BroadcastReceiver mReceiver;
+    private Object mSynchronizedObject;
+    private Object mLegacyNetworkSyncObject;
+
+    /** M: Define local variables for MTK function usage {@ */
+    IConnectivityServiceExt mIcsExt = null;
+    /** @} */
+
+    /** M: for ePDG feature. {@ */
+    private static final int PDN_RETRY_INTERVAL = 30 * 1000;
+    private static final int HANDOVER_TRANSFER_TIME = 30 * 1000;
+    private static final int NO_REQUEST_SCORE = -1;
+    private static final int EPDG_RELEASE_SCORE = 100;
+    private static final int MOBILE_REQUEST_SCORE = 45;
+    private static final int MOBILE_AGENT_SCORE = 85;
+    private static final int EPDG_REQUEST_SCORE = 75;
+    private static final int EPDG_FACOTRY_HIGH_SCORE = 80;
+    private static final int EPDG_FACOTRY_LOW_SCORE = -1;
+    private static final String MOBILE_AGENT_NAME = "Telephony";
+    private static final String EPDG_AGENT_NAME = "Epdg";
+    private static boolean sIsEpdgSupported = false;
+    private static int sHandoverRadioType = ConnectivityManager.TYPE_NONE;
+    private static int sCurrentRadioType = ConnectivityManager.TYPE_NONE;
+    RnsManager mRnsManager = null;
+    private static int sImsDisconnectCause = 0;
+    private boolean mIsImsRetryFlag = false;
+    /** @} */
     /**
      * Implements support for the legacy "one network per network type" model.
      *
@@ -452,7 +515,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private class LegacyTypeTracker {
 
         private static final boolean DBG = true;
-        private static final boolean VDBG = false;
+        private static final boolean VDBG = true;
         private static final String TAG = "CSLegacyTypeTracker";
 
         /**
@@ -487,10 +550,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
         }
 
         public NetworkAgentInfo getNetworkForType(int type) {
-            if (isTypeSupported(type) && !mTypeLists[type].isEmpty()) {
-                return mTypeLists[type].get(0);
-            } else {
-                return null;
+            synchronized (mLegacyNetworkSyncObject) {
+                if (VDBG) log("getNetworkForType type " + type);
+                if (isTypeSupported(type) && !mTypeLists[type].isEmpty()) {
+                    return mTypeLists[type].get(0);
+                } else {
+                    return null;
+                }
             }
         }
 
@@ -504,49 +570,53 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
         /** Adds the given network to the specified legacy type list. */
         public void add(int type, NetworkAgentInfo nai) {
-            if (!isTypeSupported(type)) {
-                return;  // Invalid network type.
-            }
-            if (VDBG) log("Adding agent " + nai + " for legacy network type " + type);
+            synchronized (mLegacyNetworkSyncObject) {
+                if (!isTypeSupported(type)) {
+                    return;  // Invalid network type.
+                }
+                if (VDBG) log("Adding agent " + nai + " for legacy network type " + type);
 
-            ArrayList<NetworkAgentInfo> list = mTypeLists[type];
-            if (list.contains(nai)) {
-                loge("Attempting to register duplicate agent for type " + type + ": " + nai);
-                return;
-            }
+                ArrayList<NetworkAgentInfo> list = mTypeLists[type];
+                if (list.contains(nai)) {
+                    loge("Attempting to register duplicate agent for type " + type + ": " + nai);
+                    return;
+                }
 
-            list.add(nai);
+                list.add(nai);
 
-            // Send a broadcast if this is the first network of its type or if it's the default.
-            if (list.size() == 1 || isDefaultNetwork(nai)) {
-                maybeLogBroadcast(nai, true, type);
-                sendLegacyNetworkBroadcast(nai, true, type);
+               // Send a broadcast if this is the first network of its type or if it's the default.
+               if (list.size() == 1 || isDefaultNetwork(nai)) {
+                   maybeLogBroadcast(nai, true, type);
+                   sendLegacyNetworkBroadcast(nai, true, type);
+               }
             }
         }
 
         /** Removes the given network from the specified legacy type list. */
         public void remove(int type, NetworkAgentInfo nai) {
-            ArrayList<NetworkAgentInfo> list = mTypeLists[type];
-            if (list == null || list.isEmpty()) {
-                return;
-            }
+            synchronized (mLegacyNetworkSyncObject) {
+                ArrayList<NetworkAgentInfo> list = mTypeLists[type];
+                if (list == null || list.isEmpty()) {
+                    return;
+                }
 
-            boolean wasFirstNetwork = list.get(0).equals(nai);
+                boolean wasFirstNetwork = list.get(0).equals(nai);
 
-            if (!list.remove(nai)) {
-                return;
-            }
+                if (!list.remove(nai)) {
+                    return;
+                }
 
-            if (wasFirstNetwork || isDefaultNetwork(nai)) {
-                maybeLogBroadcast(nai, false, type);
-                sendLegacyNetworkBroadcast(nai, false, type);
-            }
+                if (wasFirstNetwork || isDefaultNetwork(nai)) {
+                    maybeLogBroadcast(nai, false, type);
+                    sendLegacyNetworkBroadcast(nai, false, type);
+                }
 
-            if (!list.isEmpty() && wasFirstNetwork) {
-                if (DBG) log("Other network available for type " + type +
-                              ", sending connected broadcast");
-                maybeLogBroadcast(list.get(0), false, type);
-                sendLegacyNetworkBroadcast(list.get(0), false, type);
+                if (!list.isEmpty() && wasFirstNetwork) {
+                    if (DBG) log("Other network available for type " + type +
+                                  ", sending connected broadcast");
+                    maybeLogBroadcast(list.get(0), true, type);
+                    sendLegacyNetworkBroadcast(list.get(0), true, type);
+                }
             }
         }
 
@@ -605,7 +675,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
         mTrackerHandler = new NetworkStateTrackerHandler(handlerThread.getLooper());
 
         // setup our unique device name
+/* Vanzo:zhangjingzhi on: Fri, 06 Mar 2015 11:35:15 +0800
+ * for hostname
         if (TextUtils.isEmpty(SystemProperties.get("net.hostname"))) {
+ */
+        if (TextUtils.isEmpty(SystemProperties.get("net.hostname", FeatureOption.VANZO_FEATURE_DEFAULT_NET_HOSTNAME))) {
+// End of Vanzo: zhangjingzhi
             String id = Settings.Secure.getString(context.getContentResolver(),
                     Settings.Secure.ANDROID_ID);
             if (id != null && id.length() > 0) {
@@ -761,6 +836,20 @@ public class ConnectivityService extends IConnectivityManager.Stub
         mPacManager = new PacManager(mContext, mHandler, EVENT_PROXY_HAS_CHANGED);
 
         mUserManager = (UserManager) context.getSystemService(Context.USER_SERVICE);
+
+        /// M: For automatic NS-IOT test
+        IntentFilter filterC = new IntentFilter();
+        filterC.addAction(Intent.ACTION_TETHERING_CHANGE);
+
+        sIsEpdgSupported = "1".equals(SystemProperties.get("ro.mtk_epdg_support"));
+        if (sIsEpdgSupported) {
+            filterC.addAction(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED);
+        }
+
+        mReceiver = new ConnectivityServiceReceiver();
+        mContext.registerReceiver(mReceiver, filterC);
+        mSynchronizedObject = new Object();
+        mLegacyNetworkSyncObject = new Object();
     }
 
     private synchronized int nextNetworkRequestId() {
@@ -768,6 +857,24 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void assignNextNetId(NetworkAgentInfo nai) {
+
+        ///M: Support for ePDG feature
+        if (sIsEpdgSupported) {
+            if (VDBG) {
+                log("check connection info");
+            }
+            NetworkAgentInfo oldNai = getExistedNetworkAgentInfo(nai);
+            if (oldNai != null && oldNai.network.netId != -1) {
+                int usedNetworkId = oldNai.network.netId;
+                if (VDBG) {
+                    log("Reuse handover networkId:" + usedNetworkId);
+                }
+                nai.network = new Network(usedNetworkId);
+                nai.handoverType = HandoverType.CONNECT;
+                return;
+            }
+        }
+
         synchronized (mNetworkForNetId) {
             for (int i = MIN_NET_ID; i <= MAX_NET_ID; i++) {
                 int netId = mNextNetId;
@@ -853,7 +960,17 @@ public class ConnectivityService extends IConnectivityManager.Stub
         Network network = null;
         String subscriberId = null;
 
-        NetworkAgentInfo nai = mNetworkForRequestId.get(mDefaultRequest.requestId);
+        NetworkAgentInfo nai;
+        try {
+            nai = mNetworkForRequestId.get(mDefaultRequest.requestId);
+        } catch(ClassCastException e) {
+            //M: for DBG
+            Slog.e(TAG, "mNetworkForRequestId.get returns a not NetworkAgentInfo Object:" + e);
+            nai = null;
+            for (int i = 0; i < mNetworkForRequestId.size(); i++) {
+                Slog.e(TAG, "mNetworkForRequestId elem=" + mNetworkForRequestId.keyAt(i));
+            }
+        }
 
         final Network[] networks = getVpnUnderlyingNetworks(uid);
         if (networks != null) {
@@ -1198,7 +1315,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 synchronized (nai) {
                     final String subscriberId = (nai.networkMisc != null)
                             ? nai.networkMisc.subscriberId : null;
-                    result.add(new NetworkState(nai.networkInfo, nai.linkProperties,
+                    //M: avoid network info is null(timing issue)
+                    result.add(new NetworkState(new NetworkInfo(nai.networkInfo), nai.linkProperties,
                             nai.networkCapabilities, network, subscriberId, null));
                 }
             }
@@ -1317,8 +1435,14 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 lp = nai.linkProperties;
                 netId = nai.network.netId;
             }
-            boolean ok = addLegacyRouteToHost(lp, addr, netId, uid);
-            if (DBG) log("requestRouteToHostAddress ok=" + ok);
+            boolean ok = false;
+            if(networkType == TYPE_MOBILE_MMS && !lp.hasIPv4Address() && (addr instanceof Inet4Address) ) {
+                log("Ignore requestRouteToHostAddress due to no IPv4 on MMS");
+                ok = true;
+            } else {
+                ok = addLegacyRouteToHost(lp, addr, netId, uid);
+                if (DBG) log("requestRouteToHostAddress ok=" + ok);
+            }
             return ok;
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -1538,12 +1662,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
     void systemReady() {
         // start network sampling ..
-        Intent intent = new Intent(ACTION_PKT_CNT_SAMPLE_INTERVAL_ELAPSED);
+        /** M: disable lagecy network sampling for power saving */
+        /*Intent intent = new Intent(ACTION_PKT_CNT_SAMPLE_INTERVAL_ELAPSED);
         intent.setPackage(mContext.getPackageName());
 
         mSampleIntervalElapsedIntent = PendingIntent.getBroadcast(mContext,
                 SAMPLE_INTERVAL_ELAPSED_REQUEST_CODE, intent, 0);
-        setAlarm(DEFAULT_START_SAMPLING_INTERVAL_IN_SECONDS * 1000, mSampleIntervalElapsedIntent);
+        setAlarm(DEFAULT_START_SAMPLING_INTERVAL_IN_SECONDS * 1000, mSampleIntervalElapsedIntent);*/
 
         loadGlobalProxy();
 
@@ -1556,6 +1681,19 @@ public class ConnectivityService extends IConnectivityManager.Stub
         }
         // load the global proxy at startup
         mHandler.sendMessage(mHandler.obtainMessage(EVENT_APPLY_GLOBAL_HTTP_PROXY));
+
+        /** M: Operator plugin init @{ */
+        log("Init IConnectivityServiceExt class");
+        mIcsExt = MPlugin.createInstance(
+            IConnectivityServiceExt.class.getName(),
+            mContext);
+        if (mIcsExt == null) {
+           log("Get IConnectivityServiceExt fail");
+        } else {
+            mIcsExt.init(mContext);
+        }
+        log("End MPlugin createInstance");
+        /** @} */
 
         // Try bringing up tracker, but if KeyStore isn't ready yet, wait
         // for user to unlock device.
@@ -1985,10 +2123,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
                         }
                         updateInetCondition(nai);
                         // Let the NetworkAgent know the state of its network
+			try {
                         nai.asyncChannel.sendMessage(
                                 android.net.NetworkAgent.CMD_REPORT_NETWORK_STATUS,
                                 (valid ? NetworkAgent.VALID_NETWORK : NetworkAgent.INVALID_NETWORK),
                                 0, null);
+                        } catch (Exception e) {if (DBG) log("nai.asyncChannel.sendMessage failed");}
                     }
                     break;
                 }
@@ -2141,7 +2281,10 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 // Tell netd to clean up the configuration for this network
                 // (routing rules, DNS, etc).
                 try {
-                    mNetd.removeNetwork(nai.network.netId);
+                    ///M: Support for ePDG
+                    if (nai.handoverType != HandoverType.DISCONNECT) {
+                        mNetd.removeNetwork(nai.network.netId);
+                    }
                 } catch (Exception e) {
                     loge("Exception removing network: " + e);
                 }
@@ -2157,15 +2300,57 @@ public class ConnectivityService extends IConnectivityManager.Stub
             if (isDefaultNetwork(nai)) {
                 mDefaultInetConditionPublished = 0;
             }
+
             notifyIfacesChanged();
-            notifyNetworkCallbacks(nai, ConnectivityManager.CALLBACK_LOST);
+
+            ///M: Support for ePDG feature
+            if (sIsEpdgSupported) {
+                handleEpdgDisconnect(nai);
+            } else {
+                notifyNetworkCallbacks(nai, ConnectivityManager.CALLBACK_LOST);
+            }
+
             nai.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_DISCONNECTED);
             mNetworkAgentInfos.remove(msg.replyTo);
             updateClat(null, nai.linkProperties, nai);
             mLegacyTypeTracker.remove(nai);
-            synchronized (mNetworkForNetId) {
-                mNetworkForNetId.remove(nai.network.netId);
+
+            ///Modify for ePDG
+            if (nai.handoverType != HandoverType.DISCONNECT) {
+                synchronized (mNetworkForNetId) {
+                    mNetworkForNetId.remove(nai.network.netId);
+                }
             }
+
+            ///M: For ePDG support.
+            if (sIsEpdgSupported) {
+                if (nai.networkRequests.get(mDefaultRequest.requestId) == null) {
+                    for (int i = 0; i < nai.networkRequests.size(); i++) {
+                        NetworkRequest request = nai.networkRequests.valueAt(i);
+                        NetworkAgentInfo currentNetwork =
+                                    mNetworkForRequestId.get(request.requestId);
+                        if (currentNetwork != null &&
+                                currentNetwork.network.netId == nai.network.netId) {
+                            if (DBG) {
+                                log("remove network with request " + request);
+                            }
+                            mNetworkForRequestId.remove(request.requestId);
+                        }
+                    }
+                    log("Retry procedure has been checked. No need for non-default request");
+                    return;
+                }
+            }
+
+            if (mIcsExt != null && nai.networkInfo.getType() == ConnectivityManager.TYPE_WIFI) {
+                mIcsExt.UserPrompt(); // Notify Op01: Wifi is disconnect,
+                                     // It will turn off Mobile switch and promot user
+            }
+
+            if (mIcsExt == null) {
+                log("mIcsExt is null");
+            }
+
             // Since we've lost the network, go through all the requests that
             // it was satisfying and see if any other factory can satisfy them.
             // TODO: This logic may be better replaced with a call to rematchAllNetworksAndRequests
@@ -2255,7 +2440,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     network.addRequest(nri.request);
                     notifyNetworkCallback(network, nri);
                 } else if (bestNetwork == null ||
-                        bestNetwork.getCurrentScore() < network.getCurrentScore()) {
+                    bestNetwork.getCurrentScore() < network.getCurrentScore()) {
                     bestNetwork = network;
                 }
             }
@@ -2271,9 +2456,25 @@ public class ConnectivityService extends IConnectivityManager.Stub
             }
         }
 
+        int score = 0;
         if (nri.isRequest) {
             if (DBG) log("sending new NetworkRequest to factories");
-            final int score = bestNetwork == null ? 0 : bestNetwork.getCurrentScore();
+
+            ///M: Support for EPDG @{
+            if (sIsEpdgSupported) {
+                if (isHandoverSupport(nri.request.networkCapabilities)) {
+                    score = getRnsSelectionScore(nri, score);
+                    if (score == NO_REQUEST_SCORE) {
+                        callCallbackForRequest(nri, null, ConnectivityManager.CALLBACK_UNAVAIL);
+                        loge("Forbidden by RNS service");
+                        return;
+                    }
+                }
+            } else {
+                score = bestNetwork == null ? 0 : bestNetwork.getCurrentScore();
+            }
+            ///@}
+
             for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
                 nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_REQUEST_NETWORK, score,
                         0, nri.request);
@@ -2397,6 +2598,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_CANCEL_REQUEST,
                             nri.request);
                 }
+
+                ///M: Release IMS request.
+                if (nri.request.legacyType == ConnectivityManager.TYPE_MOBILE_IMS){
+                    setRetryFlag(false);
+                }
             } else {
                 // listens don't have a singular affectedNetwork.  Check all networks to see
                 // if this listen request applies and remove it.
@@ -2505,6 +2711,19 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     for (NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
                         nai.networkMonitor.systemReady = true;
                     }
+                    break;
+                }
+                ///M: Support for ePDG
+                case EVENT_HANDOVER_EXPIRED: {
+                    handleHandoverExpired();
+                    break;
+                }
+                case EVENT_HANDOVER_CONNECT: {
+                    handleHandoverConnect(msg.arg1);
+                    break;
+                }
+                case EVENT_PDN_RETRY: {
+                    handlePdnRetry(msg.arg1);
                     break;
                 }
             }
@@ -2984,7 +3203,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
      */
     @Override
     public LegacyVpnInfo getLegacyVpnInfo() {
-        throwIfLockdownEnabled();
+        //M: ALPS00438756 Fix user experience for always on VPN
+        //throwIfLockdownEnabled();
         int user = UserHandle.getUserId(Binder.getCallingUid());
         synchronized(mVpns) {
             return mVpns.get(user).getLegacyVpnInfo();
@@ -3020,13 +3240,39 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 return false;
             }
 
-            final String profileName = new String(mKeyStore.get(Credentials.LOCKDOWN_VPN));
-            final VpnProfile profile = VpnProfile.decode(
-                    profileName, mKeyStore.get(Credentials.VPN + profileName));
+            final byte[] profileNameString = mKeyStore.get(Credentials.LOCKDOWN_VPN);
+            String profileName = null;
+            VpnProfile profile = null;
+
+            if (profileNameString != null)
+            {
+                profileName = new String(profileNameString);
+            }
+
+            if (profileName != null)
+            {
+                profile = VpnProfile.decode(
+                              profileName, mKeyStore.get(Credentials.VPN + profileName));
+            }
+
+            ///M: Error handling @{
+            if (profile == null) {
+                loge("Null profile name:" + profileName);
+                mKeyStore.delete(Credentials.LOCKDOWN_VPN);
+                setLockdownTracker(null);
+                return true;
+            }
+
+            ///@}
             int user = UserHandle.getUserId(Binder.getCallingUid());
+
             synchronized(mVpns) {
-                setLockdownTracker(new LockdownVpnTracker(mContext, mNetd, this, mVpns.get(user),
-                            profile));
+                if (mVpns.get(user) != null) {
+                    setLockdownTracker(new LockdownVpnTracker(mContext, mNetd, this, mVpns.get(user),
+                                profile));
+                } else {
+                    loge("mVpns.get(user) is null");
+                }
             }
         } else {
             setLockdownTracker(null);
@@ -3547,6 +3793,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
             throw new IllegalArgumentException("Bad timeout specified");
         }
 
+        /// M: CT customization to ignore MMS request when TDD only mode
+        if (mIcsExt != null && mIcsExt.ignoreRequest(networkCapabilities)) {
+            log("requestNetwork return null to ignore mms request for OP09");
+            return null;
+        }
+
         NetworkRequest networkRequest = new NetworkRequest(networkCapabilities, legacyType,
                 nextNetworkRequestId());
         if (DBG) log("requestNetwork for " + networkRequest);
@@ -3714,7 +3966,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
             nai.networkMonitor.systemReady = mSystemReady;
         }
         if (DBG) log("registerNetworkAgent " + nai);
-        mHandler.sendMessage(mHandler.obtainMessage(EVENT_REGISTER_NETWORK_AGENT, nai));
+        mHandler.sendMessageAtFrontOfQueue(
+                mHandler.obtainMessage(EVENT_REGISTER_NETWORK_AGENT, nai));
     }
 
     private void handleRegisterNetworkAgent(NetworkAgentInfo na) {
@@ -3730,6 +3983,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
     private void updateLinkProperties(NetworkAgentInfo networkAgent, LinkProperties oldLp) {
         LinkProperties newLp = networkAgent.linkProperties;
         int netId = networkAgent.network.netId;
+
+        if (VDBG) log("updateLinkProperties for:" + networkAgent);
+        if (VDBG) log("LinkProperties:" + newLp);
 
         // The NetworkAgentInfo does not know whether clatd is running on its network or not. Before
         // we do anything else, make sure its LinkProperties are accurate.
@@ -3861,7 +4117,36 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     loge("no dns provided for netId " + netId + ", so using defaults");
                 }
             }
+
+            /** M: ipv6 only network, but provide ipv4+ipv6 dnses
+             **    giving ipv6 dns higher query priority @{*/
+            if (isOnlyIpv6Address(newLp.getAddresses())) {
+                ArrayList<InetAddress> sortedDnses = new ArrayList<InetAddress>();
+                for (InetAddress ia : dnses) {
+                    if (ia instanceof Inet6Address) {
+                        sortedDnses.add(ia);
+                    }
+                }
+                for (InetAddress ia : dnses) {
+                    if (ia instanceof Inet4Address) {
+                        sortedDnses.add(ia);
+                    }
+                }
+                dnses = sortedDnses;
+            }
+
             if (DBG) log("Setting Dns servers for network " + netId + " to " + dnses);
+
+            /* M: Add Google DNS to prevent DNS cache poisoning */
+            if (mDefaultDns != null && !dnses.contains(mDefaultDns)) {
+                dnses = new ArrayList(dnses);
+                dnses.add(mDefaultDns);
+
+                if (DBG) {
+                    loge("Add google dns provided for " + netId + " - using " + mDefaultDns.getHostAddress());
+                }
+            }
+
             try {
                 mNetd.setDnsServersForNetwork(netId, NetworkUtils.makeStrings(dnses),
                     newLp.getDomains());
@@ -3900,17 +4185,8 @@ public class ConnectivityService extends IConnectivityManager.Stub
 
     private void updateCapabilities(NetworkAgentInfo networkAgent,
             NetworkCapabilities networkCapabilities) {
+        if (DBG) log("updateCapabilities cap:" + networkCapabilities);
         if (!Objects.equals(networkAgent.networkCapabilities, networkCapabilities)) {
-            if (networkAgent.networkCapabilities.hasCapability(NET_CAPABILITY_NOT_RESTRICTED) !=
-                    networkCapabilities.hasCapability(NET_CAPABILITY_NOT_RESTRICTED)) {
-                try {
-                    mNetd.setNetworkPermission(networkAgent.network.netId,
-                            networkCapabilities.hasCapability(NET_CAPABILITY_NOT_RESTRICTED) ?
-                                    null : NetworkManagementService.PERMISSION_SYSTEM);
-                } catch (RemoteException e) {
-                    loge("Exception in setNetworkPermission: " + e);
-                }
-            }
             synchronized (networkAgent) {
                 networkAgent.networkCapabilities = networkCapabilities;
             }
@@ -4136,7 +4412,14 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     // TODO - this could get expensive if we have alot of requests for this
                     // network.  Think about if there is a way to reduce this.  Push
                     // netid->request mapping to each factory?
-                    sendUpdatedScoreToFactories(nri.request, newNetwork.getCurrentScore());
+
+                    ///M: Modify for ePDG
+                    if (sIsEpdgSupported && newNetwork.getCurrentScore() == MOBILE_AGENT_SCORE) {
+                        log("Skip score update");
+                    } else {
+                        sendUpdatedScoreToFactories(nri.request, newNetwork.getCurrentScore());
+                    }
+
                     if (mDefaultRequest.requestId == nri.request.requestId) {
                         isNewDefault = true;
                         oldDefaultNetwork = currentNetwork;
@@ -4340,10 +4623,44 @@ public class ConnectivityService extends IConnectivityManager.Stub
                             (networkAgent.networkMisc == null ||
                                 !networkAgent.networkMisc.allowBypass));
                 } else {
-                    mNetd.createPhysicalNetwork(networkAgent.network.netId,
-                            networkAgent.networkCapabilities.hasCapability(
-                                    NET_CAPABILITY_NOT_RESTRICTED) ?
-                                    null : NetworkManagementService.PERMISSION_SYSTEM);
+
+                    ///M: Add for ePDG support
+                    if (networkAgent.networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_IMS)) {
+                        if (networkAgent.networkCapabilities.hasTransport(
+                                NetworkCapabilities.TRANSPORT_EPDG)) {
+                            sCurrentRadioType = ConnectivityManager.TYPE_WIFI;
+                        } else {
+                            sCurrentRadioType = ConnectivityManager.TYPE_MOBILE;
+                        }
+                        sImsDisconnectCause = 0; //Reset to normal call.
+                    }
+
+                    ///M: Moddify for ePDG support
+                    if (networkAgent.handoverType == HandoverType.CONNECT) {
+                        log("Handover connection is connected:" + sHandoverRadioType);
+                        mNetworkForNetId.put(networkAgent.network.netId, networkAgent);
+
+                        //networkAgent.networkMisc.explicitlySelected = true;
+                        if (sHandoverRadioType == ConnectivityManager.TYPE_MOBILE) {
+                            networkAgent.setCurrentScore(MOBILE_REQUEST_SCORE);
+                            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+                            NetworkAgentInfo oldNai = getExistedNetworkAgentInfo(networkAgent);
+                            if (oldNai != null) {
+                                log("oldNai:" + oldNai);
+                                oldNai.setCurrentScore(EPDG_FACOTRY_LOW_SCORE);
+                                oldNai.handoverType = HandoverType.DISCONNECT;
+                                log("get current score" + oldNai.getCurrentScore());
+                            }
+                        } else if (sHandoverRadioType == ConnectivityManager.TYPE_WIFI) {
+                            NetworkAgentInfo oldNai = getExistedNetworkAgentInfo(networkAgent);
+                            if (oldNai != null) {
+                                oldNai.handoverType = HandoverType.DISCONNECT;
+                            }
+                        }
+                    } else {
+                        mNetd.createPhysicalNetwork(networkAgent.network.netId);
+                    }
                 }
             } catch (Exception e) {
                 loge("Error creating network " + networkAgent.network.netId + ": "
@@ -4370,6 +4687,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
             // Consider network even though it is not yet validated.
             rematchNetworkAndRequests(networkAgent, NascentState.NOT_JUST_VALIDATED,
                     ReapUnvalidatedNetworks.REAP);
+
+            ///M: Send handover end intent after the network interface is configured.
+            if (networkAgent.handoverType == HandoverType.CONNECT) {
+                notifyHandoverResult(false, true);
+            }
         } else if (state == NetworkInfo.State.DISCONNECTED ||
                 state == NetworkInfo.State.SUSPENDED) {
             networkAgent.asyncChannel.disconnect();
@@ -4383,7 +4705,29 @@ public class ConnectivityService extends IConnectivityManager.Stub
                     }
                 }
             }
+        /// M: Support for EPDG connection @{
+        } else if (state == NetworkInfo.State.CONNECTING) {
+            if (networkAgent.created) {
+                loge("ERROR: The network agent is created)");
+                return;
         }
+
+        for (NetworkRequestInfo nri : mNetworkRequests.values()) {
+                if (nri.request.networkCapabilities.satisfiedByNetworkCapabilities(
+                    networkAgent.networkCapabilities)) {
+                    if (!nri.isRequest) {
+                        continue;
+                    }
+                    if (VDBG) {
+                        log("  checking request is satisfied: " + nri.request);
+                    }
+                    if (mNetworkForRequestId.get(nri.request.requestId) == null) {
+                        networkAgent.addRequest(nri.request);
+                    }
+                }
+            }
+        }
+        /// @}
     }
 
     private void updateNetworkScore(NetworkAgentInfo nai, int score) {
@@ -4457,6 +4801,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
             }
             intent.putExtra(ConnectivityManager.EXTRA_INET_CONDITION,
                     mDefaultInetConditionPublished);
+            ///M: add for BIP close channel used
+            intent.putExtra("subId", nai.networkCapabilities.getNetworkSpecifier());
+
             final Intent immediateIntent = new Intent(intent);
             immediateIntent.setAction(CONNECTIVITY_ACTION_IMMEDIATE);
             sendStickyBroadcast(immediateIntent);
@@ -4530,5 +4877,594 @@ public class ConnectivityService extends IConnectivityManager.Stub
         synchronized (mVpns) {
             return mVpns.get(user).setUnderlyingNetworks(networks);
         }
+    }
+
+    /** M: dedicate apn feature for OP03APNSettingExt */
+    /**
+     * @hide
+     */
+    public boolean isTetheringChangeDone() {
+        enforceTetherAccessPermission();
+        boolean result = true;
+        if (isTetheringSupported()) {
+            result = mTethering.isTetheringChangeDone();
+        }
+        return result;
+    }
+    /** @} */
+
+    /// M: For automatic NS-IOT test
+    public String[] getTetheredIfacePairs() {
+        enforceTetherAccessPermission();
+        return mTethering.getTetheredIfacePairs();
+    }
+
+    /** M: Get airplane mode is on or off
+     * @return true if airplane mode on
+     * @hide
+     */
+    @Override
+    public boolean isAirplaneModeOn() {
+        final long ident = Binder.clearCallingIdentity();
+        boolean isOn = false;
+        try {
+            isOn = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.Global.AIRPLANE_MODE_ON, 0) == 1;
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+        return isOn;
+    }
+
+    /** M: ipv6 tethering @{ */
+    public void setTetheringIpv6Enable(boolean enable) {
+        enforceTetherAccessPermission();
+        mTethering.setIpv6FeatureEnable(enable);
+    }
+
+    public boolean getTetheringIpv6Enable() {
+        enforceTetherAccessPermission();
+        return mTethering.getIpv6FeatureEnable();
+    }
+    /** @} */
+
+    /** M: check addresses if ipv6 only */
+    private boolean isOnlyIpv6Address(List<InetAddress> list) {
+        for (InetAddress ia : list) {
+            if(ia instanceof Inet4Address) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private class ConnectivityServiceReceiver extends BroadcastReceiver {
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+
+            String action = intent.getAction();
+            Slog.d(TAG, "received intent ==> " + action);
+
+            synchronized (mSynchronizedObject) {
+                if (Intent.ACTION_TETHERING_CHANGE.equals(action)) {
+                    boolean isConnected = intent.getBooleanExtra(
+                                    Intent.EXTRA_TETHERING_CONNECTED, false);
+                    setUsbTethering(isConnected);
+                } else if (TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED.equals(action)) {
+                    String apnType = intent.getStringExtra(PhoneConstants.DATA_APN_TYPE_KEY);
+                    if (apnType != null && PhoneConstants.APN_TYPE_IMS.equals(apnType)) {
+                        PhoneConstants.DataState state =
+                                Enum.valueOf(PhoneConstants.DataState.class,
+                                        intent.getStringExtra(PhoneConstants.STATE_KEY));
+                        if (state == PhoneConstants.DataState.DISCONNECTED) {
+                            setRetryFlag(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    ///Support for ePDG @{
+    /**
+      * M: trigger NetworkRequest to each network factory.
+      * @param radioType The new radio type.
+      *
+      */
+    public void connectToRadio(int radioType) {
+        mHandler.sendMessage(mHandler.obtainMessage(EVENT_HANDOVER_CONNECT, radioType,
+                0));
+    }
+
+    private void handleHandoverConnect(int radioType) {
+        String nwTypeName = MOBILE_AGENT_NAME;
+        int newScore = MOBILE_REQUEST_SCORE;
+
+        if (sCurrentRadioType == ConnectivityManager.TYPE_NONE) {
+            log("No active IMS connection");
+            return;
+        } else if (radioType != ConnectivityManager.TYPE_WIFI &&
+                radioType != ConnectivityManager.TYPE_MOBILE) {
+            if (radioType == ConnectivityManager.TYPE_NONE) {
+                disconnectImsPdn();
+                return;
+            }
+            Slog.e(TAG, "Wrong radioTye:" + radioType);
+            return;
+        } else if (sCurrentRadioType == radioType) {
+            log("skip due to same rat type:" + sCurrentRadioType);
+            return;
+        } else if (sHandoverRadioType != ConnectivityManager.TYPE_NONE) {
+            log("Handover is ongoing:" + sHandoverRadioType);
+            return;
+        }
+
+        //Configure low score of ePDG when handover is successfully done.
+        if (radioType == ConnectivityManager.TYPE_WIFI) {
+            nwTypeName = EPDG_AGENT_NAME;
+            newScore = EPDG_REQUEST_SCORE;
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_HIGH_SCORE);
+        }
+        Slog.d(TAG, "connectToRadio nwTypeName = " + nwTypeName
+                    + ",newScore =" + newScore + "," + radioType);
+
+        if (evalHandoverRequest(newScore, nwTypeName)) {
+            Slog.d(TAG, "Start handover");
+            sHandoverRadioType = radioType;
+            notifyHandoverResult(true, true);
+            mHandler.sendMessageDelayed(mHandler.obtainMessage(
+                        EVENT_HANDOVER_EXPIRED), HANDOVER_TRANSFER_TIME);
+        }
+    }
+
+    private boolean evalHandoverRequest(int score, String networkFactory) {
+        boolean result = false;
+
+        for (NetworkRequest nr : mNetworkRequests.keySet()) {
+            if (nr.networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS) &&
+                nr.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+                for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+                    if (nfi.name.equals(networkFactory)) {
+                        nfi.asyncChannel.sendMessage(
+                        android.net.NetworkFactory.CMD_REQUEST_NETWORK, score, 0, nr);
+                        if (DBG) log("evalHandoverRequest " + nfi.name);
+                        result = true;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+   /** M: for ePDG handover used. */
+    private void retryRequestToNetwork(SparseArray<NetworkRequest> nrs, int newScore) {
+        String nwTypeName = MOBILE_AGENT_NAME;
+        Slog.d(TAG, "retryRequestToNetwork newScore=" + newScore);
+
+        if (newScore == EPDG_REQUEST_SCORE) { //Send to ePDG
+            nwTypeName = EPDG_AGENT_NAME;
+        }
+
+        for (int i = 0; i < nrs.size(); i++) {
+            NetworkRequest nr = nrs.valueAt(i);
+            if (isHandoverSupport(nr.networkCapabilities)) {
+                for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+                    if (nfi.name.equals(nwTypeName)) {
+                        nfi.asyncChannel.sendMessage(
+                        android.net.NetworkFactory.CMD_REQUEST_NETWORK, newScore, 0, nr);
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleEpdgDisconnect(NetworkAgentInfo nai) {
+        if (mRnsManager == null) {
+            mRnsManager = (RnsManager) mContext.getSystemService(Context.RNS_SERVICE);
+        }
+
+        int ratType = ConnectivityManager.TYPE_NONE;
+
+        if (nai.networkInfo != null &&
+            nai.networkInfo.getType() > ConnectivityManager.TYPE_WIFI) {
+             if (nai.networkCapabilities != null &&
+                 nai.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                 ratType = ConnectivityManager.TYPE_MOBILE;
+             } else if (nai.networkCapabilities != null &&
+                 nai.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+                 ratType = ConnectivityManager.TYPE_WIFI;
+             }
+             log("handleEpdgDisconnect:" + ratType);
+        } else {
+            log("handleEpdgDisconnect done for default type");
+            notifyNetworkCallbacks(nai, ConnectivityManager.CALLBACK_LOST);
+            return;
+        }
+
+        int tryNewRadio = mRnsManager.getTryAnotherRadioType(ratType);
+
+        boolean keep = false;
+        for (int i = 0; i < nai.networkRequests.size(); i++) {
+            NetworkRequest r = nai.networkRequests.valueAt(i);
+            if (isRequest(r)) {
+                keep = true;
+                break;
+            }
+        }
+
+        if (keep && tryNewRadio == ConnectivityManager.TYPE_NONE) {
+            //First connect failure
+            log("No retry for ePDG/Mobile and notify app:" + nai.handoverType);
+            if (nai.handoverType != HandoverType.DISCONNECT) {
+                updateFailureCause(ratType, nai.networkCapabilities);
+                notifyNetworkCallbacks(nai, ConnectivityManager.CALLBACK_LOST);
+            } else {
+                log("Handover is running");
+            }
+        } else if (keep && !nai.created && nai.handoverType == HandoverType.NONE) {
+            //Retry trigger for first connect
+            int score = handleNetworkSelection(tryNewRadio);
+                retryRequestToNetwork(nai.networkRequests, score);
+        } else { //Failure due to handover
+            log("Retry policy:" + nai.handoverType + ":" + nai.created + ":" + keep);
+            if (nai.created && nai.handoverType == HandoverType.DISCONNECT) {
+               log("Disconnected by handover");
+            } else if(!nai.created && nai.handoverType == HandoverType.CONNECT) {
+               log("Failed to setup new RAT on handover");
+
+               /* Need to fallback the original state */
+               /* Reconfigure network factory score to low score if handover is failed.*/
+               if (sHandoverRadioType == ConnectivityManager.TYPE_WIFI) {
+                   setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+                   EpdgManager epdgManager = EpdgManager.getInstance(mContext);
+                   int cause = epdgManager.getDisconnectCause(
+                                   NetworkCapabilities.NET_CAPABILITY_IMS);
+                   if (cause == 1999) {
+                       log("IP inconsistent.");
+                       disconnectImsPdn();
+                   }
+               } else if (sHandoverRadioType == ConnectivityManager.TYPE_MOBILE) {
+                   evalHandoverRequest(EPDG_REQUEST_SCORE, MOBILE_AGENT_NAME);
+               }
+               notifyHandoverResult(false, false);
+            }else {
+               updateFailureCause(ratType, nai.networkCapabilities);
+               notifyNetworkCallbacks(nai, ConnectivityManager.CALLBACK_LOST);
+            }
+        }
+    }
+
+    private void setNetworkFactoryScore(String name, int score) {
+
+        for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+            if (nfi.name.equals(name)) {
+                //CMD_SET_SCORE = BASE_NETWORK_FACTORY + 2;
+                nfi.asyncChannel.sendMessage(Protocol.BASE_NETWORK_FACTORY + 2, score, 0);
+            }
+        }
+    }
+
+    private int getRnsSelectionScore(NetworkRequestInfo nri, int oldScore) {
+        int score = oldScore;
+        final NetworkCapabilities newCap = nri.request.networkCapabilities;
+            if (mRnsManager == null) {
+                mRnsManager = (RnsManager) mContext.getSystemService(Context.RNS_SERVICE);
+            }
+        log("getRnsSelectionScore:" + nri.request.legacyType);
+        if (nri.request.legacyType == ConnectivityManager.TYPE_MOBILE_IMS) {
+            setRetryFlag(false);
+        }
+        return handleRnsSelection(mRnsManager.getAllowedRadioList(nri.request.legacyType));
+    }
+
+    private int handleRnsSelection(int rnsRadioType) {
+        int score = 0;
+
+        //Overriden other PDN policy to align with IMS.
+        if (sCurrentRadioType == ConnectivityManager.TYPE_WIFI) {
+            score = EPDG_REQUEST_SCORE;
+            return score;
+        } else if (sCurrentRadioType == ConnectivityManager.TYPE_MOBILE){
+            score = MOBILE_REQUEST_SCORE;
+            return score;
+        }
+
+        if (rnsRadioType == RnsManager.ALLOWED_RADIO_WIFI) {
+            log("Rns allow to create WiFi");
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_HIGH_SCORE);
+            score = EPDG_REQUEST_SCORE;
+        } else if (rnsRadioType == RnsManager.ALLOWED_RADIO_MOBILE) {
+            log("Rns allow to create Mobile");
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+            score = MOBILE_REQUEST_SCORE;
+        } else if (rnsRadioType == RnsManager.ALLOWED_RADIO_DENY) {
+            score = NO_REQUEST_SCORE;
+            sImsDisconnectCause = 2006; //Deny by RNS policy.
+            setRetryFlag(true);
+        } else if (rnsRadioType == RnsManager.ALLOWED_RADIO_NONE) {
+            score = NO_REQUEST_SCORE;
+            sImsDisconnectCause = 2007; //Deny by PS call, but call try CS call
+            setRetryFlag(true);
+        }
+
+        return score;
+    }
+
+    private int handleNetworkSelection(int nwType) {
+        int score = 0;
+
+        if (nwType == ConnectivityManager.TYPE_WIFI) {
+            log("Retry on ePDG");
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_HIGH_SCORE);
+            score = EPDG_REQUEST_SCORE;
+        } else if (nwType == ConnectivityManager.TYPE_MOBILE) {
+            log("Retry on Mobile");
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+            score = MOBILE_REQUEST_SCORE;
+        }
+
+        return score;
+    }
+
+    private NetworkAgentInfo getExistedNetworkAgentInfo(NetworkAgentInfo nai) {
+        int netId = -1;
+        int nwType = ConnectivityManager.TYPE_NONE;
+
+        if (nai.networkCapabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_IMS)) {
+            nwType = ConnectivityManager.TYPE_MOBILE_IMS;
+        } else if (nai.networkCapabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_MMS)) {
+            nwType = ConnectivityManager.TYPE_MOBILE_MMS;
+        } else if (nai.networkCapabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_SUPL)) {
+            nwType = ConnectivityManager.TYPE_MOBILE_SUPL;
+        } else if (nai.networkCapabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_XCAP)) {
+            nwType = ConnectivityManager.TYPE_MOBILE_XCAP;
+        } else {
+            Slog.d(TAG, "Unsupported network cap:" + nai.networkCapabilities);
+            return null;
+        }
+
+        return mLegacyTypeTracker.getNetworkForType(nwType);
+    }
+
+    private void handleHandoverExpired() {
+        if (sHandoverRadioType != ConnectivityManager.TYPE_NONE) {
+            Slog.d(TAG, "Handover prcoedurer takes too long:" + sHandoverRadioType);
+
+            /* Need to fallback the original state */
+            /* Reconfigure network factory score to low score if handover is failed.*/
+            if (sHandoverRadioType == ConnectivityManager.TYPE_WIFI) {
+                setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+            } else if (sHandoverRadioType == ConnectivityManager.TYPE_MOBILE) {
+                evalHandoverRequest(EPDG_REQUEST_SCORE, MOBILE_AGENT_NAME);
+            }
+            sHandoverRadioType = ConnectivityManager.TYPE_NONE;
+        }
+    }
+
+    private boolean isHandoverSupport(NetworkCapabilities cap) {
+        return cap.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            cap.hasTransport(NetworkCapabilities.TRANSPORT_EPDG);
+    }
+
+    /**
+     * WFC feature.
+     * To get the disconnect cause when the connection is lost.
+     *
+     * @param networkType the type of network.
+     * @return the connection disconnect code.
+     */
+    public int getDisconnectCause(int networkType) {
+        if (networkType != ConnectivityManager.TYPE_MOBILE_IMS) {
+            loge("Unsupported network type:" + networkType);
+            return -1;
+        }
+        log("getDisconnectCause:" + sImsDisconnectCause);
+        return sImsDisconnectCause;
+     }
+
+    private void notifyHandoverResult(boolean isOngoing, boolean isSucceed) {
+        if (isOngoing) {
+            sendHandoverIntent(sHandoverRadioType, true, true);
+            return;
+        }
+        sendHandoverIntent(sHandoverRadioType, false, isSucceed);
+        if (mHandler.hasMessages(EVENT_HANDOVER_EXPIRED)) {
+            mHandler.removeMessages(EVENT_HANDOVER_EXPIRED);
+        }
+        sHandoverRadioType = ConnectivityManager.TYPE_NONE;
+    }
+
+    private void sendHandoverIntent(int networkType, boolean isStarted, boolean result) {
+        if (DBG) log("sendHandoverIntent:" + networkType + ":" + isStarted + ":" + result);
+
+        if (networkType == ConnectivityManager.TYPE_WIFI ){
+            networkType = ConnectivityManager.TYPE_EPDG;
+        } else if (networkType == ConnectivityManager.TYPE_MOBILE) {
+            networkType = ConnectivityManager.TYPE_MOBILE_IMS;
+        }
+
+        Intent intent = null;
+        if (isStarted) {
+            intent = new Intent(RnsManager.CONNECTIVITY_ACTION_HANDOVER_START);
+            SystemProperties.set("net.handover.flag", "true");
+        } else {
+            intent = new Intent(RnsManager.CONNECTIVITY_ACTION_HANDOVER_END);
+            intent.putExtra(RnsManager.EXTRA_HANDOVER_RESULT, result);
+            SystemProperties.set("net.handover.flag", "false");
+        }
+        intent.putExtra(RnsManager.EXTRA_NETWORK_TYPE, networkType);
+        intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING |
+                Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    private void updateFailureCause(int networkType, NetworkCapabilities capability) {
+        if (!capability.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
+            return;
+        }
+
+        sCurrentRadioType = ConnectivityManager.TYPE_NONE;
+        if (networkType == ConnectivityManager.TYPE_WIFI) {
+            EpdgManager epdgManager = EpdgManager.getInstance(mContext);
+            sImsDisconnectCause = epdgManager.getDisconnectCause(
+                                    NetworkCapabilities.NET_CAPABILITY_IMS);
+            if (sImsDisconnectCause == 0) {
+                NetworkInfo info = getNetworkInfo(ConnectivityManager.TYPE_WIFI);
+                if (info == null || !info.isConnected()) {
+                    sImsDisconnectCause = 2001;
+                    //Wi-Fi is disconnected and ePDG is disconnected.
+                } else if (mTelephonyManager.getNetworkType()
+                            == TelephonyManager.NETWORK_TYPE_LTE) {
+                    sImsDisconnectCause = 2004;
+                    // Wi-Fi is connected, but LTE is not available.
+                } else {
+                    sImsDisconnectCause = 2005;
+                    // Wi-Fi is connected and LTE is available.
+                }
+            }
+        } else {
+            sImsDisconnectCause = 2003; // Disconnect in LTE
+        }
+        setRetryFlag(true);
+        log("updateFailureCause:" + sImsDisconnectCause);
+    }
+
+    /**
+      * M: trigger retry NetworkRequest to each network factory.
+      * @param radioType The new radio type.
+      *
+      */
+    public void retryConnectToRadio(int radioType) {
+        //No error. No need to retry.
+        if (!mIsImsRetryFlag) {
+            Slog.d(TAG, "Skip due to no failure cause");
+            return;
+        }
+
+        // Parameter checking.
+
+        if (radioType != ConnectivityManager.TYPE_WIFI &&
+                radioType != ConnectivityManager.TYPE_MOBILE) {
+            Slog.e(TAG, "Wrong radioTye:" + radioType);
+            return;
+        }
+
+        //Check IMS PDN connection is disconnected.
+        if (sCurrentRadioType != ConnectivityManager.TYPE_NONE) {
+            return;
+        }
+
+        if (!mHandler.hasMessages(EVENT_PDN_RETRY)) {
+            mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_PDN_RETRY, radioType,
+                    0), PDN_RETRY_INTERVAL);
+        }
+    }
+
+    private void handlePdnRetry(int radioType) {
+        String nwTypeName = MOBILE_AGENT_NAME;
+        int newScore = MOBILE_REQUEST_SCORE;
+        boolean isHandover = false;
+
+        //Check IMS NetworkAgent is empty
+        if (isExistedNaiWithIms()) {
+            return;
+        }
+
+        /* Reset the old pending request and prepare to trigger re-connect later) */
+        for (NetworkRequest nr : mNetworkRequests.keySet()) {
+            if (isRequest(nr) &&
+                nr.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+                for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+                     nfi.asyncChannel.sendMessage(
+                     android.net.NetworkFactory.CMD_REQUEST_NETWORK,
+                     EPDG_RELEASE_SCORE, 0, nr);
+                }
+            }
+        }
+
+        if (radioType == ConnectivityManager.TYPE_WIFI) {
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_HIGH_SCORE);
+            nwTypeName = EPDG_AGENT_NAME;
+            newScore = EPDG_REQUEST_SCORE;
+        } else {
+            setNetworkFactoryScore(EPDG_AGENT_NAME, EPDG_FACOTRY_LOW_SCORE);
+        }
+        mIsImsRetryFlag = false;
+
+        Slog.d(TAG, "retryConnectToRadio nwTypeName = " + nwTypeName
+                    + ",newScore =" + newScore + "," + radioType);
+
+        for (NetworkRequest nr : mNetworkRequests.keySet()) {
+            if (nr.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+                for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+                    if (nfi.name.equals(nwTypeName)) {
+                        nfi.asyncChannel.sendMessage(
+                        android.net.NetworkFactory.CMD_REQUEST_NETWORK, newScore, 0, nr);
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean isExistedNaiWithIms() {
+        for (NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+            if (nai.networkCapabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_IMS)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void disconnectImsPdn() {
+        Slog.d(TAG, "disconnectImsPdn");
+
+        if (sCurrentRadioType == ConnectivityManager.TYPE_NONE) {            
+            return;
+        }
+
+        for (NetworkRequest nr : mNetworkRequests.keySet()) {
+            if (isRequest(nr) &&
+                nr.networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS) &&
+                nr.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_EPDG)) {
+                for (NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+                     nfi.asyncChannel.sendMessage(
+                     android.net.NetworkFactory.CMD_REQUEST_NETWORK,
+                     EPDG_RELEASE_SCORE, 0, nr);
+                }
+            }
+        }
+    }
+
+    ///@}
+   ///@}
+    public void sendRoveOutAlert() {
+        Slog.d(TAG, "send RoveOut Alert");
+        Intent intent = new Intent();
+        intent.setAction(ROVE_OUT_ALERT);
+        mContext.sendBroadcast(intent);
+    }
+
+    private void setRetryFlag(boolean retryFlag) {
+        mIsImsRetryFlag = retryFlag;
+
+        if (mHandler.hasMessages(EVENT_PDN_RETRY)) {
+            mHandler.removeMessages(EVENT_PDN_RETRY);
+        }
+
+        if (mHandler.hasMessages(EVENT_HANDOVER_EXPIRED)) {
+            mHandler.removeMessages(EVENT_HANDOVER_EXPIRED);
+        }
+        sHandoverRadioType = ConnectivityManager.TYPE_NONE;
     }
 }
